@@ -9,6 +9,7 @@ import { Plus, GripVertical, FolderOpen } from 'lucide-react';
 import PathPicker from '../components/common/PathPicker';
 import { EditProjectModal } from '../components/projects/EditProjectModal';
 import { SortableProjectCard } from '../components/projects/SortableProjectCard';
+import { ProjectDashboard } from '../components/projects/ProjectDashboard';
 
 function LabeledField({
   label,
@@ -46,6 +47,8 @@ export default function ProjectsPage() {
   const [draft, setDraft] = useState<Project>(emptyDraft());
   const [editing, setEditing] = useState<Project | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const selectedProject = (data ?? []).find(p => p.id === selectedProjectId) ?? null;
 
   const create = useMutation({
     mutationFn: (p: Project) => api.createProject(p),
@@ -227,6 +230,8 @@ export default function ProjectsPage() {
                       key={p.id}
                       project={p}
                       placedAgents={placedAgentsInProject(p.id)}
+                      selected={selectedProjectId === p.id}
+                      onSelect={() => setSelectedProjectId(selectedProjectId === p.id ? null : p.id)}
                       onEdit={() => setEditing(p)}
                       onDelete={() => handleDelete(p)}
                     />
@@ -237,51 +242,28 @@ export default function ProjectsPage() {
           </div>
         </div>
 
-        {/* RIGHT column: dashboard (sticky) */}
-        <div className="lg:sticky lg:top-0 lg:self-start space-y-4 min-w-0">
-          <div className="text-base font-semibold text-zinc-200">프로젝트 대시보드</div>
-          <div className="grid grid-cols-3 gap-3">
-            <StatMini label="프로젝트" value={(data ?? []).length} />
-            <StatMini
-              label="배치된 에이전트"
-              value={(agents ?? []).filter((a: Agent) => a.projectId).length}
-            />
-            <StatMini
-              label="미배치"
-              value={(agents ?? []).filter((a: Agent) => !a.projectId).length}
-            />
-          </div>
-
-          {(data?.length ?? 0) > 0 && (
-            <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
-              <div className="text-sm font-semibold text-zinc-300">에이전트 분포</div>
-              {(() => {
-                const maxCount = Math.max(...(data ?? []).map((p) => placedCountByProject(p.id)), 1);
-                return (
-                  <div className="space-y-2">
-                    {(data ?? []).map((p) => {
-                      const c = placedCountByProject(p.id);
-                      const pct = (c / maxCount) * 100;
-                      return (
-                        <div key={p.id} className="flex items-center gap-2.5 text-sm">
-                          <div
-                            className="w-2.5 h-2.5 rounded-full shrink-0"
-                            style={{ background: p.color }}
-                          />
-                          <div className="w-28 truncate text-zinc-300">{p.name}</div>
-                          <div className="flex-1 h-2.5 bg-zinc-800 rounded overflow-hidden">
-                            <div
-                              className="h-full rounded transition-all"
-                              style={{ width: `${pct}%`, background: p.color }}
-                            />
-                          </div>
-                          <div className="w-8 text-right text-zinc-400 font-mono font-semibold">{c}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
+        {/* RIGHT column: project dashboard */}
+        <div className="lg:sticky lg:top-0 lg:self-start min-w-0">
+          {selectedProject ? (
+            <ProjectDashboard project={selectedProject} agents={agents ?? []} />
+          ) : (
+            <div className="space-y-4">
+              <div className="text-base font-semibold text-zinc-200">프로젝트 대시보드</div>
+              <div className="grid grid-cols-3 gap-3">
+                <StatMini label="프로젝트" value={(data ?? []).length} />
+                <StatMini
+                  label="배치된 에이전트"
+                  value={(agents ?? []).filter((a: Agent) => a.projectId).length}
+                />
+                <StatMini
+                  label="미배치"
+                  value={(agents ?? []).filter((a: Agent) => !a.projectId).length}
+                />
+              </div>
+              <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 text-center">
+                <FolderOpen size={24} className="mx-auto text-zinc-600 mb-2" />
+                <div className="text-sm text-zinc-500">프로젝트를 클릭하면 대시보드가 열립니다</div>
+              </div>
             </div>
           )}
         </div>

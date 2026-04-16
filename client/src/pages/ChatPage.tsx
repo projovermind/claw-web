@@ -14,6 +14,7 @@ import ChatInput from '../components/chat/ChatInput';
 import TodoWidget from '../components/chat/TodoWidget';
 import { ChatSidebar } from '../components/chat/ChatSidebar';
 import { SessionTitleEditor } from '../components/chat/SessionTitleEditor';
+import { FrameworkActions } from '../components/chat/FrameworkActions';
 
 export default function ChatPage() {
   const qc = useQueryClient();
@@ -330,6 +331,12 @@ export default function ChatPage() {
               )}
               <StreamingMessage text={streaming} toolCalls={toolCalls} running={running} error={error} />
             </div>
+
+            {/* Framework action buttons */}
+            <FrameworkActions
+              disabled={!currentSessionId || running}
+              onSend={(msg) => sendMessage.mutate({ message: msg, paths: [] })}
+            />
 
             {/* Input */}
             <ChatInput

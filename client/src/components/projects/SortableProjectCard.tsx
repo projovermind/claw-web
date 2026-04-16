@@ -6,11 +6,15 @@ import type { Project, Agent } from '../../lib/types';
 export function SortableProjectCard({
   project,
   placedAgents,
+  selected,
+  onSelect,
   onEdit,
   onDelete
 }: {
   project: Project;
   placedAgents: Agent[];
+  selected?: boolean;
+  onSelect?: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -26,8 +30,11 @@ export function SortableProjectCard({
     <div
       ref={setNodeRef}
       style={style}
-      className={`rounded-md border border-zinc-800 bg-zinc-900/60 hover:border-zinc-700 px-3 py-2.5 relative group ${
-        isDragging ? 'opacity-40' : ''
+      onClick={onSelect}
+      className={`rounded-md border px-3 py-2.5 relative group cursor-pointer transition-colors ${
+        isDragging ? 'opacity-40 border-zinc-800 bg-zinc-900/60' :
+        selected ? 'border-zinc-600 bg-zinc-800/80 ring-1 ring-zinc-600' :
+        'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700'
       }`}
     >
       <div className="flex items-center gap-2">

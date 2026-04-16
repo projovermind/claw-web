@@ -85,6 +85,10 @@ export function createRunner({ processTracker } = {}) {
         }
         parts.push('\n---\n');
       }
+      // 프레임워크 자동 주입: BASE → CARL → PAUL
+      if (agent.baseContext) parts.push(agent.baseContext);
+      if (agent.carlContext) parts.push(agent.carlContext);
+      if (agent.paulContext) parts.push(agent.paulContext);
       if (agent.systemPrompt) parts.push(agent.systemPrompt);
       const systemPrompt = parts.join('\n').trim() || 'You are a helpful assistant.';
 

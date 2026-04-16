@@ -60,6 +60,27 @@ export interface Session {
   loop?: LoopConfig | null;
 }
 
+export interface GoalCard {
+  id: string;
+  title: string;
+  status: 'todo' | 'progress' | 'done';
+  description?: string;
+  createdAt: string;
+}
+
+export interface CustomWidget {
+  id: string;
+  type: 'link' | 'text' | 'kv' | 'markdown';
+  title: string;
+  value: string;
+}
+
+export interface ProjectDashboard {
+  notes: string;
+  goals: GoalCard[];
+  widgets: CustomWidget[];
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -69,6 +90,7 @@ export interface Project {
   defaultSkillIds?: string[];
   defaultAllowedTools?: string[];
   defaultDisallowedTools?: string[];
+  dashboard?: ProjectDashboard;
 }
 
 export interface Skill {

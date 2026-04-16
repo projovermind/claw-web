@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 export interface ToolCall {
   name: string;
@@ -40,7 +41,9 @@ const emptyRuntime = (): SessionRuntime => ({
   error: null
 });
 
-export const useChatStore = create<ChatState>((set) => ({
+export const useChatStore = create<ChatState>()(
+  persist(
+    (set) => ({
   currentAgentId: null,
   currentSessionId: null,
   runtime: {},
@@ -84,4 +87,13 @@ export const useChatStore = create<ChatState>((set) => ({
         [sessionId]: { ...emptyRuntime(), error }
       }
     }))
-}));
+    }),
+    {
+      name: 'claw-chat',
+      partialize: (state) => ({
+        currentAgentId: state.currentAgentId,
+        currentSessionId: state.currentSessionId
+      })
+    }
+  )
+);

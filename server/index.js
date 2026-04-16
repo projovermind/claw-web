@@ -35,7 +35,6 @@ import { attachWsHub } from './ws/hub.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { createAutoBackup } from './lib/auto-backup.js';
-import { startAutoUpdate } from './lib/auto-update.js';
 import { createStatsRouter } from './routes/stats.js';
 import { createTasksRouter } from './routes/tasks.js';
 import { createHooksRouter } from './routes/hooks.js';
@@ -103,7 +102,6 @@ async function main() {
     BACKENDS_PATH, SKILLS_PATH, SECRETS_PATH
   ]);
   autoBackup.start();
-  const autoUpdate = startAutoUpdate();
 
   configStore.onChange(() => eventBus.publish('agents.refreshed', {}));
   metadataStore.onChange(() => eventBus.publish('metadata.refreshed', {}));
@@ -185,7 +183,6 @@ async function main() {
     logger.info({ sig }, 'shutting down');
     scheduler.stop();
     autoBackup.stop();
-    autoUpdate.stop();
     wsHub.close();
     server.close();
     for (const id of runner.activeIds()) runner.abort(id);

@@ -11,7 +11,23 @@ export const projectCreateSchema = z.object({
   // these — the chat route unions them with the agent's own allowedTools/
   // disallowedTools before handing to Claude CLI.
   defaultAllowedTools: z.array(z.string().max(80)).max(50).optional(),
-  defaultDisallowedTools: z.array(z.string().max(80)).max(50).optional()
+  defaultDisallowedTools: z.array(z.string().max(80)).max(50).optional(),
+  dashboard: z.object({
+    notes: z.string().max(50000).optional().default(''),
+    goals: z.array(z.object({
+      id: z.string().max(64),
+      title: z.string().max(200),
+      status: z.enum(['todo', 'progress', 'done']),
+      description: z.string().max(2000).optional(),
+      createdAt: z.string()
+    })).max(100).optional().default([]),
+    widgets: z.array(z.object({
+      id: z.string().max(64),
+      type: z.enum(['link', 'text', 'kv', 'markdown']),
+      title: z.string().max(100),
+      value: z.string().max(5000)
+    })).max(20).optional().default([])
+  }).optional()
 }).strict();
 
 export const projectUpdateSchema = projectCreateSchema.partial().omit({ id: true }).strict();

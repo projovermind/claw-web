@@ -2,6 +2,9 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
 import { logger } from '../lib/logger.js';
+import { buildCarlContext } from '../lib/carl-injector.js';
+import { buildBaseContext } from '../lib/base-reader.js';
+import { buildPaulContext } from '../lib/paul-reader.js';
 
 const sendSchema = z.object({
   sessionId: z.string().min(1),
@@ -119,6 +122,20 @@ export function createChatRouter({
     const resolved = resolveAgent(session.agentId);
     if (!resolved) return;
     const { agent, envOverrides, backendType, backendConfig } = resolved;
+
+    // ── 프레임워크 자동 주입 ──
+    // BASE: 워크스페이스 건강 상태 (첫 메시지에만)
+    const isFirstMsg = !session.messages?.length || session.messages.length <= 1;
+    if (isFirstMsg) {
+      const baseCtx = buildBaseContext(agent.workingDir);
+      if (baseCtx) agent.baseContext = baseCtx;
+    }
+    // CARL: 키워드 매칭 규칙 (매 메시지)
+    const carlContext = buildCarlContext(agent.workingDir, message);
+    if (carlContext) agent.carlContext = carlContext;
+    // PAUL: 프로젝트 Phase/State (.paul/ 있으면)
+    const paulCtx = buildPaulContext(agent.workingDir);
+    if (paulCtx) agent.paulContext = paulCtx;
 
     let accumText = '';
     const toolCalls = [];
