@@ -51,6 +51,81 @@ export function createProjectsRouter({ projectsStore, configStore, metadataStore
     }
   });
 
+  // ── Dashboard API (에이전트가 직접 호출 가능) ──
+
+  // 목표 카드 추가
+  router.post('/:id/goals', async (req, res, next) => {
+    try {
+      const project = projectsStore.getById(req.params.id);
+      if (!project) return next(new HttpError(404, 'Project not found', 'PROJECT_NOT_FOUND'));
+      const { title, status, description } = req.body;
+      if (!title) return next(new HttpError(400, 'title required', 'INVALID_BODY'));
+      const dashboard = project.dashboard ?? { notes: '', goals: [], widgets: [] };
+      const card = {
+        id: `goal_${Date.now().toString(36)}`,
+        title,
+        status: status || 'todo',
+        description: description || '',
+        createdAt: new Date().toISOString()
+      };
+      dashboard.goals = [...dashboard.goals, card];
+      await projectsStore.update(req.params.id, { dashboard });
+      if (eventBus) eventBus.publish('project.updated', { project: { ...project, dashboard } });
+      res.json(card);
+    } catch (err) { next(err); }
+  });
+
+  // 목표 카드 상태 변경
+  router.patch('/:id/goals/:goalId', async (req, res, next) => {
+    try {
+      const project = projectsStore.getById(req.params.id);
+      if (!project) return next(new HttpError(404, 'Project not found', 'PROJECT_NOT_FOUND'));
+      const dashboard = project.dashboard ?? { notes: '', goals: [], widgets: [] };
+      const goal = dashboard.goals.find(g => g.id === req.params.goalId);
+      if (!goal) return next(new HttpError(404, 'Goal not found', 'GOAL_NOT_FOUND'));
+      if (req.body.status) goal.status = req.body.status;
+      if (req.body.title) goal.title = req.body.title;
+      if (req.body.description !== undefined) goal.description = req.body.description;
+      await projectsStore.update(req.params.id, { dashboard });
+      if (eventBus) eventBus.publish('project.updated', { project: { ...project, dashboard } });
+      res.json(goal);
+    } catch (err) { next(err); }
+  });
+
+  // 커스텀 위젯 추가
+  router.post('/:id/widgets', async (req, res, next) => {
+    try {
+      const project = projectsStore.getById(req.params.id);
+      if (!project) return next(new HttpError(404, 'Project not found', 'PROJECT_NOT_FOUND'));
+      const { type, title, value } = req.body;
+      if (!title || !value) return next(new HttpError(400, 'title and value required', 'INVALID_BODY'));
+      const dashboard = project.dashboard ?? { notes: '', goals: [], widgets: [] };
+      const widget = {
+        id: `w_${Date.now().toString(36)}`,
+        type: type || 'text',
+        title,
+        value
+      };
+      dashboard.widgets = [...dashboard.widgets, widget];
+      await projectsStore.update(req.params.id, { dashboard });
+      if (eventBus) eventBus.publish('project.updated', { project: { ...project, dashboard } });
+      res.json(widget);
+    } catch (err) { next(err); }
+  });
+
+  // 메모 업데이트
+  router.put('/:id/notes', async (req, res, next) => {
+    try {
+      const project = projectsStore.getById(req.params.id);
+      if (!project) return next(new HttpError(404, 'Project not found', 'PROJECT_NOT_FOUND'));
+      const dashboard = project.dashboard ?? { notes: '', goals: [], widgets: [] };
+      dashboard.notes = req.body.notes ?? '';
+      await projectsStore.update(req.params.id, { dashboard });
+      if (eventBus) eventBus.publish('project.updated', { project: { ...project, dashboard } });
+      res.json({ notes: dashboard.notes });
+    } catch (err) { next(err); }
+  });
+
   router.delete('/:id', async (req, res, next) => {
     try {
       if (!projectsStore.getById(req.params.id)) {

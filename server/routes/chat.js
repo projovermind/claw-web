@@ -137,6 +137,12 @@ export function createChatRouter({
     const paulCtx = buildPaulContext(agent.workingDir);
     if (paulCtx) agent.paulContext = paulCtx;
 
+    // 대시보드 API 안내: 프로젝트 소속 에이전트에게 대시보드 조작 방법 주입
+    const meta = metadataStore?.getAgent(session.agentId);
+    if (meta?.projectId) {
+      agent.dashboardHint = `\n<dashboard-api>\n작업 완료/진행 시 프로젝트 대시보드를 업데이트할 수 있습니다.\n- 목표 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/goals -H "Content-Type: application/json" -d '{"title":"목표","status":"todo"}'\n- 목표 완료: curl -s -X PATCH http://localhost:3838/api/projects/${meta.projectId}/goals/GOAL_ID -H "Content-Type: application/json" -d '{"status":"done"}'\n- 위젯 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/widgets -H "Content-Type: application/json" -d '{"type":"link","title":"제목","value":"URL"}'\n- 메모 수정: curl -s -X PUT http://localhost:3838/api/projects/${meta.projectId}/notes -H "Content-Type: application/json" -d '{"notes":"내용"}'\n</dashboard-api>`;
+    }
+
     let accumText = '';
     const toolCalls = [];
 

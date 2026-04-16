@@ -108,6 +108,57 @@ const TOOL_DEFINITIONS = [
       },
     },
   },
+  // ── 대시보드 도구 (에이전트가 프로젝트 대시보드 조작) ──
+  {
+    type: 'function',
+    function: {
+      name: 'dashboard_goal',
+      description: 'Add or update a project goal card on the dashboard. Use when completing tasks or tracking progress.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string', description: 'Project ID' },
+          action: { type: 'string', enum: ['add', 'update'], description: 'add new goal or update existing' },
+          goal_id: { type: 'string', description: 'Goal ID (for update)' },
+          title: { type: 'string', description: 'Goal title' },
+          status: { type: 'string', enum: ['todo', 'progress', 'done'], description: 'Goal status' },
+        },
+        required: ['project_id', 'action'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'dashboard_widget',
+      description: 'Add a custom widget to the project dashboard (link, text, key-value).',
+      parameters: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string', description: 'Project ID' },
+          type: { type: 'string', enum: ['link', 'text', 'kv', 'markdown'], description: 'Widget type' },
+          title: { type: 'string', description: 'Widget title' },
+          value: { type: 'string', description: 'Widget value (URL, text, KEY=VALUE lines, or markdown)' },
+        },
+        required: ['project_id', 'type', 'title', 'value'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'dashboard_note',
+      description: 'Update project notes/memo on the dashboard.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project_id: { type: 'string', description: 'Project ID' },
+          notes: { type: 'string', description: 'Markdown notes content' },
+        },
+        required: ['project_id', 'notes'],
+      },
+    },
+  },
 ];
 
 // ─────────────────────────────────────────
@@ -147,11 +198,49 @@ function executeTool(name, args, workingDir) {
       case 'bash': return execBash(args, workingDir);
       case 'grep': return execGrep(args, workingDir);
       case 'glob_search': return execGlob(args, workingDir);
+      case 'dashboard_goal': return execDashboardGoal(args);
+      case 'dashboard_widget': return execDashboardWidget(args);
+      case 'dashboard_note': return execDashboardNote(args);
       default: return `Error: Unknown tool "${name}"`;
     }
   } catch (err) {
     return `Error: ${err.message}`;
   }
+}
+
+// ─────────────────────────────────────────
+//  대시보드 도구 (HTTP API via execFileSync)
+// ─────────────────────────────────────────
+function dashboardApi(method, urlPath, body) {
+  try {
+    const args = ['-s', '-X', method, `http://localhost:3838/api/projects${urlPath}`, '-H', 'Content-Type: application/json'];
+    if (body) args.push('-d', JSON.stringify(body));
+    return execSync(['curl', ...args].map(a => `'${a}'`).join(' '), { timeout: 10000, encoding: 'utf-8', shell: '/bin/sh' });
+  } catch (err) {
+    return `Error: ${err.message}`;
+  }
+}
+
+function execDashboardGoal(args) {
+  const { project_id, action, goal_id, title, status } = args;
+  if (action === 'add') {
+    return dashboardApi('POST', `/${project_id}/goals`, { title: title || 'Untitled', status: status || 'todo' });
+  }
+  if (action === 'update' && goal_id) {
+    const patch = {};
+    if (status) patch.status = status;
+    if (title) patch.title = title;
+    return dashboardApi('PATCH', `/${project_id}/goals/${goal_id}`, patch);
+  }
+  return 'Error: invalid action or missing goal_id';
+}
+
+function execDashboardWidget(args) {
+  return dashboardApi('POST', `/${args.project_id}/widgets`, { type: args.type, title: args.title, value: args.value });
+}
+
+function execDashboardNote(args) {
+  return dashboardApi('PUT', `/${args.project_id}/notes`, { notes: args.notes });
 }
 
 function execReadFile(args, workingDir) {

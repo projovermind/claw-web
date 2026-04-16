@@ -22,7 +22,7 @@ const CLAUDE_BIN = findClaudeBin();
 
 // 봇과 동일한 MODEL_ID_MAP
 const MODEL_ID_MAP = {
-  opus: 'claude-opus-4-6',
+  opus: 'claude-opus-4-7',
   sonnet: 'claude-sonnet-4-6',
   haiku: 'claude-sonnet-4-6' // haiku banned → sonnet fallback
 };
@@ -86,10 +86,11 @@ export function startClaudeRun({
     }
     parts.push('\n---\n');
   }
-  // 프레임워크 자동 주입 순서: BASE → CARL → PAUL
+  // 프레임워크 자동 주입 순서: BASE → CARL → PAUL → Dashboard
   if (agent.baseContext) parts.push(agent.baseContext);
   if (agent.carlContext) parts.push(agent.carlContext);
   if (agent.paulContext) parts.push(agent.paulContext);
+  if (agent.dashboardHint) parts.push(agent.dashboardHint);
   if (!agent.lightweightMode && agent.systemPrompt) {
     parts.push(agent.systemPrompt);
   }
