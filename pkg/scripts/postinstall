@@ -1,0 +1,163 @@
+#!/bin/bash
+# Claw Web — postinstall: npm install + LaunchAgent + 사용자 설정
+set -e
+
+INSTALL_DIR="/usr/local/lib/claw-web"
+LOG="/tmp/claw-web-install.log"
+
+echo "[postinstall] $(date)" >> "$LOG"
+
+# ── Node/npm 경로 확보 ───────────────────────────────────
+export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:$PATH"
+
+NODE_BIN=$(command -v node 2>/dev/null || echo "/usr/local/bin/node")
+NPM_BIN=$(command -v npm 2>/dev/null || echo "/usr/local/bin/npm")
+
+echo "[postinstall] node=$NODE_BIN npm=$NPM_BIN" >> "$LOG"
+
+# ── 1. npm install ────────────────────────────────────────
+# 서버: production deps만 (devDeps 불필요)
+echo "[postinstall] npm install (server)..." >> "$LOG"
+cd "$INSTALL_DIR"
+"$NPM_BIN" install --omit=dev --loglevel=error 2>> "$LOG" || \
+"$NPM_BIN" install --production --loglevel=error 2>> "$LOG" || true
+
+# 클라이언트: devDeps 포함 (vite, typescript, tailwind 빌드에 필요)
+echo "[postinstall] npm install (client — with devDeps for build)..." >> "$LOG"
+"$NPM_BIN" --prefix client install --loglevel=error 2>> "$LOG" || true
+
+# ── 2. 클라이언트 빌드 ───────────────────────────────────
+echo "[postinstall] building client..." >> "$LOG"
+"$NPM_BIN" run build 2>> "$LOG" || true
+
+# 빌드 후 client devDeps 정리 (용량 절약)
+echo "[postinstall] cleaning client devDeps..." >> "$LOG"
+"$NPM_BIN" --prefix client prune --omit=dev --loglevel=error 2>> "$LOG" || true
+
+# ── 3. 실제 유저 홈 감지 ──────────────────────────────────
+REAL_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "$SUDO_USER")
+REAL_HOME=$(eval echo "~$REAL_USER" 2>/dev/null)
+if [ -z "$REAL_HOME" ] || [ "$REAL_HOME" = "~" ]; then
+  REAL_HOME="$HOME"
+fi
+
+echo "[postinstall] real user=$REAL_USER home=$REAL_HOME" >> "$LOG"
+
+# ── 4. 사용자 데이터 디렉토리 ─────────────────────────────
+USER_DATA="$REAL_HOME/.claw-web"
+mkdir -p "$USER_DATA"
+
+# 데이터 파일 심볼릭 링크 (설치 디렉토리 → 유저 디렉토리)
+for f in sessions.json projects.json skills.json web-metadata.json secrets.json hooks.json schedules.json; do
+  if [ ! -f "$USER_DATA/$f" ]; then
+    case "$f" in
+      secrets.json)
+        echo '{"version":1,"backends":{}}' > "$USER_DATA/$f"
+        chmod 600 "$USER_DATA/$f" ;;
+      sessions.json)
+        echo '{"version":1,"sessions":{}}' > "$USER_DATA/$f" ;;
+      projects.json)
+        echo '{"version":1,"projects":[]}' > "$USER_DATA/$f" ;;
+      skills.json)
+        echo '{"version":1,"skills":{}}' > "$USER_DATA/$f" ;;
+      web-metadata.json)
+        echo '{"version":1,"agents":{}}' > "$USER_DATA/$f" ;;
+      *)
+        echo '{"version":1}' > "$USER_DATA/$f" ;;
+    esac
+  fi
+  # 설치 디렉토리에 심볼릭 링크
+  ln -sf "$USER_DATA/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
+done
+
+# web-config.json (없으면 생성)
+if [ ! -f "$USER_DATA/web-config.json" ]; then
+  cat > "$USER_DATA/web-config.json" << 'CFGJSON'
+{
+  "port": 3838,
+  "configPath": null,
+  "botLogPath": null,
+  "botPidFile": null,
+  "allowedRoots": [],
+  "features": {
+    "dashboard": true,
+    "agentsPage": true,
+    "dragAndDrop": true,
+    "chat": true,
+    "activityFeed": true,
+    "mdEditor": true
+  },
+  "auth": {
+    "enabled": false,
+    "token": null
+  }
+}
+CFGJSON
+fi
+ln -sf "$USER_DATA/web-config.json" "$INSTALL_DIR/web-config.json" 2>/dev/null || true
+
+# backends.json 심볼릭 링크
+if [ ! -f "$USER_DATA/backends.json" ]; then
+  cp "$INSTALL_DIR/backends.json" "$USER_DATA/backends.json"
+fi
+ln -sf "$USER_DATA/backends.json" "$INSTALL_DIR/backends.json" 2>/dev/null || true
+
+# agents-config.json 심볼릭 링크
+if [ ! -f "$USER_DATA/agents-config.json" ]; then
+  cp "$INSTALL_DIR/agents-config.json" "$USER_DATA/agents-config.json"
+fi
+ln -sf "$USER_DATA/agents-config.json" "$INSTALL_DIR/agents-config.json" 2>/dev/null || true
+
+echo "[postinstall] data dir ready: $USER_DATA" >> "$LOG"
+
+# ── 5. LaunchAgent 등록 ──────────────────────────────────
+PLIST_DIR="$REAL_HOME/Library/LaunchAgents"
+mkdir -p "$PLIST_DIR"
+
+cat > "$PLIST_DIR/com.claw-web.server.plist" << EOFPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claw-web.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$NODE_BIN</string>
+        <string>$INSTALL_DIR/server/index.js</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$INSTALL_DIR</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/claw-web.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/claw-web.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+EOFPLIST
+
+echo "[postinstall] LaunchAgent created" >> "$LOG"
+
+# ── 6. 소유자 수정 + 서비스 시작 ──────────────────────────
+if [ -n "$REAL_USER" ] && [ "$REAL_USER" != "root" ]; then
+  chown -R "$REAL_USER" "$USER_DATA" 2>/dev/null || true
+  chown "$REAL_USER" "$PLIST_DIR/com.claw-web.server.plist" 2>/dev/null || true
+  # 유저 컨텍스트로 LaunchAgent 로드
+  su "$REAL_USER" -c "launchctl load '$PLIST_DIR/com.claw-web.server.plist'" 2>/dev/null || true
+fi
+
+# ── 7. 브라우저 열기 ──────────────────────────────────────
+sleep 2
+su "$REAL_USER" -c "open http://localhost:3838" 2>/dev/null || true
+
+echo "[postinstall] COMPLETE" >> "$LOG"
+exit 0

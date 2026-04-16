@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Claw Web v1.1.0</title>
+    <organization>com.claw-web</organization>
+    <domains enable_localSystem="true"/>
+
+    <welcome     file="welcome.html"    mime-type="text/html"/>
+    <readme      file="readme.html"     mime-type="text/html"/>
+    <license     file="license.html"    mime-type="text/html"/>
+    <conclusion  file="conclusion.html" mime-type="text/html"/>
+
+    <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
+    <os-version min="11.0"/>
+
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.claw-web.pkg"/>
+        </line>
+    </choices-outline>
+
+    <choice
+        id="default"
+        title="Claw Web"
+        description="Claude Agent Management Platform"/>
+
+    <choice
+        id="com.claw-web.pkg"
+        visible="false">
+        <pkg-ref id="com.claw-web.pkg"/>
+    </choice>
+
+    <pkg-ref
+        id="com.claw-web.pkg"
+        version="1.1.0"
+        onConclusion="none">
+        claw-web-core.pkg
+    </pkg-ref>
+</installer-gui-script>

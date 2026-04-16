@@ -1,0 +1,19 @@
+{
+  "port": 3838,
+  "configPath": null,
+  "botLogPath": null,
+  "botPidFile": null,
+  "allowedRoots": [],
+  "features": {
+    "dashboard": true,
+    "agentsPage": true,
+    "dragAndDrop": true,
+    "chat": true,
+    "activityFeed": true,
+    "mdEditor": true
+  },
+  "auth": {
+    "enabled": false,
+    "token": null
+  }
+}

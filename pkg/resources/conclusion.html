@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; color: #1d1d1f; line-height: 1.6; padding: 20px; }
+  h2 { font-size: 22px; font-weight: 600; color: #34c759; margin-bottom: 8px; }
+  .subtitle { color: #86868b; font-size: 14px; margin-bottom: 24px; }
+  .section { background: #f5f5f7; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; }
+  .section h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px 0; }
+  code { background: #e8e8ed; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  .cmd { background: #1d1d1f; color: #30d158; padding: 12px 16px; border-radius: 8px; font-family: "SF Mono", monospace; font-size: 13px; margin: 8px 0; }
+</style>
+</head>
+<body>
+  <h2>설치 완료!</h2>
+  <div class="subtitle">Claw Web이 성공적으로 설치되었습니다.</div>
+
+  <div class="section">
+    <h3>지금 바로 시작</h3>
+    <div class="cmd">open http://localhost:3838</div>
+    <p style="font-size:13px; color:#86868b;">서버가 자동으로 시작됩니다. 브라우저에서 위 주소로 접속하세요.</p>
+  </div>
+
+  <div class="section">
+    <h3>초기 설정</h3>
+    <ol style="font-size:13px;">
+      <li><b>Settings</b> &rarr; AI Backends에서 Anthropic API 키 입력</li>
+      <li><b>Agents</b> 탭에서 에이전트 추가</li>
+      <li><b>Chat</b> 탭에서 대화 시작!</li>
+    </ol>
+  </div>
+
+  <div class="section">
+    <h3>유용한 명령어</h3>
+    <p style="font-size:13px;">
+      서버 로그: <code>tail -f /tmp/claw-web.log</code><br>
+      서버 중지: <code>launchctl unload ~/Library/LaunchAgents/com.claw-web.server.plist</code><br>
+      서버 시작: <code>launchctl load ~/Library/LaunchAgents/com.claw-web.server.plist</code><br>
+      수동 실행: <code>cd /usr/local/lib/claw-web && npm start</code>
+    </p>
+  </div>
+</body>
+</html>

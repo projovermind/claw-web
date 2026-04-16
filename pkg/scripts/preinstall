@@ -1,0 +1,27 @@
+#!/bin/bash
+# Claw Web — preinstall: Node.js 확인
+set -e
+LOG="/tmp/claw-web-install.log"
+echo "[preinstall] $(date)" >> "$LOG"
+
+# Node.js 확인
+NODE_PATH=""
+for p in /usr/local/bin/node /opt/homebrew/bin/node; do
+  if [ -x "$p" ]; then NODE_PATH="$p"; break; fi
+done
+
+if [ -z "$NODE_PATH" ]; then
+  osascript -e 'display dialog "Node.js가 설치되어 있지 않습니다.\nhttps://nodejs.org 에서 먼저 설치해주세요." buttons {"확인"} default button 1 with icon stop with title "Claw Web"'
+  echo "[preinstall] FAILED: Node.js not found" >> "$LOG"
+  exit 1
+fi
+
+NODE_VER=$($NODE_PATH -v | sed 's/v//' | cut -d. -f1)
+if [ "$NODE_VER" -lt 20 ]; then
+  osascript -e "display dialog \"Node.js 20 이상이 필요합니다.\n현재: v$($NODE_PATH -v)\nhttps://nodejs.org 에서 업데이트해주세요.\" buttons {\"확인\"} default button 1 with icon stop with title \"Claw Web\""
+  echo "[preinstall] FAILED: Node.js too old ($NODE_VER)" >> "$LOG"
+  exit 1
+fi
+
+echo "[preinstall] Node.js OK: $($NODE_PATH -v)" >> "$LOG"
+exit 0
