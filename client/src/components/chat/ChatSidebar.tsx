@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, Star, Download, CheckSquare, Square, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -64,16 +64,27 @@ export function ChatSidebar({
   }, [allSessionsData]);
 
   // 프로젝트/에이전트별 상태 계산 (unread/running)
+  // 현재 열린 세션은 unread에서 제외 (markRead race 방어)
   const agentStatus = useMemo(() => {
     const all = allSessionsData?.sessions ?? [];
     const byAgent: Record<string, { unread: boolean; running: boolean }> = {};
     for (const s of all) {
       if (!byAgent[s.agentId]) byAgent[s.agentId] = { unread: false, running: false };
-      if (unread[s.id]) byAgent[s.agentId].unread = true;
+      if (unread[s.id] && s.id !== currentSessionId) byAgent[s.agentId].unread = true;
       if (s.isRunning) byAgent[s.agentId].running = true;
     }
     return byAgent;
-  }, [allSessionsData, unread]);
+  }, [allSessionsData, unread, currentSessionId]);
+
+  // Orphan unread 정리: 세션 리스트에 없는 unread id 제거 (삭제된 세션이 남긴 파란점 제거)
+  const markRead = useChatStore((s) => s.markRead);
+  useEffect(() => {
+    const all = allSessionsData?.sessions ?? [];
+    if (all.length === 0) return;
+    const validIds = new Set(all.map((s: Session) => s.id));
+    const orphans = Object.keys(unread).filter(id => !validIds.has(id));
+    for (const id of orphans) markRead(id);
+  }, [allSessionsData, unread, markRead]);
 
   const projectStatus = useMemo(() => {
     const byProject: Record<string, { unread: boolean; running: boolean }> = {};

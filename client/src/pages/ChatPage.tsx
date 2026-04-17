@@ -457,6 +457,7 @@ function MobileHeader({
   const [sessOpen, setSessOpen] = useState(false);
   const projRef = useRef<HTMLDivElement>(null);
   const sessRef = useRef<HTMLDivElement>(null);
+  const unread = useChatStore((s) => s.unread);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -470,6 +471,45 @@ function MobileHeader({
 
   // Global agents for the project picker
   const globalAgents = agents.filter((a) => a.tier === 'main' || (!a.projectId && !a.tier));
+
+  // 전역 모든 세션 (프로젝트/에이전트 점 계산용)
+  const allSessionsQ = useQuery<{ sessions: Session[] }>({
+    queryKey: ['sessions-all'],
+    queryFn: api.allSessions,
+    refetchInterval: 5000
+  });
+  // 에이전트별 상태 집계 (현재 열린 세션은 unread 제외)
+  const agentStatus = useMemo(() => {
+    const all = allSessionsQ.data?.sessions ?? [];
+    const byAgent: Record<string, { unread: boolean; running: boolean }> = {};
+    for (const s of all) {
+      if (!byAgent[s.agentId]) byAgent[s.agentId] = { unread: false, running: false };
+      if (unread[s.id] && s.id !== currentSessionId) byAgent[s.agentId].unread = true;
+      if (s.isRunning) byAgent[s.agentId].running = true;
+    }
+    return byAgent;
+  }, [allSessionsQ.data, unread, currentSessionId]);
+  // 프로젝트별 상태 집계
+  const projectStatus = useMemo(() => {
+    const byProject: Record<string, { unread: boolean; running: boolean }> = {};
+    for (const a of agents) {
+      if (!a.projectId) continue;
+      const s = agentStatus[a.id];
+      if (!s) continue;
+      if (!byProject[a.projectId]) byProject[a.projectId] = { unread: false, running: false };
+      if (s.unread) byProject[a.projectId].unread = true;
+      if (s.running) byProject[a.projectId].running = true;
+    }
+    return byProject;
+  }, [agentStatus, agents]);
+  // 세션별 unread (현재 열린 세션 제외)
+  const sessionUnread = (sid: string) => !!unread[sid] && sid !== currentSessionId;
+  // 상태 점 컴포넌트
+  const StatusDot = ({ unread, running }: { unread: boolean; running: boolean }) => {
+    if (!unread && !running) return null;
+    const color = unread ? 'bg-sky-400' : 'bg-amber-400';
+    return <span className={`w-1.5 h-1.5 rounded-full ${color} animate-pulse shrink-0`} />;
+  };
 
   return (
     <div className="lg:hidden flex items-center gap-1.5 px-2 py-2 border-b border-zinc-800 bg-zinc-950/90 relative z-20">
@@ -496,28 +536,40 @@ function MobileHeader({
         </button>
         {projOpen && (
           <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl max-h-64 overflow-y-auto z-50">
-            {projects.map((p) => (
-              <button key={p.id}
-                onClick={() => { onSelectProject(p); setProjOpen(false); }}
-                className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 ${currentProject?.id === p.id ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'}`}>
-                <div className="w-2 h-2 rounded-full" style={{ background: p.color ?? '#666' }} />
-                <span className="truncate">{p.name}</span>
-              </button>
-            ))}
+            {/* Global agents first */}
             {globalAgents.length > 0 && (
               <>
-                <div className="border-t border-zinc-800 px-3 py-1 text-[11px] text-zinc-500">{t('chat.mobileGlobal')}</div>
-                {globalAgents.slice(0, 5).map((a) => (
-                  <button key={a.id}
-                    onClick={() => { onSelectAgent(a.id); onSelectSession(null); setProjOpen(false); }}
-                    className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 ${
-                      currentAgent?.id === a.id ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'
-                    }`}>
-                    <span>{a.avatar ?? '🤖'}</span><span className="truncate">{a.name}</span>
-                  </button>
-                ))}
+                <div className="px-3 py-1 text-[11px] text-zinc-500">{t('chat.mobileGlobal')}</div>
+                {globalAgents.slice(0, 5).map((a) => {
+                  const st = agentStatus[a.id] ?? { unread: false, running: false };
+                  return (
+                    <button key={a.id}
+                      onClick={() => { onSelectAgent(a.id); onSelectSession(null); setProjOpen(false); }}
+                      className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 ${
+                        currentAgent?.id === a.id ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'
+                      }`}>
+                      <span>{a.avatar ?? '🤖'}</span>
+                      <span className="truncate flex-1">{a.name}</span>
+                      <StatusDot unread={st.unread} running={st.running} />
+                    </button>
+                  );
+                })}
+                <div className="border-t border-zinc-800" />
               </>
             )}
+            {/* Projects */}
+            {projects.map((p) => {
+              const pst = projectStatus[p.id] ?? { unread: false, running: false };
+              return (
+                <button key={p.id}
+                  onClick={() => { onSelectProject(p); setProjOpen(false); }}
+                  className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 ${currentProject?.id === p.id ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'}`}>
+                  <div className="w-2 h-2 rounded-full" style={{ background: p.color ?? '#666' }} />
+                  <span className="truncate flex-1">{p.name}</span>
+                  <StatusDot unread={pst.unread} running={pst.running} />
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -545,6 +597,7 @@ function MobileHeader({
                 className={`w-full text-left px-3 py-2 text-xs flex items-center gap-1.5 ${currentSessionId === s.id ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'}`}>
                 {s.pinned && <Pin size={10} className="text-amber-400 shrink-0" />}
                 <span className="truncate flex-1">{s.title}</span>
+                <StatusDot unread={sessionUnread(s.id)} running={!!s.isRunning} />
               </button>
             ))}
             {sessions.length === 0 && (
