@@ -62,7 +62,12 @@ export function ChoicesList({ choices, onChoice }: { choices: string[]; onChoice
           className="text-left px-3 py-2 rounded border border-zinc-700 bg-zinc-800/40 hover:border-emerald-600 hover:bg-emerald-900/20 text-zinc-200 text-xs transition-colors"
         >
           <span className="text-emerald-400 font-mono mr-2">{i + 1}.</span>
-          {c}
+          <span className="markdown-body inline-block" style={{ display: 'inline' }}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}
+              components={{ p: ({children}) => <span>{children}</span> }}>
+              {c}
+            </ReactMarkdown>
+          </span>
         </button>
       ))}
       {customOpen ? (
@@ -185,8 +190,8 @@ function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessag
         className={`max-w-[80%] rounded-lg px-4 py-3 text-sm break-words relative ${
           isUser
             ? isQueued
-              ? 'bg-sky-900/40 border border-sky-700/50 text-zinc-100 whitespace-pre-wrap'
-              : 'bg-zinc-700/60 text-zinc-100 whitespace-pre-wrap'
+              ? 'bg-sky-900/40 border border-sky-700/50 text-zinc-100'
+              : 'bg-zinc-700/60 text-zinc-100'
             : 'bg-zinc-900/60 border border-zinc-800 text-zinc-200'
         }`}
       >
@@ -196,7 +201,15 @@ function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessag
           </div>
         )}
         {isUser ? (
-          searchQuery ? <HighlightText text={message.content} query={searchQuery} /> : message.content
+          searchQuery ? (
+            <HighlightText text={message.content} query={searchQuery} />
+          ) : (
+            <div className="markdown-body">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {message.content}
+              </ReactMarkdown>
+            </div>
+          )
         ) : (
           <div className="markdown-body">
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>

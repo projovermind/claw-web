@@ -289,23 +289,62 @@ export function createChatRouter({
    * 5. Publish delegation.started event
    * 6. Append a "[위임 중]" message to the origin session
    */
+  /**
+   * 텍스트에서 "delegate" 키가 있는 JSON 블록을 찾아 파싱 (중첩 괄호 균형)
+   */
+  function extractDelegateJson(text) {
+    // 코드 블록 안에 있을 수도 있음
+    const candidates = [];
+    // 1) ```json ... ``` 코드 블록
+    const codeBlocks = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
+    for (const cb of codeBlocks) candidates.push(cb[1]);
+    // 2) 전체 텍스트
+    candidates.push(text);
+
+    for (const src of candidates) {
+      let idx = src.indexOf('"delegate"');
+      while (idx !== -1) {
+        // 앞으로 가서 여는 중괄호 찾기
+        let start = src.lastIndexOf('{', idx);
+        if (start === -1) { idx = src.indexOf('"delegate"', idx + 1); continue; }
+        // 균형 맞는 닫는 중괄호
+        let depth = 0, end = -1, inString = false, prev = '';
+        for (let i = start; i < src.length; i++) {
+          const c = src[i];
+          if (inString) {
+            if (c === '"' && prev !== '\\') inString = false;
+          } else {
+            if (c === '"') inString = true;
+            else if (c === '{') depth++;
+            else if (c === '}') {
+              depth--;
+              if (depth === 0) { end = i; break; }
+            }
+          }
+          prev = c;
+        }
+        if (end !== -1) {
+          try {
+            const obj = JSON.parse(src.slice(start, end + 1));
+            if (obj?.delegate?.agent && obj?.delegate?.task) return obj;
+          } catch { /* ignore, try next */ }
+        }
+        idx = src.indexOf('"delegate"', idx + 1);
+      }
+    }
+    return null;
+  }
+
   async function handleDelegation(originSessionId, responseText) {
     if (!delegationTracker || !responseText) return;
-
-    // Pattern: {"delegate": {"agent": "...", "task": "..."}}
-    // Could also be {"message": "...", "delegate": {"agent": "...", "task": "..."}}
-    const match = responseText.match(
-      /\{\s*"delegate"\s*:\s*\{\s*"agent"\s*:\s*"([^"]+)"\s*,\s*"task"\s*:\s*"([^"]+)"(?:\s*,\s*"(?:model|loop)"\s*:\s*(?:"[^"]*"|true|false|null|\d+))*\s*\}\s*\}/
+    const parsed = extractDelegateJson(responseText);
+    if (!parsed) return;
+    return executeDelegation(
+      originSessionId,
+      parsed.delegate.agent,
+      parsed.delegate.task,
+      JSON.stringify(parsed)
     );
-    if (!match) {
-      // Try alternate format with "message" field first
-      const match2 = responseText.match(
-        /\{\s*"message"\s*:\s*"[^"]*"\s*,\s*"delegate"\s*:\s*\{\s*"agent"\s*:\s*"([^"]+)"\s*,\s*"task"\s*:\s*"([^"]+)"(?:\s*,\s*"(?:model|loop)"\s*:\s*(?:"[^"]*"|true|false|null|\d+))*\s*\}\s*\}/
-      );
-      if (!match2) return;
-      return executeDelegation(originSessionId, match2[1], match2[2], responseText);
-    }
-    return executeDelegation(originSessionId, match[1], match[2], responseText);
   }
 
   async function executeDelegation(originSessionId, targetAgentId, task, rawText) {
