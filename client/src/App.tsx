@@ -6,6 +6,7 @@ import ProjectsPage from './pages/ProjectsPage';
 import ChatPage from './pages/ChatPage';
 import SettingsPage from './pages/SettingsPage';
 import SkillsPage from './pages/SkillsPage';
+import SetupWizard from './pages/SetupWizard';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useGlobalFileDrop } from './hooks/useGlobalFileDrop';
 import GlobalDropOverlay from './components/layout/GlobalDropOverlay';
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/skills" element={<SkillsPage />} />
         <Route path="/chat" element={<ChatPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/setup" element={<SetupWizard />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

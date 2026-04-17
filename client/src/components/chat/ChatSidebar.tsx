@@ -338,21 +338,19 @@ export function ChatSidebar({
         {sessions
           .slice()
           .sort((a, b) => {
-            // 1순위: 안 읽음
-            const au = unread[a.id] ? 1 : 0;
-            const bu = unread[b.id] ? 1 : 0;
+            // 현재 열린 세션은 항상 읽음 취급
+            const au = unread[a.id] && a.id !== currentSessionId ? 1 : 0;
+            const bu = unread[b.id] && b.id !== currentSessionId ? 1 : 0;
             if (au !== bu) return bu - au;
-            // 2순위: 핀
             const ap = a.pinned ? 1 : 0;
             const bp = b.pinned ? 1 : 0;
             if (ap !== bp) return bp - ap;
-            // 3순위: 최신
             return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
           })
           .map((s) => {
             const isSelected = selectedIds.has(s.id);
             const isDelegated = s.title?.startsWith('[위임]');
-            const isUnread = !!unread[s.id];
+            const isUnread = !!unread[s.id] && s.id !== currentSessionId;
             return (
               <div
                 key={s.id}

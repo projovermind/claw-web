@@ -56,11 +56,24 @@ export default function ChatPage() {
     }
   }, [agentsQ.data, currentAgentId, setCurrentAgent]);
 
-  // 현재 세션 열려있으면 자동으로 읽음 처리 (새로고침/탭 복귀 포함)
+  // 현재 세션 열려있으면 자동으로 읽음 처리 (새로고침/탭 복귀/visibility)
   const markRead = useChatStore((s) => s.markRead);
   useEffect(() => {
     if (currentSessionId) markRead(currentSessionId);
   }, [currentSessionId, markRead, sessionQ.data?.messages?.length]);
+
+  // 탭 visibility 변경 시 현재 세션 읽음 처리
+  useEffect(() => {
+    const onVis = () => {
+      if (!document.hidden && currentSessionId) markRead(currentSessionId);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onVis);
+    };
+  }, [currentSessionId, markRead]);
 
   const createSession = useMutation({
     mutationFn: () => api.createSession(currentAgentId!),

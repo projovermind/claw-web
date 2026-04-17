@@ -24,14 +24,19 @@ export default function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const unread = useChatStore((s) => s.unread);
+  const currentSessionId = useChatStore((s) => s.currentSessionId);
+  const isChatActive = location.pathname.startsWith('/chat');
   const { data: sessionsData } = useQuery({
     queryKey: ['sessions-all'],
     queryFn: api.allSessions,
     refetchInterval: 5000
   });
-  const hasUnread = Object.keys(unread).length > 0;
+  // 채팅 탭 + 세션 열려있으면 그 세션은 unread에서 제외
+  const visibleUnread = Object.keys(unread).filter(
+    (sid) => !(isChatActive && sid === currentSessionId)
+  );
+  const hasUnread = visibleUnread.length > 0;
   const hasRunning = (sessionsData?.sessions ?? []).some((s) => s.isRunning);
-  // 안 읽은게 우선, 없으면 실행중 표시
   const chatDotColor = hasUnread ? 'bg-sky-400' : hasRunning ? 'bg-amber-400' : null;
 
   // Close drawer on route change (mobile)
