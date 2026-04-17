@@ -162,7 +162,7 @@ export function createChatRouter({
     }
 
     // 선택지 버튼 UI 힌트: 여러 옵션 중 하나 고르게 할 때 <choices> 태그 사용
-    agent.choicesHint = `\n<ui-hints>\n사용자가 여러 옵션 중 하나를 선택해야 할 때 응답 끝에 <choices> 태그로 감싸서 제공하세요. UI에서 버튼으로 렌더링됩니다.\n예시:\n<choices>\n- 옵션 A\n- 옵션 B\n- 옵션 C\n</choices>\n</ui-hints>`;
+    agent.choicesHint = `\n<ui-hints>\n사용자가 여러 옵션 중 하나를 선택해야 할 때 응답 끝에 <choices> 태그로 감싸서 제공하세요. UI에서 버튼으로 렌더링됩니다.\n가장 추천하는 옵션 하나에 ⭐ 마커를 앞에 붙이면 추천 배지로 강조됩니다. (또는 [추천] / (추천) 태그도 가능)\n예시:\n<choices>\n- ⭐ 옵션 A (가장 추천)\n- 옵션 B\n- 옵션 C\n</choices>\n</ui-hints>`;
 
     let accumText = '';
     const toolCalls = [];

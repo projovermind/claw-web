@@ -304,6 +304,7 @@ const DICT: Record<Lang, Record<string, string>> = {
 
     // Chat sidebar
     'chat.sidebar.project': '프로젝트',
+    'chat.sidebar.recentSessions': '최근 세션',
     'chat.sidebar.selectProject': '프로젝트 선택',
     'chat.sidebar.sessions': '세션',
     'chat.sidebar.noSessions': '세션 없음',
@@ -673,6 +674,7 @@ const DICT: Record<Lang, Record<string, string>> = {
 
     // Chat sidebar
     'chat.sidebar.project': 'Project',
+    'chat.sidebar.recentSessions': 'Recent Sessions',
     'chat.sidebar.selectProject': 'Select project',
     'chat.sidebar.sessions': 'Sessions',
     'chat.sidebar.noSessions': 'No sessions',
@@ -759,7 +761,7 @@ export const useI18nStore = create<I18nState>()(
       lang: 'ko',
       setLang: (lang) => set({ lang })
     }),
-    { name: 'claw-lang' }
+    { name: 'hivemind-lang' }
   )
 );
 

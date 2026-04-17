@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Star, Download, CheckSquare, Square, X, ChevronDown } from 'lucide-react';
+import { Plus, Trash2, Star, Download, CheckSquare, Square, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 import { useChatStore } from '../../store/chat-store';
@@ -62,9 +62,51 @@ export function ChatSidebar({
     const all = allSessionsData?.sessions ?? [];
     return all.filter((s: Session) => s.isRunning);
   }, [allSessionsData]);
+
+  // 프로젝트/에이전트별 상태 계산 (unread/running)
+  const agentStatus = useMemo(() => {
+    const all = allSessionsData?.sessions ?? [];
+    const byAgent: Record<string, { unread: boolean; running: boolean }> = {};
+    for (const s of all) {
+      if (!byAgent[s.agentId]) byAgent[s.agentId] = { unread: false, running: false };
+      if (unread[s.id]) byAgent[s.agentId].unread = true;
+      if (s.isRunning) byAgent[s.agentId].running = true;
+    }
+    return byAgent;
+  }, [allSessionsData, unread]);
+
+  const projectStatus = useMemo(() => {
+    const byProject: Record<string, { unread: boolean; running: boolean }> = {};
+    for (const a of agents) {
+      if (!a.projectId) continue;
+      const s = agentStatus[a.id];
+      if (!s) continue;
+      if (!byProject[a.projectId]) byProject[a.projectId] = { unread: false, running: false };
+      if (s.unread) byProject[a.projectId].unread = true;
+      if (s.running) byProject[a.projectId].running = true;
+    }
+    return byProject;
+  }, [agentStatus, agents]);
+
+  // 상태 점 컴포넌트
+  const StatusDot = ({ unread, running }: { unread: boolean; running: boolean }) => {
+    if (!unread && !running) return null;
+    const color = unread ? 'bg-sky-400' : 'bg-amber-400';
+    return <span className={`w-1.5 h-1.5 rounded-full ${color} animate-pulse shrink-0`} />;
+  };
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [recentOpen, setRecentOpen] = useState<boolean>(() => {
+    try { return localStorage.getItem('claw:recentOpen') !== '0'; } catch { return true; }
+  });
+  const toggleRecent = () => {
+    setRecentOpen(v => {
+      const next = !v;
+      try { localStorage.setItem('claw:recentOpen', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   // Find the current agent's project
   const currentAgent = agents.find((a) => a.id === currentAgentId);
@@ -227,26 +269,32 @@ export function ChatSidebar({
                 <div className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-zinc-500">
                   {t('chat.picker.main')}
                 </div>
-                {globalAgents.map((a) => (
-                  <button
-                    key={a.id}
-                    onClick={() => selectGlobalAgent(a)}
-                    className={`w-full text-left px-3 py-2 flex items-center gap-2 text-sm hover:bg-zinc-800/60 ${
-                      currentAgentId === a.id && !currentProject
-                        ? 'bg-zinc-800 text-white'
-                        : 'text-zinc-300'
-                    }`}
-                  >
-                    <span className="text-base">{a.avatar ?? '🤖'}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold truncate">{a.name}</div>
-                      <div className="text-[11px] text-zinc-500 font-mono flex items-center gap-1.5">
-                        <span>{a.id}</span>
-                        {a.model && <ModelBadge agent={a} backends={backendsState} />}
+                {globalAgents.map((a) => {
+                  const st = agentStatus[a.id] ?? { unread: false, running: false };
+                  return (
+                    <button
+                      key={a.id}
+                      onClick={() => selectGlobalAgent(a)}
+                      className={`w-full text-left px-3 py-2 flex items-center gap-2 text-sm hover:bg-zinc-800/60 ${
+                        currentAgentId === a.id && !currentProject
+                          ? 'bg-zinc-800 text-white'
+                          : 'text-zinc-300'
+                      }`}
+                    >
+                      <span className="text-base">{a.avatar ?? '🤖'}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold truncate flex items-center gap-1.5">
+                          {a.name}
+                          <StatusDot unread={st.unread} running={st.running} />
+                        </div>
+                        <div className="text-[11px] text-zinc-500 font-mono flex items-center gap-1.5">
+                          <span>{a.id}</span>
+                          {a.model && <ModelBadge agent={a} backends={backendsState} />}
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </>
             )}
 
@@ -254,7 +302,9 @@ export function ChatSidebar({
             <div className="border-t border-zinc-800 px-2 py-1.5 text-[11px] uppercase tracking-wider text-zinc-500 mt-1">
               {t('nav.projects')}
             </div>
-            {projectsWithLeads.map(({ project: p, lead }) => (
+            {projectsWithLeads.map(({ project: p, lead }) => {
+              const pst = projectStatus[p.id] ?? { unread: false, running: false };
+              return (
               <button
                 key={p.id}
                 onClick={() => selectProject(p)}
@@ -267,14 +317,18 @@ export function ChatSidebar({
                   style={{ background: p.color ?? '#666' }}
                 />
                 <div className="flex-1 min-w-0">
-                  <div className="font-semibold truncate">{p.name}</div>
+                  <div className="font-semibold truncate flex items-center gap-1.5">
+                    {p.name}
+                    <StatusDot unread={pst.unread} running={pst.running} />
+                  </div>
                   <div className="text-[11px] text-zinc-500 truncate flex items-center gap-1.5">
                     <span>→ {lead?.name ?? lead?.id ?? t('chat.picker.noLead')}</span>
                     {lead?.model && <ModelBadge agent={lead} backends={backendsState} />}
                   </div>
                 </div>
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -430,6 +484,54 @@ export function ChatSidebar({
             );
           })}
       </div>
+
+      {/* 최근 세션 (에이전트 무관, 전역 5개) */}
+      {(() => {
+        const recent = (allSessionsData?.sessions ?? [])
+          .filter((s: Session) => s.agentId !== currentAgentId)
+          .filter((s: Session) => agents.some(a => a.id === s.agentId))
+          .slice()
+          .sort((a: Session, b: Session) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+          .slice(0, 5);
+        if (recent.length === 0) return null;
+        return (
+          <div className="border-t border-zinc-800/60 p-2">
+            <button
+              onClick={toggleRecent}
+              className="w-full flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-zinc-500 hover:text-zinc-300 px-2 py-1.5 transition-colors"
+            >
+              {recentOpen ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
+              <span className="flex-1 text-left">{t('chat.sidebar.recentSessions') || '최근 세션'}</span>
+              <span className="text-zinc-600">{recent.length}</span>
+            </button>
+            {recentOpen && recent.map((s: Session) => {
+              const agent = agents.find(a => a.id === s.agentId);
+              const isUnreadRecent = !!unread[s.id];
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => {
+                    setCurrentAgent(s.agentId);
+                    setCurrentSession(s.id);
+                    qc.invalidateQueries({ queryKey: ['sessions', s.agentId] });
+                    qc.invalidateQueries({ queryKey: ['session', s.id] });
+                  }}
+                  className="w-full text-left rounded px-2 py-1.5 mb-0.5 text-[11px] flex items-center gap-1.5 hover:bg-zinc-900 text-zinc-400"
+                  title={`${agent?.name ?? s.agentId} — ${s.title}`}
+                >
+                  {isUnreadRecent && <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0 animate-pulse" />}
+                  {!isUnreadRecent && s.isRunning && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" />}
+                  <span className="shrink-0">{agent?.avatar ?? '🤖'}</span>
+                  <span className="flex-1 truncate">{s.title}</span>
+                  <span className="text-zinc-600 text-[10px] shrink-0 truncate max-w-[60px]">
+                    {agent?.name?.slice(0, 6) ?? ''}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        );
+      })()}
     </aside>
   );
 }

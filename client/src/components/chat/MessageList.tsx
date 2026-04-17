@@ -41,7 +41,7 @@ function ToolCallsCollapsed({ toolCalls, ts }: { toolCalls: { name: string; inpu
 }
 
 // 선택지 + 기타(직접 입력) 컴포넌트
-export function ChoicesList({ choices, onChoice }: { choices: string[]; onChoice: (c: string) => void }) {
+export function ChoicesList({ choices, onChoice }: { choices: ChoiceItem[]; onChoice: (c: string) => void }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [custom, setCustom] = useState('');
 
@@ -58,16 +58,27 @@ export function ChoicesList({ choices, onChoice }: { choices: string[]; onChoice
       {choices.map((c, i) => (
         <button
           key={i}
-          onClick={() => onChoice(c)}
-          className="text-left px-3 py-2 rounded border border-zinc-700 bg-zinc-800/40 hover:border-emerald-600 hover:bg-emerald-900/20 text-zinc-200 text-xs transition-colors"
+          onClick={() => onChoice(c.text)}
+          className={`text-left px-3 py-2 rounded border text-xs transition-colors relative ${
+            c.recommended
+              ? 'border-amber-500/60 bg-amber-900/20 hover:border-amber-400 hover:bg-amber-900/30 text-amber-50 shadow-[0_0_12px_rgba(251,191,36,0.2)]'
+              : 'border-zinc-700 bg-zinc-800/40 hover:border-emerald-600 hover:bg-emerald-900/20 text-zinc-200'
+          }`}
         >
-          <span className="text-emerald-400 font-mono mr-2">{i + 1}.</span>
+          <span className={`font-mono mr-2 ${c.recommended ? 'text-amber-300' : 'text-emerald-400'}`}>
+            {c.recommended ? '⭐' : `${i + 1}.`}
+          </span>
           <span className="markdown-body inline-block" style={{ display: 'inline' }}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}
               components={{ p: ({children}) => <span>{children}</span> }}>
-              {c}
+              {c.text}
             </ReactMarkdown>
           </span>
+          {c.recommended && (
+            <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-amber-500 text-zinc-900 text-[10px] font-bold">
+              추천
+            </span>
+          )}
         </button>
       ))}
       {customOpen ? (
@@ -109,14 +120,29 @@ interface MessageListProps {
   isLastAssistant?: (idx: number) => boolean;
 }
 
-function extractChoices(text: string): { body: string; choices: string[] } {
+export interface ChoiceItem { text: string; recommended: boolean }
+
+export function extractChoices(text: string): { body: string; choices: ChoiceItem[] } {
   const tagMatch = text.match(/<choices>([\s\S]*?)<\/choices>/i);
   if (tagMatch) {
     const inner = tagMatch[1];
-    const choices = inner
+    const choices: ChoiceItem[] = inner
       .split('\n')
       .map(l => l.replace(/^\s*[-*\d.]+\s*/, '').trim())
-      .filter(Boolean);
+      .filter(Boolean)
+      .map(raw => {
+        // 추천 마커 파싱: ⭐, [추천], [recommended], (추천) 등
+        const patterns = [/\s*\[추천\]\s*/, /\s*\[recommended\]\s*/i, /\s*\(추천\)\s*/, /\s*⭐\s*/, /\s*★\s*/];
+        let recommended = false;
+        let text = raw;
+        for (const p of patterns) {
+          if (p.test(text)) {
+            recommended = true;
+            text = text.replace(p, ' ').trim();
+          }
+        }
+        return { text, recommended };
+      });
     const body = text.replace(tagMatch[0], '').trim();
     return { body, choices };
   }

@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ToolCall } from '../../store/chat-store';
 import ToolCallCard from './ToolCallCard';
-import { ChoicesList } from './MessageList';
+import { ChoicesList, extractChoices } from './MessageList';
 import { Loader2, Activity, Wrench, ChevronDown, ChevronRight } from 'lucide-react';
 import { useT } from '../../lib/i18n';
 
@@ -13,31 +13,6 @@ interface Props {
   running: boolean;
   error: string | null;
   onChoice?: (choice: string) => void;
-}
-
-/**
- * 응답 텍스트에서 선택지 블록 추출.
- *
- * 패턴:
- *   <choices>
- *   - Option A
- *   - Option B
- *   </choices>
- * 또는 끝부분의 번호 리스트 (1. / 2. / 3.)
- */
-function extractChoices(text: string): { body: string; choices: string[] } {
-  // <choices>...</choices> 태그 방식
-  const tagMatch = text.match(/<choices>([\s\S]*?)<\/choices>/i);
-  if (tagMatch) {
-    const inner = tagMatch[1];
-    const choices = inner
-      .split('\n')
-      .map(l => l.replace(/^\s*[-*\d.]+\s*/, '').trim())
-      .filter(Boolean);
-    const body = text.replace(tagMatch[0], '').trim();
-    return { body, choices };
-  }
-  return { body: text, choices: [] };
 }
 
 export default function StreamingMessage({ text, toolCalls, running, error, onChoice }: Props) {
