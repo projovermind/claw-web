@@ -400,6 +400,12 @@ const DICT: Record<Lang, Record<string, string>> = {
     'appearance.bubbleAssistant': '에이전트 응답',
     'appearance.previewUser': '미리보기 — 사용자 메시지',
     'appearance.previewAssistant': '미리보기 — 에이전트 응답입니다.',
+    'appearance.soundTitle': '알림음',
+    'appearance.soundDesc': '응답이 완료되면 띠링 소리. 에러는 두 번 낮은 톤.',
+    'appearance.soundOn': '켜짐',
+    'appearance.soundOff': '꺼짐',
+    'appearance.soundVolume': '볼륨',
+    'appearance.soundTest': '테스트',
 
     // Chat session dots/status titles
     'chat.session.unread': '안 읽음',
@@ -1162,6 +1168,12 @@ const DICT: Record<Lang, Record<string, string>> = {
     'appearance.bubbleAssistant': 'Agent response',
     'appearance.previewUser': 'Preview — user message',
     'appearance.previewAssistant': 'Preview — agent response.',
+    'appearance.soundTitle': 'Notification sound',
+    'appearance.soundDesc': 'Ding when a response completes. Errors play a lower two-tone.',
+    'appearance.soundOn': 'On',
+    'appearance.soundOff': 'Off',
+    'appearance.soundVolume': 'Volume',
+    'appearance.soundTest': 'Test',
 
     // Chat session dots/status titles
     'chat.session.unread': 'Unread',

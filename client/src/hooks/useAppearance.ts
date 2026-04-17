@@ -6,12 +6,18 @@ export interface Appearance {
   appName: string;
   userBubbleColor: string;
   assistantBubbleColor: string;
+  /** 응답 완료 시 띠링 알림음 */
+  soundEnabled: boolean;
+  /** 0.0 ~ 1.0 */
+  soundVolume: number;
 }
 
 export const DEFAULT_APPEARANCE: Appearance = {
   appName: 'Claw Web',
   userBubbleColor: '#3f3f46',
-  assistantBubbleColor: '#18181b'
+  assistantBubbleColor: '#18181b',
+  soundEnabled: true,
+  soundVolume: 0.2
 };
 
 /**

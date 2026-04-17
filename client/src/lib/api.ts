@@ -158,6 +158,8 @@ export const api = {
       appName?: string;
       userBubbleColor?: string;
       assistantBubbleColor?: string;
+      soundEnabled?: boolean;
+      soundVolume?: number;
     };
   }) =>
     patch === undefined ? Promise.reject(new Error('patch is required')) : req<WebSettings>('/settings', { method: 'PATCH', body: JSON.stringify(patch) }),

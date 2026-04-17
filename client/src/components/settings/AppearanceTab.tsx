@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Volume2, VolumeX, Play } from 'lucide-react';
 import { api } from '../../lib/api';
 import { DEFAULT_APPEARANCE } from '../../hooks/useAppearance';
 import type { Appearance } from '../../hooks/useAppearance';
 import { useT } from '../../lib/i18n';
+import { playDing } from '../../lib/sound';
 
 /**
  * 외관(Appearance) 설정 — 앱 이름 / 채팅 버블 색상.
@@ -68,6 +70,48 @@ export function AppearanceTab() {
               {t('appearance.previewAssistant')}
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* 알림음 */}
+      <section>
+        <h3 className="text-sm font-semibold mb-2">{t('appearance.soundTitle')}</h3>
+        <p className="text-xs text-zinc-500 mb-3">{t('appearance.soundDesc')}</p>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setDraft({ ...draft, soundEnabled: !draft.soundEnabled })}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded border text-xs ${
+              draft.soundEnabled
+                ? 'border-emerald-600 bg-emerald-900/30 text-emerald-200'
+                : 'border-zinc-700 bg-zinc-900 text-zinc-400'
+            }`}
+          >
+            {draft.soundEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
+            {draft.soundEnabled ? t('appearance.soundOn') : t('appearance.soundOff')}
+          </button>
+          <div className="flex-1 flex items-center gap-2">
+            <span className="text-[11px] text-zinc-500 w-12">{t('appearance.soundVolume')}</span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.05}
+              value={draft.soundVolume}
+              disabled={!draft.soundEnabled}
+              onChange={(e) => setDraft({ ...draft, soundVolume: parseFloat(e.target.value) })}
+              className="flex-1 disabled:opacity-30"
+            />
+            <span className="text-[11px] text-zinc-500 w-8 font-mono">{Math.round(draft.soundVolume * 100)}%</span>
+          </div>
+          <button
+            onClick={() => playDing(draft.soundVolume)}
+            disabled={!draft.soundEnabled}
+            className="flex items-center gap-1 px-3 py-1.5 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 text-xs text-zinc-300"
+            title={t('appearance.soundTest')}
+          >
+            <Play size={11} />
+            {t('appearance.soundTest')}
+          </button>
         </div>
       </section>
 

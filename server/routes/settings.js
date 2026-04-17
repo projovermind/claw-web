@@ -15,7 +15,9 @@ const featurePatchSchema = z.object({
     .object({
       appName: z.string().min(1).max(40).optional(),
       userBubbleColor: z.string().max(40).optional(),
-      assistantBubbleColor: z.string().max(40).optional()
+      assistantBubbleColor: z.string().max(40).optional(),
+      soundEnabled: z.boolean().optional(),
+      soundVolume: z.number().min(0).max(1).optional()
     })
     .optional()
 }).strict();

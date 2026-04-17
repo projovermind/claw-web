@@ -5,6 +5,7 @@ import { useChatStore } from '../store/chat-store';
 import { useToastStore } from '../store/toast-store';
 import { getAuthToken } from '../lib/api';
 import { useT } from '../lib/i18n';
+import { playDing, playWarn } from '../lib/sound';
 
 const TOPICS_TO_INVALIDATE: Record<string, string[]> = {
   'agent.updated': ['agents'],
@@ -89,20 +90,32 @@ export function useWebSocket() {
           }
           if (topic === 'chat.done') {
             const sid = msg.sessionId as string;
-            // Refetch FIRST so sessionQ.data has the persisted assistant
-            // message in cache, then clear the streaming state. This avoids
-            // the double-render where both the streaming bubble and the
-            // newly-fetched persisted bubble were visible at the same time.
             queryClient
               .invalidateQueries({ queryKey: ['session', sid] })
               .finally(() => {
                 useChatStore.getState().finishRun(sid, null);
               });
             queryClient.invalidateQueries({ queryKey: ['sessions'] });
+            // 띠링 알림음 — settings 캐시에서 enabled/volume 읽음
+            try {
+              const settings = queryClient.getQueryData<{ appearance?: { soundEnabled?: boolean; soundVolume?: number } }>(['settings-appearance']);
+              const ap = settings?.appearance;
+              if (ap?.soundEnabled !== false) {
+                playDing(ap?.soundVolume ?? 0.2);
+              }
+            } catch { /* ignore */ }
             return;
           }
           if (topic === 'chat.error') {
             useChatStore.getState().finishRun(msg.sessionId as string, (msg.error as string) ?? 'error');
+            // 에러 알림음 (띠-리-ㅇ 두번)
+            try {
+              const settings = queryClient.getQueryData<{ appearance?: { soundEnabled?: boolean; soundVolume?: number } }>(['settings-appearance']);
+              const ap = settings?.appearance;
+              if (ap?.soundEnabled !== false) {
+                playWarn(ap?.soundVolume ?? 0.2);
+              }
+            } catch { /* ignore */ }
             return;
           }
           if (topic === 'chat.exit' || topic === 'chat.aborted') {
