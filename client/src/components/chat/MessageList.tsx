@@ -169,14 +169,25 @@ export default function MessageList({ messages, searchQuery, onChoice }: Message
 
   return (
     <div className="flex flex-col gap-4 py-4">
-      {filtered.map((m, i) => (
+      {filtered.map((m, i) => {
+        // 이전 메시지가 [위임 결과 보고] / [위임 에스컬레이션] user 트리거면
+        // 이 assistant 응답이 "위임 작업 완료" 또는 "에스컬레이션 대응" 단계
+        const prev = i > 0 ? filtered[i - 1] : null;
+        const prevContent = prev?.content || '';
+        const isReportResponse = m.role === 'assistant' && prev?.role === 'user'
+          && prevContent.startsWith('[위임 결과 보고]');
+        const isEscalateResponse = m.role === 'assistant' && prev?.role === 'user'
+          && prevContent.startsWith('[위임 에스컬레이션]');
+        return (
         <MessageBubble
           key={i}
           message={m}
           searchQuery={searchQuery}
           onChoice={i === lastAssistantIdx ? onChoice : undefined}
+          delegationStage={isReportResponse ? 'final' : isEscalateResponse ? 'escalate-resolution' : undefined}
         />
-      ))}
+        );
+      })}
       <div ref={endRef} />
     </div>
   );
@@ -209,7 +220,13 @@ function HighlightText({ text, query }: { text: string; query: string }) {
   );
 }
 
-function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessage; searchQuery?: string; onChoice?: (c: string) => void }) {
+function MessageBubble({ message, searchQuery, onChoice, delegationStage }: {
+  message: ChatMessage;
+  searchQuery?: string;
+  onChoice?: (c: string) => void;
+  /** 이전 메시지 컨텍스트 기반 위임 단계 배지 */
+  delegationStage?: 'final' | 'escalate-resolution';
+}) {
   const t = useT();
   const isUser = message.role === 'user';
   const isQueued = isUser && (message as ChatMessage & { queued?: boolean }).queued;
@@ -240,6 +257,16 @@ function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessag
         {isQueued && (
           <div className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-sky-600 text-white text-[10px] font-semibold animate-pulse">
             {t('chat.queued')}
+          </div>
+        )}
+        {delegationStage === 'final' && (
+          <div className="mb-2 pb-1.5 border-b border-emerald-700/40 flex items-center gap-1.5 text-[10px] text-emerald-300 uppercase tracking-wider">
+            <CheckCircle2 size={11} /> 위임 작업 완료 — 종합 보고
+          </div>
+        )}
+        {delegationStage === 'escalate-resolution' && (
+          <div className="mb-2 pb-1.5 border-b border-amber-700/40 flex items-center gap-1.5 text-[10px] text-amber-300 uppercase tracking-wider">
+            <XCircle size={11} /> 에스컬레이션 대응
           </div>
         )}
         {isUser ? (
@@ -436,7 +463,7 @@ function DelegationCard({ data }: { data: DelegationData }) {
         ? { border: 'border-amber-700/60', bg: 'bg-amber-950/30', text: 'text-amber-200', icon: <XCircle size={14} className="text-amber-400 animate-pulse" />, label: `Loop 에스컬레이션${data.iteration ? ` ${data.iteration}` : ''}` }
         : data.kind === 'request'
           ? { border: 'border-zinc-700', bg: 'bg-zinc-900/60', text: 'text-zinc-300', icon: <ArrowRight size={14} className="text-zinc-400" />, label: data.loop ? '위임 요청 (Loop)' : '위임 요청' }
-          : { border: 'border-sky-800/60', bg: 'bg-sky-950/30', text: 'text-sky-200', icon: <ArrowRight size={14} className="text-sky-400 animate-pulse" />, label: data.loop ? '위임 (Ralph Loop)' : '위임 중' };
+          : { border: 'border-sky-800/60', bg: 'bg-sky-950/30', text: 'text-sky-200', icon: <ArrowRight size={14} className="text-sky-400 animate-pulse" />, label: data.loop ? '위임 중 (Ralph Loop)' : '위임 중' };
   // 접힘 라벨: note 우선 → task
   const preview = data.note || data.task || '';
   return (
