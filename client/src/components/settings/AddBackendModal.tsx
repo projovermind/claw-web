@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, AlertTriangle } from 'lucide-react';
 import { api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 
 function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -14,6 +15,7 @@ function Labeled({ label, children }: { label: string; children: React.ReactNode
 
 export function AddBackendModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
+  const t = useT();
   const [form, setForm] = useState({
     id: '',
     label: '',
@@ -49,21 +51,21 @@ export function AddBackendModal({ onClose }: { onClose: () => void }) {
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
-          <h3 className="text-lg font-semibold">새 Backend (OpenAI-compatible)</h3>
+          <h3 className="text-lg font-semibold">{t('addBackend.title')}</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-zinc-800 text-zinc-400">
             <X size={18} />
           </button>
         </div>
         <div className="p-5 space-y-3">
-          <Labeled label="ID (고유 식별자)">
+          <Labeled label={t('addBackend.id')}>
             <input
               value={form.id}
               onChange={(e) => setForm({ ...form, id: e.target.value })}
-              placeholder="예: groq"
+              placeholder="ex: groq"
               className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
             />
           </Labeled>
-          <Labeled label="Label (표시 이름)">
+          <Labeled label={t('addBackend.label')}>
             <input
               value={form.label}
               onChange={(e) => setForm({ ...form, label: e.target.value })}
@@ -71,7 +73,7 @@ export function AddBackendModal({ onClose }: { onClose: () => void }) {
               className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
             />
           </Labeled>
-          <Labeled label="Base URL">
+          <Labeled label={t('addBackend.baseUrl')}>
             <input
               value={form.baseURL}
               onChange={(e) => setForm({ ...form, baseURL: e.target.value })}
@@ -79,7 +81,7 @@ export function AddBackendModal({ onClose }: { onClose: () => void }) {
               className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
             />
           </Labeled>
-          <Labeled label="환경변수 이름">
+          <Labeled label={t('addBackend.envKey')}>
             <input
               value={form.envKey}
               onChange={(e) => setForm({ ...form, envKey: e.target.value })}
@@ -87,10 +89,10 @@ export function AddBackendModal({ onClose }: { onClose: () => void }) {
               className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
             />
             <div className="text-[11px] text-zinc-600 mt-1">
-              백엔드 SDK가 읽을 환경변수 이름. 키 값 자체는 아래 필드에 붙여넣으면 됨.
+              {t('addBackend.envKeyHint')}
             </div>
           </Labeled>
-          <Labeled label="API 키 (선택)">
+          <Labeled label={t('addBackend.secret')}>
             <input
               type="password"
               value={form.secret}
@@ -99,10 +101,10 @@ export function AddBackendModal({ onClose }: { onClose: () => void }) {
               className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
             />
             <div className="text-[11px] text-zinc-600 mt-1">
-              여기 붙여넣으면 <code>secrets.json</code>(0600, gitignored)에 저장되고 즉시 작동. 비워두고 셸에서 export해도 OK.
+              {t('addBackend.secretHint')}
             </div>
           </Labeled>
-          <Labeled label="기본 모델 ID">
+          <Labeled label={t('addBackend.defaultModel')}>
             <input
               value={form.defaultModel}
               onChange={(e) => setForm({ ...form, defaultModel: e.target.value })}
@@ -112,21 +114,19 @@ export function AddBackendModal({ onClose }: { onClose: () => void }) {
           </Labeled>
           <div className="text-[11px] text-amber-400 flex items-start gap-1.5 pt-1">
             <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-            <span>
-              실제 API 키는 Mac 쉘 환경변수로 세팅해. 예: <code className="bg-zinc-950 px-1 rounded">launchctl setenv GROQ_API_KEY ...</code> 후 웹서버 재시작.
-            </span>
+            <span>{t('addBackend.warn')}</span>
           </div>
         </div>
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-zinc-800">
           <button onClick={onClose} className="px-4 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">
-            취소
+            {t('addBackend.cancel')}
           </button>
           <button
             disabled={!valid || add.isPending}
             onClick={() => add.mutate()}
             className="px-4 py-2 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-sm"
           >
-            {add.isPending ? '추가 중...' : '추가'}
+            {add.isPending ? t('addBackend.submitting') : t('addBackend.submit')}
           </button>
         </div>
       </div>

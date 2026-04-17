@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
+import { useT } from '../../lib/i18n';
 
 /** Claude CLI stock tools. Custom entries (e.g. `Bash(git *:*)` patterns)
  *  go through the custom input row. */
@@ -34,6 +35,7 @@ export default function ToolPicker({
   inherited?: string[];
 }) {
   const [custom, setCustom] = useState('');
+  const t = useT();
   const toggle = (name: string) =>
     onChange(selected.includes(name) ? selected.filter((t) => t !== name) : [...selected, name]);
   const addCustom = () => {
@@ -63,7 +65,7 @@ export default function ToolPicker({
                     ? 'bg-zinc-900 border-zinc-700 text-zinc-500'
                     : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200 hover:border-zinc-700'
               }`}
-              title={isInherited ? '프로젝트에서 상속됨' : undefined}
+              title={isInherited ? t('toolPicker.inheritedTitle') : undefined}
             >
               {tool}
               {isInherited && !checked && <span className="ml-1 text-[11px] text-zinc-600">↑</span>}
@@ -79,7 +81,7 @@ export default function ToolPicker({
               type="button"
               onClick={() => toggle(tool)}
               className="text-xs px-2 py-1 rounded border bg-sky-900/30 border-sky-700/50 text-sky-100 flex items-center gap-1"
-              title="커스텀 — 클릭해서 제거"
+              title={t('toolPicker.customRemove')}
             >
               {tool}
               <X size={10} />
@@ -93,7 +95,7 @@ export default function ToolPicker({
             <span
               key={tool}
               className="text-xs px-2 py-1 rounded border bg-zinc-900 border-zinc-700 text-zinc-500 flex items-center gap-1"
-              title="프로젝트에서 상속됨 (여기서 해제 못 함)"
+              title={t('toolPicker.inheritedNoRemove')}
             >
               ↑ {tool}
             </span>
@@ -110,7 +112,7 @@ export default function ToolPicker({
               addCustom();
             }
           }}
-          placeholder="커스텀 도구 (예: Bash(git *:*) 같은 제한 패턴)"
+          placeholder={t('toolPicker.customPlaceholder')}
           className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs font-mono"
         />
         <button
@@ -119,7 +121,7 @@ export default function ToolPicker({
           disabled={!custom.trim()}
           className="text-xs rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 px-2 py-1"
         >
-          추가
+          {t('toolPicker.add')}
         </button>
       </div>
     </div>

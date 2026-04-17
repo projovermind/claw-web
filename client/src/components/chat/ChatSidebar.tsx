@@ -524,7 +524,7 @@ export function ChatSidebar({
               className="w-full flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-zinc-500 hover:text-zinc-300 px-2 py-1.5 transition-colors"
             >
               {recentOpen ? <ChevronDown size={10} /> : <ChevronUp size={10} />}
-              <span className="flex-1 text-left">{t('chat.sidebar.recentSessions') || '최근 세션'}</span>
+              <span className="flex-1 text-left">{t('chat.sidebar.recentSessions')}</span>
               <span className="text-zinc-600">{recent.length}</span>
             </button>
             {recentOpen && recent.map((s: Session) => {

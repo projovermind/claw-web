@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { KeyRound, AlertTriangle } from 'lucide-react';
 import { authEvents, setAuthToken, api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 
 /**
  * LoginDialog pops up whenever any API call returns 401. User pastes a token,
@@ -12,6 +13,7 @@ import { authEvents, setAuthToken, api } from '../../lib/api';
  * we have no token stored (so first-load doesn't require any failed request).
  */
 export default function LoginDialog() {
+  const t = useT();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [token, setToken] = useState('');
@@ -35,7 +37,7 @@ export default function LoginDialog() {
           // If we have no token stored, open. If we have one, assume it's still valid
           // until a real request fails with 401.
           try {
-            if (!localStorage.getItem('claw:auth-token')) setOpen(true);
+            if (!localStorage.getItem('hivemind:auth-token')) setOpen(true);
           } catch {
             /* ignore */
           }
@@ -64,7 +66,7 @@ export default function LoginDialog() {
       qc.invalidateQueries();
     } catch (e) {
       setAuthToken(null);
-      setError((e as Error).message || '토큰이 유효하지 않습니다.');
+      setError((e as Error).message || t('loginDialog.tokenInvalid'));
     } finally {
       setBusy(false);
     }
@@ -77,11 +79,11 @@ export default function LoginDialog() {
       <div className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-md">
         <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-800">
           <KeyRound size={16} className="text-amber-400" />
-          <h3 className="text-base font-semibold">인증 필요</h3>
+          <h3 className="text-base font-semibold">{t('loginDialog.title')}</h3>
         </div>
         <div className="p-5 space-y-3">
           <p className="text-xs text-zinc-400 leading-relaxed">
-            이 서버는 Bearer 토큰 인증이 활성화돼 있어. Settings → Access 탭에서 설정한 토큰을 입력해.
+            {t('loginDialog.desc')}
           </p>
           <input
             autoFocus
@@ -101,8 +103,7 @@ export default function LoginDialog() {
             </div>
           )}
           <div className="text-[11px] text-zinc-600 leading-snug">
-            💡 토큰을 잃어버렸으면 서버에서 직접 <code>web-config.json</code>을 열어{' '}
-            <code>auth.enabled</code>를 <code>false</code>로 바꾸거나 <code>auth.token</code>을 재설정해.
+            {t('loginDialog.lostHint')}
           </div>
         </div>
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-zinc-800">
@@ -111,7 +112,7 @@ export default function LoginDialog() {
             onClick={submit}
             className="px-4 py-2 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-sm"
           >
-            {busy ? '확인 중…' : '로그인'}
+            {busy ? t('loginDialog.checking') : t('loginDialog.submit')}
           </button>
         </div>
       </div>

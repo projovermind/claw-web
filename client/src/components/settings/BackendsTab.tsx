@@ -4,8 +4,10 @@ import { Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { BackendCard } from './BackendCard';
 import { AddBackendModal } from './AddBackendModal';
+import { useT } from '../../lib/i18n';
 
 export function BackendsTab() {
+  const t = useT();
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ['backends'], queryFn: api.backends });
   const [adding, setAdding] = useState(false);
@@ -48,7 +50,7 @@ export function BackendsTab() {
             </select>
           </div>
           <div>
-            <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1">긴축모드 (Austerity)</div>
+            <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1">{t('backendsTab.austerityTitle')}</div>
             <div className="flex items-center gap-2">
               <button
                 onClick={() =>
@@ -66,7 +68,7 @@ export function BackendsTab() {
           </div>
         </div>
         <p className="text-[11px] text-zinc-500">
-          긴축모드가 ON이면 모든 채팅 호출이 <strong>{data.austerityBackend}</strong> 백엔드로 강제 라우팅됨.
+          {t('backendsTab.austerityDesc', { backend: data.austerityBackend })}
         </p>
       </div>
 
@@ -76,7 +78,7 @@ export function BackendsTab() {
           onClick={() => setAdding(true)}
           className="rounded bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-xs flex items-center gap-1"
         >
-          <Plus size={12} /> 백엔드 추가
+          <Plus size={12} /> {t('backendsTab.addBackend')}
         </button>
       </div>
 
@@ -90,7 +92,7 @@ export function BackendsTab() {
             allBackends={list}
             onDelete={() => {
               if (b.type === 'claude-cli') return;
-              if (confirm(`"${b.label}" 백엔드를 삭제할까요?`)) removeBackend.mutate(b.id);
+              if (confirm(t('backendsTab.deleteConfirm', { label: b.label }))) removeBackend.mutate(b.id);
             }}
           />
         ))}

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { FileText, FolderOpen } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useChatStore } from '../../store/chat-store';
+import { useT } from '../../lib/i18n';
 
 /**
  * File-focused palette. Opens on Cmd/Ctrl-O. Lists project files matching
@@ -15,6 +16,7 @@ export default function FilePalette() {
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const t = useT();
 
   // Current agent context for scoping the search root
   const currentAgentId = useChatStore((s) => s.currentAgentId);
@@ -126,7 +128,7 @@ export default function FilePalette() {
               setCursor(0);
             }}
             onKeyDown={onKeyDown}
-            placeholder={workingDir ? '파일 검색…' : '에이전트가 선택되지 않음 (채팅 탭에서 에이전트 선택 후)'}
+            placeholder={workingDir ? t('filePalette.placeholderReady') : t('filePalette.placeholderNoAgent')}
             className="flex-1 bg-transparent outline-none text-sm placeholder:text-zinc-600"
           />
           <kbd className="text-[11px] text-zinc-500 px-1.5 py-0.5 rounded border border-zinc-700 font-mono">
@@ -143,12 +145,12 @@ export default function FilePalette() {
         <div className="max-h-[60vh] overflow-y-auto">
           {!query.trim() ? (
             <div className="py-8 text-center text-xs text-zinc-600 italic">
-              파일 이름이나 경로 일부를 입력하세요
+              {t('filePalette.hintText')}
             </div>
           ) : loading && results.length === 0 ? (
-            <div className="py-8 text-center text-xs text-zinc-600">검색 중…</div>
+            <div className="py-8 text-center text-xs text-zinc-600">{t('filePalette.searching')}</div>
           ) : results.length === 0 ? (
-            <div className="py-8 text-center text-xs text-zinc-600 italic">결과 없음</div>
+            <div className="py-8 text-center text-xs text-zinc-600 italic">{t('filePalette.emptyResults')}</div>
           ) : (
             results.map((r, i) => (
               <button
@@ -165,7 +167,7 @@ export default function FilePalette() {
                   <div className="text-[11px] text-zinc-500 font-mono truncate">{r.rel}</div>
                 </div>
                 {i === cursor && (
-                  <span className="text-[11px] text-zinc-600 shrink-0">Enter: 경로 복사</span>
+                  <span className="text-[11px] text-zinc-600 shrink-0">{t('filePalette.enterCopy')}</span>
                 )}
               </button>
             ))
@@ -173,9 +175,9 @@ export default function FilePalette() {
         </div>
 
         <div className="flex items-center gap-3 px-4 py-2 border-t border-zinc-800 text-[11px] text-zinc-600">
-          <span><kbd className="font-mono">↑↓</kbd> 이동</span>
-          <span><kbd className="font-mono">Enter</kbd> 경로 복사</span>
-          <span className="ml-auto"><kbd className="font-mono">⌘O</kbd> 열기/닫기</span>
+          <span><kbd className="font-mono">↑↓</kbd> {t('filePalette.footMove')}</span>
+          <span><kbd className="font-mono">Enter</kbd> {t('filePalette.footCopy')}</span>
+          <span className="ml-auto"><kbd className="font-mono">⌘O</kbd> {t('filePalette.footToggle')}</span>
         </div>
       </div>
     </div>

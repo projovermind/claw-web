@@ -4,6 +4,7 @@ import { useWsStore } from '../store/ws-store';
 import { useChatStore } from '../store/chat-store';
 import { useToastStore } from '../store/toast-store';
 import { getAuthToken } from '../lib/api';
+import { useT } from '../lib/i18n';
 
 const TOPICS_TO_INVALIDATE: Record<string, string[]> = {
   'agent.updated': ['agents'],
@@ -46,6 +47,10 @@ export function useWebSocket() {
   const setState = useWsStore((s) => s.setState);
   const wsRef = useRef<WebSocket | null>(null);
   const retryRef = useRef(0);
+  // t 는 현재 언어에 바인딩 — ref 로 보관해서 effect 재실행 방지
+  const t = useT();
+  const tRef = useRef(t);
+  tRef.current = t;
 
   useEffect(() => {
     let cancelled = false;
@@ -113,23 +118,23 @@ export function useWebSocket() {
           // Toast notifications for loop & error events
           if (topic === 'session.loop.completed') {
             const iterations = (msg.iterations as number) ?? 0;
-            useToastStore.getState().add('success', `Loop 완료 (${iterations}회 반복)`);
+            useToastStore.getState().add('success', tRef.current('ws.loopDone', { n: iterations }));
           }
           if (topic === 'session.loop.escalated') {
-            const reason = (msg.reason as string) ?? '에이전트가 도움을 요청함';
-            useToastStore.getState().add('warning', `에스컬레이션: ${reason}`);
+            const reason = (msg.reason as string) ?? tRef.current('ws.escalateDefault');
+            useToastStore.getState().add('warning', tRef.current('ws.escalate', { reason }));
           }
           if (topic === 'chat.error') {
             const errMsg = (msg.error as string) ?? 'error';
-            useToastStore.getState().add('error', `채팅 에러: ${errMsg}`);
+            useToastStore.getState().add('error', tRef.current('ws.chatError', { error: errMsg }));
           }
           if (topic === 'delegation.started') {
             const agent = (msg.targetAgentId as string) ?? '?';
-            useToastStore.getState().add('info', `🔄 위임 시작 → ${agent}`);
+            useToastStore.getState().add('info', tRef.current('ws.delegateStart', { agent }));
           }
           if (topic === 'delegation.completed') {
             const agent = (msg.targetAgentId as string) ?? '?';
-            useToastStore.getState().add('success', `✅ 위임 완료 ← ${agent}`);
+            useToastStore.getState().add('success', tRef.current('ws.delegateDone', { agent }));
           }
 
           // Generic query invalidation for non-chat events

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, KeyboardEvent } from 'react';
 import { Send, Square, X, Paperclip, Loader2, AlertTriangle, FileText } from 'lucide-react';
 import { useUploadsStore } from '../../store/uploads-store';
 import { getAuthToken, api } from '../../lib/api';
-import { COMMANDS, expandCommand, type SlashCommand } from '../../lib/commands';
+import { useCommands, expandCommand, type SlashCommand } from '../../lib/commands';
 import { useT } from '../../lib/i18n';
 import SlashPopover from './SlashPopover';
 import AtFilePopover from './AtFilePopover';
@@ -32,6 +32,7 @@ type PopoverMode = 'none' | 'slash' | 'atfile';
 
 export default function ChatInput({ disabled, running, workingDir, sessionId, onSend, onAbort, onSystemCommand }: Props) {
   const t = useT();
+  const COMMANDS = useCommands();
   const [value, setValue] = useState('');
   const staged = useUploadsStore((s) => s.staged);
   const removeStaged = useUploadsStore((s) => s.remove);

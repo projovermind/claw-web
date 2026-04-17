@@ -6,6 +6,7 @@ import type { BackendPublic } from '../../lib/types';
 import { InlineEditText } from './InlineEditText';
 import { ModelRow } from './ModelRow';
 import { SecretInput } from './SecretInput';
+import { useT } from '../../lib/i18n';
 
 export function BackendCard({
   backend,
@@ -21,6 +22,7 @@ export function BackendCard({
   onDelete: () => void;
 }) {
   const qc = useQueryClient();
+  const t = useT();
   const [expanded, setExpanded] = useState(false);
   const [draftAlias, setDraftAlias] = useState('');
   const [draftModel, setDraftModel] = useState('');
@@ -82,7 +84,7 @@ export function BackendCard({
           <button
             onClick={onDelete}
             className="p-1 rounded hover:bg-red-900/40 text-zinc-500 hover:text-red-400"
-            title="삭제"
+            title={t('backendCard.delete')}
           >
             <Trash2 size={14} />
           </button>
@@ -131,25 +133,25 @@ export function BackendCard({
         </div>
         {backend.type === 'claude-cli' && (
           <div className="text-[11px] text-zinc-600">
-            API 키 없이도 <code className="text-zinc-500">claude login</code> OAuth로 사용 가능
+            {t('backendCard.claudeOauthHint')}
           </div>
         )}
       </div>
       {/* Fallback 설정 */}
       {backend.type !== 'claude-cli' && (
         <div className="flex items-center gap-1.5 text-[11px]">
-          <span className="text-zinc-600 shrink-0">Fallback:</span>
+          <span className="text-zinc-600 shrink-0">{t('backendCard.fallbackLabel')}</span>
           <select
             value={backend.fallback ?? ''}
             onChange={(e) => patchField.mutate({ fallback: e.target.value || null } as Partial<BackendPublic>)}
             className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] text-zinc-400 font-mono"
           >
-            <option value="">없음 (에러 표시)</option>
+            <option value="">{t('backendCard.fallbackNone')}</option>
             {allBackends.filter(b => b.id !== backend.id).map(b => (
               <option key={b.id} value={b.id}>{b.label} ({b.id})</option>
             ))}
           </select>
-          <span className="text-zinc-600">실패 시 자동 전환</span>
+          <span className="text-zinc-600">{t('backendCard.fallbackHint')}</span>
         </div>
       )}
 
@@ -166,8 +168,8 @@ export function BackendCard({
           backendId={`${backend.id}_oauth`}
           envKey="CLAUDE_CODE_OAUTH_TOKEN"
           source="none"
-          label="OAuth 토큰"
-          hint="claude login 없이 직접 토큰 입력. Claude Pro/Max 구독 사용."
+          label={t('backendCard.oauthTokenLabel')}
+          hint={t('backendCard.oauthTokenHint')}
         />
       )}
       <div className="border-t border-zinc-800 pt-2">
@@ -176,17 +178,16 @@ export function BackendCard({
           className="w-full flex items-center gap-1 text-[11px] uppercase tracking-wider text-zinc-500 hover:text-zinc-300"
         >
           {expanded ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-          <span>Models ({Object.keys(backend.models).length})</span>
+          <span>{t('backendCard.modelsLabel', { count: Object.keys(backend.models).length })}</span>
         </button>
         {expanded && (
           <div className="mt-2 space-y-2">
             <p className="text-[11px] text-zinc-600 leading-snug">
-              단축명(agent가 참조) ↔ 실제 모델 ID. 예: <code>opus</code>&rarr;<code>claude-opus-4-6</code>, 또는
-              단축명을 모델 ID 그대로 써도 됨 (<code>glm-5.1</code>&rarr;<code>glm-5.1</code>).
+              {t('backendCard.modelsDesc')}
             </p>
             <div className="space-y-1">
               {Object.entries(backend.models).length === 0 && (
-                <div className="text-[11px] text-zinc-600 italic">모델 없음</div>
+                <div className="text-[11px] text-zinc-600 italic">{t('backendCard.noModels')}</div>
               )}
               {Object.entries(backend.models).map(([key, val]) => (
                 <ModelRow
@@ -202,13 +203,13 @@ export function BackendCard({
               <input
                 value={draftAlias}
                 onChange={(e) => setDraftAlias(e.target.value)}
-                placeholder="단축명 (opus)"
+                placeholder={t('backendCard.aliasPlaceholder')}
                 className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] font-mono"
               />
               <input
                 value={draftModel}
                 onChange={(e) => setDraftModel(e.target.value)}
-                placeholder="모델 ID (claude-opus-4-6)"
+                placeholder={t('backendCard.modelIdPlaceholder')}
                 className="flex-[2] bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] font-mono"
               />
               <button

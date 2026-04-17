@@ -186,7 +186,7 @@ export default function AgentStatsWidget() {
                 >
                   {expanded.has('__unassigned__') ? <ChevronDown size={12} className="text-zinc-500" /> : <ChevronRight size={12} className="text-zinc-500" />}
                   <div className="w-2 h-2 rounded-full bg-zinc-600" />
-                  <span className="text-xs font-semibold text-zinc-400 flex-1 text-left">미배치</span>
+                  <span className="text-xs font-semibold text-zinc-400 flex-1 text-left">{t('stats.unassigned')}</span>
                   <span className="text-[10px] text-zinc-500">{projectGroups.unassigned.length} agents</span>
                 </button>
                 {expanded.has('__unassigned__') && (

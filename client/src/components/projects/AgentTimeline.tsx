@@ -4,12 +4,15 @@ import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 import type { Agent, Session } from '../../lib/types';
 
-function timeAgo(ts: string): string {
-  const diff = Date.now() - new Date(ts).getTime();
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}초 전`;
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)}분 전`;
-  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}시간 전`;
-  return `${Math.floor(diff / 86400_000)}일 전`;
+function useTimeAgo() {
+  const t = useT();
+  return (ts: string): string => {
+    const diff = Date.now() - new Date(ts).getTime();
+    if (diff < 60_000) return t('time.secondsAgo', { n: Math.floor(diff / 1000) });
+    if (diff < 3600_000) return t('time.minutesAgo', { n: Math.floor(diff / 60_000) });
+    if (diff < 86400_000) return t('time.hoursAgo', { n: Math.floor(diff / 3600_000) });
+    return t('time.daysAgo', { n: Math.floor(diff / 86400_000) });
+  };
 }
 
 export function AgentTimeline({
@@ -20,6 +23,7 @@ export function AgentTimeline({
   projectId: string;
 }) {
   const t = useT();
+  const timeAgo = useTimeAgo();
   const projectAgents = agents.filter(a => a.projectId === projectId);
   const agentIds = projectAgents.map(a => a.id);
 

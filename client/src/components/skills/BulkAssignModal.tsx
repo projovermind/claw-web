@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query';
 import { X, Search } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { Skill, Agent, Project } from '../../lib/types';
+import { useT } from '../../lib/i18n';
 
 export function BulkAssignModal({
   skill,
@@ -23,6 +24,7 @@ export function BulkAssignModal({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const t = useT();
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [tierFilter, setTierFilter] = useState<'all' | 'main' | 'project' | 'addon' | 'unassigned'>('all');
@@ -75,8 +77,8 @@ export function BulkAssignModal({
 
   const title =
     mode === 'assign'
-      ? `"${skill.name}" 스킬을 에이전트에 적용`
-      : `"${skill.name}" 스킬을 에이전트에서 제거`;
+      ? t('bulk.titleAssign', { name: skill.name })
+      : t('bulk.titleUnassign', { name: skill.name });
 
   return (
     <div
@@ -91,9 +93,7 @@ export function BulkAssignModal({
           <div>
             <h3 className="text-base font-semibold">{title}</h3>
             <p className="text-[11px] text-zinc-500 mt-0.5">
-              {mode === 'assign'
-                ? '이미 가진 에이전트는 자동으로 제외됨. 상속된 에이전트는 표시되지만 추가 선택 가능.'
-                : '직접 적용된 에이전트만 표시. 상속은 프로젝트 편집에서 해제해야 함.'}
+              {mode === 'assign' ? t('bulk.hintAssign') : t('bulk.hintUnassign')}
             </p>
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-zinc-800 text-zinc-400">
@@ -106,7 +106,7 @@ export function BulkAssignModal({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="이름/id/프로젝트 검색"
+            placeholder={t('bulk.searchPlaceholder')}
             className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-zinc-600"
           />
           <select
@@ -116,24 +116,24 @@ export function BulkAssignModal({
             }
             className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-sm"
           >
-            <option value="all">모든 계층</option>
+            <option value="all">{t('bulk.tierAll')}</option>
             <option value="main">Main</option>
             <option value="project">Lead</option>
             <option value="addon">Addon</option>
-            <option value="unassigned">미배치</option>
+            <option value="unassigned">{t('bulk.tierUnassigned')}</option>
           </select>
         </div>
 
         <div className="flex items-center justify-between px-5 py-2 border-b border-zinc-800 text-xs text-zinc-500">
           <div>
-            선택됨 {selectedIds.length} / 후보 {candidates.length}
+            {t('bulk.countLine', { selected: selectedIds.length, total: candidates.length })}
           </div>
           <div className="flex gap-2">
             <button onClick={selectAll} className="text-emerald-400 hover:text-emerald-300">
-              전체 선택
+              {t('bulk.selectAll')}
             </button>
             <button onClick={clearAll} className="text-zinc-400 hover:text-white">
-              선택 해제
+              {t('bulk.deselectAll')}
             </button>
           </div>
         </div>
@@ -141,9 +141,7 @@ export function BulkAssignModal({
         <div className="flex-1 overflow-y-auto p-2">
           {candidates.length === 0 ? (
             <div className="text-sm text-zinc-600 italic text-center py-12">
-              {mode === 'assign'
-                ? '해당 조건에 맞는 에이전트 없음 (이미 다 적용됐거나 필터 매치 0)'
-                : '이 스킬을 직접 가진 에이전트 없음'}
+              {mode === 'assign' ? t('bulk.emptyAssign') : t('bulk.emptyUnassign')}
             </div>
           ) : (
             candidates.map((a) => {
@@ -171,7 +169,7 @@ export function BulkAssignModal({
                       {a.name}
                       {isInherited && (
                         <span className="text-[11px] px-1 rounded bg-zinc-700 text-zinc-400 font-normal">
-                          이미 상속
+                          {t('bulk.inherited')}
                         </span>
                       )}
                     </div>
@@ -205,7 +203,7 @@ export function BulkAssignModal({
 
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-zinc-800">
           <button onClick={onClose} className="px-4 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">
-            취소
+            {t('bulk.cancel')}
           </button>
           <button
             disabled={selectedIds.length === 0 || mutate.isPending}
@@ -217,10 +215,10 @@ export function BulkAssignModal({
             }`}
           >
             {mutate.isPending
-              ? '처리 중...'
+              ? t('bulk.processing')
               : mode === 'assign'
-                ? `${selectedIds.length}개 에이전트에 적용`
-                : `${selectedIds.length}개 에이전트에서 제거`}
+                ? t('bulk.applyAssign', { count: selectedIds.length })
+                : t('bulk.applyUnassign', { count: selectedIds.length })}
           </button>
         </div>
       </div>

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, Clock } from 'lucide-react';
 import { api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 
 interface Schedule {
   id: string;
@@ -16,6 +17,7 @@ interface Schedule {
 
 export function SchedulesTab() {
   const qc = useQueryClient();
+  const t = useT();
   const { data: schedules = [] } = useQuery<Schedule[]>({
     queryKey: ['schedules'],
     queryFn: api.listSchedules
@@ -57,14 +59,12 @@ export function SchedulesTab() {
   return (
     <div className="max-w-2xl space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-[11px] text-zinc-500">
-          반복 실행 스케줄을 설정합니다. cron 표현식으로 주기를 지정합니다.
-        </p>
+        <p className="text-[11px] text-zinc-500">{t('schedulesTab.desc')}</p>
         <button
           onClick={() => setShowCreate(!showCreate)}
           className="flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300"
         >
-          <Plus size={14} /> 추가
+          <Plus size={14} /> {t('schedulesTab.add')}
         </button>
       </div>
 
@@ -74,7 +74,7 @@ export function SchedulesTab() {
             <input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="이름 (예: Hourly test)"
+              placeholder={t('schedulesTab.namePlaceholder')}
               className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs"
             />
             <input
@@ -89,7 +89,7 @@ export function SchedulesTab() {
             onChange={(e) => setForm({ ...form, agentId: e.target.value })}
             className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs"
           >
-            <option value="">에이전트 선택</option>
+            <option value="">{t('schedulesTab.selectAgent')}</option>
             {agents.map((a) => (
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
@@ -97,20 +97,20 @@ export function SchedulesTab() {
           <textarea
             value={form.prompt}
             onChange={(e) => setForm({ ...form, prompt: e.target.value })}
-            placeholder="실행할 프롬프트"
+            placeholder={t('schedulesTab.promptPlaceholder')}
             rows={2}
             className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs resize-none"
           />
           <div className="flex justify-end gap-2">
             <button onClick={() => setShowCreate(false)} className="text-xs text-zinc-400 hover:text-zinc-200 px-3 py-1">
-              취소
+              {t('schedulesTab.cancel')}
             </button>
             <button
               onClick={() => createMut.mutate(form)}
               disabled={!form.cron.trim() || !form.prompt.trim()}
               className="text-xs bg-emerald-900/50 text-emerald-200 px-3 py-1 rounded disabled:opacity-40"
             >
-              저장
+              {t('schedulesTab.save')}
             </button>
           </div>
         </div>
@@ -118,7 +118,7 @@ export function SchedulesTab() {
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 divide-y divide-zinc-800">
         {schedules.length === 0 && (
-          <div className="px-4 py-6 text-center text-xs text-zinc-500">등록된 스케줄이 없습니다</div>
+          <div className="px-4 py-6 text-center text-xs text-zinc-500">{t('schedulesTab.empty')}</div>
         )}
         {schedules.map((sched) => (
           <div key={sched.id} className="flex items-center gap-3 px-4 py-3">

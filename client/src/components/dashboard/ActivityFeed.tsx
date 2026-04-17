@@ -47,18 +47,12 @@ const TOPIC_META: Record<
   'settings.updated': { icon: Settings,      color: 'text-zinc-400',    key: 'activity.settingsUpdated' }
 };
 
-function timeAgo(ts: string, lang: string): string {
+function timeAgo(ts: string, t: (k: string, v?: Record<string, string | number>) => string): string {
   const diff = Date.now() - new Date(ts).getTime();
-  if (lang === 'en') {
-    if (diff < 60_000) return `${Math.floor(diff / 1000)}s ago`;
-    if (diff < 3600_000) return `${Math.floor(diff / 60_000)}m ago`;
-    if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}h ago`;
-    return `${Math.floor(diff / 86400_000)}d ago`;
-  }
-  if (diff < 60_000) return `${Math.floor(diff / 1000)}초 전`;
-  if (diff < 3600_000) return `${Math.floor(diff / 60_000)}분 전`;
-  if (diff < 86400_000) return `${Math.floor(diff / 3600_000)}시간 전`;
-  return `${Math.floor(diff / 86400_000)}일 전`;
+  if (diff < 60_000) return t('time.secondsAgo', { n: Math.floor(diff / 1000) });
+  if (diff < 3600_000) return t('time.minutesAgo', { n: Math.floor(diff / 60_000) });
+  if (diff < 86400_000) return t('time.hoursAgo', { n: Math.floor(diff / 3600_000) });
+  return t('time.daysAgo', { n: Math.floor(diff / 86400_000) });
 }
 
 export default function ActivityFeed({ limit = 30 }: { limit?: number }) {
@@ -70,7 +64,6 @@ export default function ActivityFeed({ limit = 30 }: { limit?: number }) {
   });
 
   const entries = data ?? [];
-  const isKo = t('nav.dashboard') === '대시보드';
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 overflow-hidden">
@@ -107,7 +100,7 @@ export default function ActivityFeed({ limit = 30 }: { limit?: number }) {
                       {label}{detail ? ` · ${detail}` : ''}
                     </div>
                     <div className="text-[11px] text-zinc-600 font-mono mt-0.5">
-                      {timeAgo(entry.ts, isKo ? 'ko' : 'en')}
+                      {timeAgo(entry.ts, t)}
                     </div>
                   </div>
                 </div>

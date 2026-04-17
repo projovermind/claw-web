@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 
 interface Hook {
   id: string;
@@ -15,6 +16,7 @@ interface Hook {
 const EVENTS = ['PreToolUse', 'PostToolUse', 'SessionStart'] as const;
 
 export function HooksTab() {
+  const t = useT();
   const qc = useQueryClient();
   const { data: hooks = [] } = useQuery<Hook[]>({
     queryKey: ['hooks'],
@@ -51,14 +53,12 @@ export function HooksTab() {
   return (
     <div className="max-w-2xl space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-[11px] text-zinc-500">
-          도구 사용 전후로 자동 실행되는 훅을 설정합니다. (보안 체크, 린트, 포맷팅 등)
-        </p>
+        <p className="text-[11px] text-zinc-500">{t('hooksTab.desc')}</p>
         <button
           onClick={() => setShowCreate(!showCreate)}
           className="flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300"
         >
-          <Plus size={14} /> 추가
+          <Plus size={14} /> {t('hooksTab.add')}
         </button>
       </div>
 
@@ -89,14 +89,14 @@ export function HooksTab() {
           />
           <div className="flex justify-end gap-2">
             <button onClick={() => setShowCreate(false)} className="text-xs text-zinc-400 hover:text-zinc-200 px-3 py-1">
-              취소
+              {t('hooksTab.cancel')}
             </button>
             <button
               onClick={() => createMut.mutate({ event: newEvent, matcher: newMatcher, action: 'shell', command: newCommand })}
               disabled={!newCommand.trim()}
               className="text-xs bg-emerald-900/50 text-emerald-200 px-3 py-1 rounded disabled:opacity-40"
             >
-              저장
+              {t('hooksTab.save')}
             </button>
           </div>
         </div>
@@ -104,7 +104,7 @@ export function HooksTab() {
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 divide-y divide-zinc-800">
         {hooks.length === 0 && (
-          <div className="px-4 py-6 text-center text-xs text-zinc-500">등록된 훅이 없습니다</div>
+          <div className="px-4 py-6 text-center text-xs text-zinc-500">{t('hooksTab.empty')}</div>
         )}
         {hooks.map((hook) => (
           <div key={hook.id} className="flex items-center gap-3 px-4 py-3">

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Check, X, Pencil } from 'lucide-react';
+import { useT } from '../../lib/i18n';
 
 /**
  * Inline-editable session title shown in the chat header.
@@ -23,6 +24,7 @@ export function SessionTitleEditor({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const inputRef = useRef<HTMLInputElement>(null);
+  const t = useT();
 
   // Reset draft when the session switches
   useEffect(() => {
@@ -83,7 +85,7 @@ export function SessionTitleEditor({
           onClick={commit}
           disabled={busy}
           className="p-1 rounded hover:bg-emerald-900/40 text-emerald-400 disabled:opacity-40 shrink-0"
-          title="저장"
+          title={t('sessionTitle.save')}
         >
           <Check size={14} />
         </button>
@@ -91,7 +93,7 @@ export function SessionTitleEditor({
           onMouseDown={(e) => e.preventDefault()}
           onClick={cancel}
           className="p-1 rounded hover:bg-zinc-800 text-zinc-400 shrink-0"
-          title="취소"
+          title={t('sessionTitle.cancel')}
         >
           <X size={14} />
         </button>
@@ -103,7 +105,7 @@ export function SessionTitleEditor({
     <button
       onClick={() => setEditing(true)}
       className="group flex items-center gap-2 min-w-0 flex-1 text-left hover:bg-zinc-900/60 rounded px-2 py-1 -mx-2 transition-colors"
-      title="클릭해서 제목 수정"
+      title={t('sessionTitle.editHint')}
     >
       <span className="font-semibold truncate">{title || '(no title)'}</span>
       <Pencil

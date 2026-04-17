@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { COMMANDS, type SlashCommand } from '../../lib/commands';
+import { useCommands, type SlashCommand } from '../../lib/commands';
 
 /**
  * Popover that appears when the user types `/` at the start of the
@@ -29,15 +29,16 @@ export default function SlashPopover({
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const q = query.toLowerCase().trim();
+  const commands = useCommands();
 
   const filtered = useMemo(
     () =>
       q
-        ? COMMANDS.filter(
+        ? commands.filter(
             (c) => c.name.includes(q) || c.desc.toLowerCase().includes(q)
           )
-        : COMMANDS,
-    [q]
+        : commands,
+    [q, commands]
   );
 
   // Keep cursor in range

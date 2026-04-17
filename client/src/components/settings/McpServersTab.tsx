@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Save } from 'lucide-react';
 import { api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 
 export function McpServersTab() {
+  const t = useT();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['mcp-servers'],
@@ -52,7 +54,7 @@ export function McpServersTab() {
   return (
     <div className="max-w-2xl space-y-3">
       <p className="text-[11px] text-zinc-500">
-        Claude CLI의 MCP 서버 설정을 관리합니다. <code className="text-zinc-400">.claude/settings.json</code>의 <code className="text-zinc-400">mcpServers</code> 필드를 직접 편집합니다.
+        {t('mcpTab.desc')}
       </p>
       {data?.path && (
         <div className="text-[11px] text-zinc-600 font-mono">{data.path}</div>
@@ -66,7 +68,7 @@ export function McpServersTab() {
       />
 
       {parseError && (
-        <div className="text-[11px] text-red-400">JSON 파싱 오류: {parseError}</div>
+        <div className="text-[11px] text-red-400">{t('mcpTab.parseError', { error: parseError })}</div>
       )}
 
       <div className="flex justify-end">
@@ -76,7 +78,7 @@ export function McpServersTab() {
           className="flex items-center gap-1.5 text-xs bg-emerald-900/50 text-emerald-200 px-4 py-2 rounded disabled:opacity-40 hover:bg-emerald-900/70"
         >
           <Save size={14} />
-          {saveMut.isPending ? '저장 중...' : '저장'}
+          {saveMut.isPending ? t('mcpTab.saving') : t('mcpTab.save')}
         </button>
       </div>
     </div>

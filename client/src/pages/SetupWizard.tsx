@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sparkles, Folder, Check, X, Loader2 } from 'lucide-react';
+import { useT } from '../lib/i18n';
 
 interface ScannedProject {
   path: string;
@@ -41,6 +42,7 @@ function suggestId(name: string): string {
 export default function SetupWizard() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const t = useT();
   const [step, setStep] = useState<'scan' | 'select' | 'done'>('scan');
   const [rootPath, setRootPath] = useState('');
   const [result, setResult] = useState<ScanResult | null>(null);
@@ -57,12 +59,11 @@ export default function SetupWizard() {
         },
         body: JSON.stringify({ roots: rootPath ? [rootPath] : [] })
       });
-      if (!res.ok) throw new Error('스캔 실패');
+      if (!res.ok) throw new Error(t('setup.scanFailed'));
       return res.json() as Promise<ScanResult>;
     },
     onSuccess: (data) => {
       setResult(data);
-      // 기본 선택: CLAUDE.md 있는 것만 enabled
       const init: SelectionState = {};
       data.projects.forEach((p, i) => {
         init[p.path] = {
@@ -97,7 +98,7 @@ export default function SetupWizard() {
         },
         body: JSON.stringify({ projects })
       });
-      if (!res.ok) throw new Error('적용 실패');
+      if (!res.ok) throw new Error(t('setup.applyFailed'));
       return res.json() as Promise<{ created: string[]; createdAgents: string[]; errors: { id: string; error: string }[] }>;
     },
     onSuccess: (data) => {
@@ -116,17 +117,16 @@ export default function SetupWizard() {
         <div className="max-w-2xl mx-auto space-y-5">
           <div className="flex items-center gap-3">
             <Sparkles className="text-amber-400" />
-            <h1 className="text-2xl font-semibold">🦞 Claw Web 테라포밍</h1>
+            <h1 className="text-2xl font-semibold">{t('setup.title')}</h1>
           </div>
           <p className="text-sm text-zinc-400 leading-relaxed">
-            기존 프로젝트와 Claude 환경을 자동으로 감지해서 Claw Web에 가져옵니다.
+            {t('setup.intro')}
             <br />
-            <code className="text-xs text-zinc-500">CLAUDE.md</code>, <code className="text-xs text-zinc-500">package.json</code>, <code className="text-xs text-zinc-500">.git</code> 등으로 프로젝트를 인식하고,
-            디스코드 봇 / Claude Code 세션 / CARL 설정을 탐지합니다.
+            {t('setup.intro2')}
           </p>
           <div className="rounded-lg border border-zinc-700 bg-zinc-900/40 p-4 space-y-3">
             <label className="block">
-              <span className="block text-xs uppercase text-zinc-500 mb-1">스캔 경로 (비워두면 기본: Projects/, Documents/, Code/, /Volumes/Core/Vault)</span>
+              <span className="block text-xs uppercase text-zinc-500 mb-1">{t('setup.pathLabel')}</span>
               <input
                 value={rootPath}
                 onChange={(e) => setRootPath(e.target.value)}
@@ -140,9 +140,9 @@ export default function SetupWizard() {
               className="w-full rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white py-2 text-sm font-semibold flex items-center justify-center gap-2"
             >
               {scanMutation.isPending ? (
-                <><Loader2 size={14} className="animate-spin" /> 스캔 중...</>
+                <><Loader2 size={14} className="animate-spin" /> {t('setup.scanning')}</>
               ) : (
-                <><Sparkles size={14} /> 시작</>
+                <><Sparkles size={14} /> {t('setup.start')}</>
               )}
             </button>
             {scanMutation.error && (
@@ -153,7 +153,7 @@ export default function SetupWizard() {
             onClick={() => navigate('/')}
             className="text-xs text-zinc-500 hover:text-zinc-300"
           >
-            ← 건너뛰기 (나중에 Settings에서 실행 가능)
+            {t('setup.skip')}
           </button>
         </div>
       </div>
@@ -164,23 +164,23 @@ export default function SetupWizard() {
     return (
       <div className="flex-1 overflow-y-auto p-6">
         <div className="max-w-4xl mx-auto space-y-5">
-          <h2 className="text-xl font-semibold">발견된 항목</h2>
+          <h2 className="text-xl font-semibold">{t('setup.foundTitle')}</h2>
 
           {/* 기존 도구 */}
           {Object.keys(result.tools).length > 0 && (
             <div className="rounded-lg border border-sky-900/50 bg-sky-950/20 p-4 space-y-2">
-              <div className="text-sm font-semibold text-sky-300">기존 Claude 환경 감지됨</div>
+              <div className="text-sm font-semibold text-sky-300">{t('setup.toolsDetected')}</div>
               <div className="space-y-1 text-xs text-zinc-400">
                 {result.tools.discordBot != null && (
-                  <div>🤖 Discord Bot: {String(result.tools.discordBot.agentCount)}개 에이전트 (자동 동기화됨)</div>
+                  <div>🤖 {t('setup.tool.discordBot', { count: String(result.tools.discordBot.agentCount) })}</div>
                 )}
                 {result.tools.carl != null && (
-                  <div>📜 CARL: {String(result.tools.carl.domainCount)}개 도메인 규칙 (자동 주입됨)</div>
+                  <div>📜 {t('setup.tool.carl', { count: String(result.tools.carl.domainCount) })}</div>
                 )}
                 {result.tools.claudeCode != null && (
-                  <div>📁 Claude Code: {String(result.tools.claudeCode.projectCount)}개 세션</div>
+                  <div>📁 {t('setup.tool.claudeCode', { count: String(result.tools.claudeCode.projectCount) })}</div>
                 )}
-                {result.tools.paul != null && <div>🔧 PAUL 설치됨</div>}
+                {result.tools.paul != null && <div>🔧 {t('setup.tool.paul')}</div>}
               </div>
             </div>
           )}
@@ -189,8 +189,8 @@ export default function SetupWizard() {
           <div className="rounded-lg border border-zinc-700 bg-zinc-900/40 overflow-hidden">
             <div className="px-4 py-2 border-b border-zinc-700 flex items-center gap-2">
               <Folder size={14} className="text-zinc-500" />
-              <span className="text-sm font-semibold">프로젝트 ({result.projects.length})</span>
-              <span className="ml-auto text-xs text-zinc-500">{selectedCount}개 선택됨</span>
+              <span className="text-sm font-semibold">{t('setup.projectsHeader', { count: result.projects.length })}</span>
+              <span className="ml-auto text-xs text-zinc-500">{t('setup.selected', { count: selectedCount })}</span>
             </div>
             <div className="divide-y divide-zinc-800 max-h-[500px] overflow-y-auto">
               {result.projects.map((p) => {
@@ -237,7 +237,7 @@ export default function SetupWizard() {
                             onChange={(e) => setSelection({ ...selection, [p.path]: { ...sel, createDefaultAgents: e.target.checked } })}
                             disabled={!sel.enabled}
                           />
-                          기본 기획자 에이전트 자동 생성
+                          {t('setup.createAgents')}
                         </label>
                         <div className="flex gap-0.5 ml-auto">
                           {COLORS.map(c => (
@@ -263,7 +263,7 @@ export default function SetupWizard() {
               onClick={() => setStep('scan')}
               className="text-xs text-zinc-500 hover:text-zinc-300"
             >
-              ← 뒤로
+              {t('setup.back')}
             </button>
             <button
               onClick={() => applyMutation.mutate()}
@@ -271,9 +271,9 @@ export default function SetupWizard() {
               className="ml-auto rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white px-5 py-2 text-sm font-semibold flex items-center gap-2"
             >
               {applyMutation.isPending ? (
-                <><Loader2 size={14} className="animate-spin" /> 적용 중...</>
+                <><Loader2 size={14} className="animate-spin" /> {t('setup.applying')}</>
               ) : (
-                <><Check size={14} /> {selectedCount}개 적용</>
+                <><Check size={14} /> {t('setup.apply', { count: selectedCount })}</>
               )}
             </button>
           </div>
@@ -287,11 +287,11 @@ export default function SetupWizard() {
       <div className="max-w-2xl mx-auto space-y-5">
         <div className="flex items-center gap-3">
           <Check className="text-emerald-400" size={28} />
-          <h1 className="text-2xl font-semibold">완료!</h1>
+          <h1 className="text-2xl font-semibold">{t('setup.doneTitle')}</h1>
         </div>
         {applyErrors.length > 0 && (
           <div className="rounded-lg border border-red-900/50 bg-red-950/20 p-4 space-y-2">
-            <div className="text-sm font-semibold text-red-300">일부 항목에서 오류</div>
+            <div className="text-sm font-semibold text-red-300">{t('setup.partialErrors')}</div>
             {applyErrors.map((e, i) => (
               <div key={i} className="text-xs text-red-400">
                 <X size={10} className="inline" /> <code>{e.id}</code>: {e.error}
@@ -300,8 +300,8 @@ export default function SetupWizard() {
           </div>
         )}
         <div className="flex gap-2">
-          <button onClick={() => navigate('/projects')} className="flex-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white py-2 text-sm font-semibold">프로젝트 보기</button>
-          <button onClick={() => navigate('/chat')} className="flex-1 rounded bg-sky-700 hover:bg-sky-600 text-white py-2 text-sm font-semibold">채팅 시작</button>
+          <button onClick={() => navigate('/projects')} className="flex-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white py-2 text-sm font-semibold">{t('setup.gotoProjects')}</button>
+          <button onClick={() => navigate('/chat')} className="flex-1 rounded bg-sky-700 hover:bg-sky-600 text-white py-2 text-sm font-semibold">{t('setup.gotoChat')}</button>
         </div>
       </div>
     </div>

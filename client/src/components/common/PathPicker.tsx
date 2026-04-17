@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Folder, FolderOpen, FolderPlus, ChevronLeft, Home, Check, X, AlertTriangle } from 'lucide-react';
 import { api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 
 /**
  * Folder picker modal scoped to the server's allowedRoots.
@@ -28,6 +29,7 @@ export default function PathPicker({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  const t = useT();
   const [currentPath, setCurrentPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // New-folder inline prompt state
@@ -97,7 +99,7 @@ export default function PathPicker({
         <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
           <div className="flex items-center gap-2">
             <FolderOpen size={16} className="text-amber-400" />
-            <h3 className="text-base font-semibold">폴더 선택</h3>
+            <h3 className="text-base font-semibold">{t('pathPicker.title')}</h3>
           </div>
           <button onClick={onClose} className="p-1 rounded hover:bg-zinc-800 text-zinc-400">
             <X size={16} />
@@ -109,7 +111,7 @@ export default function PathPicker({
           <button
             onClick={() => setCurrentPath(null)}
             className="p-1 rounded hover:bg-zinc-800 text-zinc-400 shrink-0"
-            title="루트로"
+            title={t('pathPicker.toRoot')}
           >
             <Home size={12} />
           </button>
@@ -117,13 +119,13 @@ export default function PathPicker({
             <button
               onClick={() => setCurrentPath(parent)}
               className="p-1 rounded hover:bg-zinc-800 text-zinc-400 shrink-0"
-              title="상위 폴더"
+              title={t('pathPicker.goUp')}
             >
               <ChevronLeft size={12} />
             </button>
           )}
           <code className="flex-1 truncate text-zinc-400 font-mono">
-            {currentPath ?? '(루트 선택)'}
+            {currentPath ?? t('pathPicker.rootPlaceholder')}
           </code>
           {/* New folder: only enabled when we're inside a directory (not at the
               root-list step). Toggling opens an inline input row below. */}
@@ -136,7 +138,7 @@ export default function PathPicker({
               }}
               disabled={newFolderMode}
               className="p-1 rounded hover:bg-zinc-800 text-emerald-400 disabled:opacity-40 shrink-0"
-              title="새 폴더"
+              title={t('pathPicker.newFolder')}
             >
               <FolderPlus size={12} />
             </button>
@@ -159,7 +161,7 @@ export default function PathPicker({
                   setNewFolderName('');
                 }
               }}
-              placeholder="새 폴더 이름"
+              placeholder={t('pathPicker.newFolderPlaceholder')}
               className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs focus:outline-none focus:border-emerald-700"
             />
             <button
@@ -167,7 +169,7 @@ export default function PathPicker({
               onClick={() => mkdir.mutate({ parent: currentPath, name: newFolderName.trim() })}
               className="rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-2.5 py-1 text-[11px] text-white"
             >
-              {mkdir.isPending ? '생성 중…' : '생성'}
+              {mkdir.isPending ? t('pathPicker.creating') : t('pathPicker.create')}
             </button>
             <button
               onClick={() => {
@@ -175,7 +177,7 @@ export default function PathPicker({
                 setNewFolderName('');
               }}
               className="p-1 rounded hover:bg-zinc-800 text-zinc-400"
-              title="취소"
+              title={t('pathPicker.cancel')}
             >
               <X size={12} />
             </button>
@@ -195,7 +197,7 @@ export default function PathPicker({
           {!currentPath ? (
             roots.length === 0 ? (
               <div className="text-sm text-zinc-500 italic p-4 text-center">
-                {rootsQ.isLoading ? '로딩 중…' : 'allowedRoots가 비어있음'}
+                {rootsQ.isLoading ? t('pathPicker.loading') : t('pathPicker.rootsEmpty')}
               </div>
             ) : (
               roots.map((r) => (
@@ -213,10 +215,10 @@ export default function PathPicker({
               ))
             )
           ) : lsQ.isLoading ? (
-            <div className="text-sm text-zinc-500 italic p-4 text-center">로딩 중…</div>
+            <div className="text-sm text-zinc-500 italic p-4 text-center">{t('pathPicker.loading')}</div>
           ) : entries.length === 0 ? (
             <div className="text-sm text-zinc-600 italic p-4 text-center">
-              빈 폴더 (하위 디렉터리 없음)
+              {t('pathPicker.folderEmpty')}
             </div>
           ) : (
             entries.map((e) => (
@@ -235,7 +237,7 @@ export default function PathPicker({
         {/* Footer: select button */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-zinc-800">
           <p className="text-[11px] text-zinc-600 flex-1">
-            💡 표시되는 경로는 서버의 <code>allowedRoots</code> 안으로 한정됨.
+            {t('pathPicker.allowedHint')}
           </p>
           <button
             disabled={!currentPath}
@@ -247,7 +249,7 @@ export default function PathPicker({
             }}
             className="rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 text-sm flex items-center gap-1.5"
           >
-            <Check size={12} /> 이 폴더 선택
+            <Check size={12} /> {t('pathPicker.selectHere')}
           </button>
         </div>
       </div>

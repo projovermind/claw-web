@@ -1,8 +1,10 @@
 import { Upload } from 'lucide-react';
 import { useUploadsStore } from '../../store/uploads-store';
+import { useT } from '../../lib/i18n';
 
 export default function GlobalDropOverlay() {
   const dragActive = useUploadsStore((s) => s.dragActive);
+  const t = useT();
 
   if (!dragActive) return null;
 
@@ -14,8 +16,8 @@ export default function GlobalDropOverlay() {
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="bg-zinc-900/95 border border-emerald-400/50 rounded-2xl px-8 py-6 flex flex-col items-center gap-2 shadow-2xl">
           <Upload size={36} className="text-emerald-400 animate-bounce" />
-          <div className="text-lg font-semibold text-white">파일 드롭해서 업로드</div>
-          <div className="text-[11px] text-zinc-400">최대 20 MB · 여러 개 가능</div>
+          <div className="text-lg font-semibold text-white">{t('drop.title')}</div>
+          <div className="text-[11px] text-zinc-400">{t('drop.hint')}</div>
         </div>
       </div>
     </div>

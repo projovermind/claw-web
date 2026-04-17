@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Sparkles, Package } from 'lucide-react';
 import type { Skill } from '../../lib/types';
+import { useT } from '../../lib/i18n';
 
 interface Props {
   allSkills: Skill[];
@@ -18,6 +19,7 @@ export default function SkillPicker({
   emptyMessage
 }: Props) {
   const [search, setSearch] = useState('');
+  const t = useT();
 
   const inheritedSet = useMemo(() => new Set(inheritedIds), [inheritedIds]);
 
@@ -53,7 +55,7 @@ export default function SkillPicker({
   if (allSkills.length === 0) {
     return (
       <div className="rounded border border-dashed border-zinc-800 bg-zinc-950/40 p-3 text-[11px] text-zinc-600 italic text-center">
-        {emptyMessage ?? '스킬이 없어요. Skills 탭에서 먼저 생성하세요.'}
+        {emptyMessage ?? t('skillPicker.empty')}
       </div>
     );
   }
@@ -66,7 +68,7 @@ export default function SkillPicker({
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="스킬 검색"
+          placeholder={t('skillPicker.search')}
           className="flex-1 bg-transparent text-xs focus:outline-none placeholder:text-zinc-600"
         />
         <span className="text-[11px] text-zinc-600">
@@ -91,7 +93,7 @@ export default function SkillPicker({
                     ? 'bg-amber-900/30 text-amber-100 hover:bg-amber-900/40'
                     : 'text-zinc-300 hover:bg-zinc-900'
               }`}
-              title={isInherited ? '프로젝트 기본 스킬 (상속, 편집 불가)' : undefined}
+              title={isInherited ? t('skillPicker.inheritedTitle') : undefined}
             >
               <div
                 className={`w-3.5 h-3.5 rounded border shrink-0 flex items-center justify-center ${
