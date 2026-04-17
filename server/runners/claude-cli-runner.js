@@ -75,7 +75,17 @@ export function startClaudeRun({
   }
   if (claudeSessionId) args.push('--resume', claudeSessionId);
   if (agent.allowedTools?.length) args.push('--allowedTools', ...agent.allowedTools);
-  if (agent.disallowedTools?.length) args.push('--disallowedTools', ...agent.disallowedTools);
+
+  // 전역 자동 차단:
+  // - AskUserQuestion: Claude 의 대화형 질문 툴. -p 비대화형 모드에서는 응답 방법이
+  //   없어 자동 '취소'됨 → 에이전트가 "질문이 취소됐으니 알아서 진행" 로 애매하게 종료.
+  //   사용자 선택지는 <choices> 태그 (choicesHint) 로 처리.
+  // - ExitPlanMode: plan 모드 진입/종료 승인 툴. -p 모드에 부적합.
+  const AUTO_BLOCK = ['AskUserQuestion', 'ExitPlanMode'];
+  const mergedDisallowed = [
+    ...new Set([...(agent.disallowedTools || []), ...AUTO_BLOCK])
+  ];
+  if (mergedDisallowed.length) args.push('--disallowedTools', ...mergedDisallowed);
 
   args.push('--model', model);
 

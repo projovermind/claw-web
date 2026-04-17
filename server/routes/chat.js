@@ -162,7 +162,7 @@ export function createChatRouter({
     }
 
     // 선택지 버튼 UI 힌트: 여러 옵션 중 하나 고르게 할 때 <choices> 태그 사용
-    agent.choicesHint = `\n<ui-hints>\n사용자가 여러 옵션 중 하나를 선택해야 할 때 응답 끝에 <choices> 태그로 감싸서 제공하세요. UI에서 버튼으로 렌더링됩니다.\n가장 추천하는 옵션 하나에 ⭐ 마커를 앞에 붙이면 추천 배지로 강조됩니다. (또는 [추천] / (추천) 태그도 가능)\n예시:\n<choices>\n- ⭐ 옵션 A (가장 추천)\n- 옵션 B\n- 옵션 C\n</choices>\n</ui-hints>`;
+    agent.choicesHint = `\n<ui-hints>\n이 세션은 비대화형(-p) 모드 입니다. AskUserQuestion / ExitPlanMode 같은 대화형 툴은 호출하지 마세요 — 응답이 '취소됨' 으로 돌아와 작업이 애매하게 종료됩니다.\n\n사용자에게 질문하거나 선택지를 주고 싶을 때는 반드시 응답 끝에 <choices> 태그로 감싸서 제공하세요. UI 에서 버튼으로 렌더링됩니다.\n가장 추천하는 옵션 하나에 ⭐ 마커를 앞에 붙이면 추천 배지로 강조됩니다. (또는 [추천] / (추천) 태그도 가능)\n예시:\n<choices>\n- ⭐ 옵션 A (가장 추천)\n- 옵션 B\n- 옵션 C\n</choices>\n\n사용자 승인이 필요한 플랜을 세운 경우에도 ExitPlanMode 대신: (1) 플랜 본문 마크다운으로 작성 → (2) 끝에 <choices> 로 "바로 실행" / "수정 필요" / "보류" 제시.\n</ui-hints>`;
 
     // 위임 포맷 안내: 같은 프로젝트 내 다른 에이전트 ID + JSON 포맷 자동 주입
     {
