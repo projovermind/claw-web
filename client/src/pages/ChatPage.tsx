@@ -374,6 +374,7 @@ export default function ChatPage() {
             <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-3 lg:px-6">
               {currentSession && (
                 <MessageList
+                  key={currentSession.id}
                   messages={currentSession.messages ?? []}
                   searchQuery={searchQuery || undefined}
                   onChoice={(c) => sendMessage.mutate({ message: c, paths: [] })}

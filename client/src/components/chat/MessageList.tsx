@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -154,8 +154,31 @@ export function extractChoices(text: string): { body: string; choices: ChoiceIte
 
 export default function MessageList({ messages, searchQuery, onChoice }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  // 첫 렌더(세션 진입) 시 instant 스크롤 → 위에서 아래로 훑는 애니메이션 방지.
+  // 이후 메시지 추가는 smooth. parent 의 key={sessionId} 로 세션 전환 시 remount 가정.
+  const isFirstRender = useRef(true);
+  const [ready, setReady] = useState(false);
+
+  // 레이아웃 반영 직전에 스크롤 위치 세팅 → fade-in 하면 바닥부터 보임
+  useLayoutEffect(() => {
+    if (!isFirstRender.current) return;
+    // messages 가 아직 없으면 skip (다음 effect 에서 처리)
+    if (messages.length === 0) return;
+    endRef.current?.scrollIntoView({ behavior: 'auto' });
+    // 스크롤 위치 잡힌 후 다음 tick 에 보이도록
+    requestAnimationFrame(() => setReady(true));
+    isFirstRender.current = false;
+  }, [messages.length]);
+
   useEffect(() => {
+    if (isFirstRender.current) return; // 위 layoutEffect 가 처리
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length]);
+
+  // 빈 세션은 바로 ready (fade-in 대기할 필요 없음)
+  useEffect(() => {
+    if (messages.length === 0) setReady(true);
   }, [messages.length]);
 
   const filtered = useMemo(() => {
@@ -168,7 +191,10 @@ export default function MessageList({ messages, searchQuery, onChoice }: Message
   const lastAssistantIdx = filtered.map((m, i) => m.role === 'assistant' ? i : -1).filter(i => i !== -1).pop() ?? -1;
 
   return (
-    <div className="flex flex-col gap-4 py-4">
+    <div
+      ref={containerRef}
+      className={`flex flex-col gap-4 py-4 transition-opacity duration-150 ${ready ? 'opacity-100' : 'opacity-0'}`}
+    >
       {filtered.map((m, i) => {
         // 이전 메시지가 [위임 결과 보고] / [위임 에스컬레이션] user 트리거면
         // 이 assistant 응답이 "위임 작업 완료" 또는 "에스컬레이션 대응" 단계
