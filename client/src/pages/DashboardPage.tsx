@@ -44,14 +44,23 @@ export default function DashboardPage() {
   const activeIds: string[] = sessionsRaw?.activeIds ?? [];
   const agentById = new Map<string, Agent>((agents ?? []).map((a) => [a.id, a]));
   const getAgent = (id: string) => agentById.get(id);
-  // 에이전트가 없는(삭제된) 세션 제외
-  const allSessions = allSessionsRaw.filter(s => agentById.has(s.agentId));
+  // 삭제된 에이전트 + 위임 세션 제외 (위임은 planner 세션 안에서 표시됨)
+  const allSessions = allSessionsRaw
+    .filter(s => agentById.has(s.agentId))
+    .filter(s => !s.title?.startsWith('[위임]'));
   const runningSessions = allSessions.filter((s) => s.isRunning);
   const recentSessions = allSessions
     .slice()
     .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
     .slice(0, 10);
   const quickAccessSessions = recentSessions.slice(0, 5);
+  // 안 읽은 세션 (현재 세션 제외, 위임 제외) — 빠른 접근용 상단 노출
+  const unreadMap = useChatStore((s) => s.unread);
+  const currentSessionId = useChatStore((s) => s.currentSessionId);
+  const unreadSessions = allSessions
+    .filter(s => unreadMap[s.id] && s.id !== currentSessionId)
+    .slice()
+    .sort((a, b) => (unreadMap[b.id]?.at ?? 0) - (unreadMap[a.id]?.at ?? 0));
 
   // Project activity: message count per project in last 24h
   const projectActivity = useMemo(() => {
@@ -85,6 +94,37 @@ export default function DashboardPage() {
         <h2 className="text-2xl font-semibold">{t('dashboard.title')}</h2>
         <WsBadge state={wsState} />
       </div>
+
+      {/* 안 읽은 세션 — 최상단. 없으면 미표시 */}
+      {unreadSessions.length > 0 && (
+        <div>
+          <SectionHeader
+            icon={<span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />}
+            label={t('dashboard.unread')}
+            count={unreadSessions.length}
+          />
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {unreadSessions.map((s) => {
+              const agent = getAgent(s.agentId);
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => {
+                    setCurrentAgent(s.agentId);
+                    setCurrentSession(s.id);
+                    navigate('/chat');
+                  }}
+                  className="shrink-0 flex items-center gap-2 rounded-lg border border-sky-700/50 bg-sky-950/30 hover:bg-sky-900/40 px-3 py-2 text-xs text-sky-100 transition-colors"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse shrink-0" />
+                  <span>{agent?.avatar ?? '🤖'}</span>
+                  <span className="truncate max-w-[160px]">{s.title}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Quick Access */}
       {quickAccessSessions.length > 0 && (

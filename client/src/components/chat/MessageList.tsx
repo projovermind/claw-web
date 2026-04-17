@@ -2,7 +2,7 @@ import { useEffect, useRef, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Wrench, ChevronDown, ChevronRight } from 'lucide-react';
+import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
 import type { ChatMessage } from '../../lib/types';
 import ToolCallCard from './ToolCallCard';
 import { useT } from '../../lib/i18n';
@@ -213,6 +213,9 @@ function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessag
   const t = useT();
   const isUser = message.role === 'user';
   const isQueued = isUser && (message as ChatMessage & { queued?: boolean }).queued;
+  // 위임 메시지는 특수 카드로 렌더 (사이드바에서는 위임 세션 숨김 → 여기서 인라인 표시)
+  const delegationMatch = !isUser && parseDelegationMessage(message.content);
+  if (delegationMatch) return <DelegationCard data={delegationMatch} />;
   const { body, choices } = useMemo(() => isUser ? { body: message.content, choices: [] } : extractChoices(message.content), [message.content, isUser]);
   // 버블 색상 — CSS 변수(useAppearance 훅이 주입) 기반
   const userBubbleStyle = isUser && !isQueued ? { background: 'var(--user-bubble, #3f3f46)' } : undefined;
@@ -264,6 +267,88 @@ function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessag
               <span className="font-mono">
                 ↑{message.usage.inputTokens} ↓{message.usage.outputTokens}
               </span>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 위임 메시지 파싱 — 서버가 생성하는 "🔄 **위임 시작**" / "✅ **위임 완료**" / "⚠️ 위임 실패" 패턴 */
+interface DelegationData {
+  kind: 'start' | 'done' | 'fail';
+  targetAgent: string;
+  task?: string;
+  session?: string;
+  summary?: string;
+  loop?: boolean;
+}
+
+function parseDelegationMessage(content: string): DelegationData | null {
+  if (!content) return null;
+  // 시작: "🔄 **위임 시작** — {agent}에게 작업을 전달했습니다.\n\n**작업**: {task}\n**세션**: {sid}"
+  const startMatch = content.match(/^🔄\s*\*\*위임 시작\*\*\s*—\s*([^\n]+?)에게/);
+  if (startMatch) {
+    const taskMatch = content.match(/\*\*작업\*\*:\s*([^\n]+)/);
+    const sessMatch = content.match(/\*\*세션\*\*:\s*([^\n]+)/);
+    const loop = /Ralph Loop/.test(content);
+    return {
+      kind: 'start',
+      targetAgent: startMatch[1].trim(),
+      task: taskMatch?.[1]?.trim(),
+      session: sessMatch?.[1]?.trim(),
+      loop
+    };
+  }
+  // 완료: "✅ **위임 완료** — {agent}\n\n**작업**: {task}\n\n**결과 요약**:\n{summary}"
+  const doneMatch = content.match(/^✅\s*\*\*위임 완료\*\*\s*—\s*([^\n]+)/);
+  if (doneMatch) {
+    const taskMatch = content.match(/\*\*작업\*\*:\s*([^\n]+)/);
+    const summaryMatch = content.match(/\*\*결과 요약\*\*:\s*([\s\S]*)$/);
+    return {
+      kind: 'done',
+      targetAgent: doneMatch[1].trim(),
+      task: taskMatch?.[1]?.trim(),
+      summary: summaryMatch?.[1]?.trim()
+    };
+  }
+  // 실패: "⚠️ 위임 실패 — 에이전트 "{id}"를 찾을 수 없습니다."
+  const failMatch = content.match(/^⚠️\s*위임 실패\s*—\s*에이전트\s*"([^"]+)"/);
+  if (failMatch) {
+    return { kind: 'fail', targetAgent: failMatch[1] };
+  }
+  return null;
+}
+
+/** 위임 카드 — MessageBubble 대체 렌더 */
+function DelegationCard({ data }: { data: DelegationData }) {
+  const [open, setOpen] = useState(data.kind === 'fail');
+  const palette = data.kind === 'done'
+    ? { border: 'border-emerald-800/60', bg: 'bg-emerald-950/30', text: 'text-emerald-200', icon: <CheckCircle2 size={14} className="text-emerald-400" />, label: '위임 완료' }
+    : data.kind === 'fail'
+      ? { border: 'border-red-800/60', bg: 'bg-red-950/30', text: 'text-red-200', icon: <XCircle size={14} className="text-red-400" />, label: '위임 실패' }
+      : { border: 'border-sky-800/60', bg: 'bg-sky-950/30', text: 'text-sky-200', icon: <ArrowRight size={14} className="text-sky-400 animate-pulse" />, label: data.loop ? '위임 (Ralph Loop)' : '위임 중' };
+  return (
+    <div className="flex justify-start">
+      <div className={`max-w-[85%] rounded-lg border ${palette.border} ${palette.bg} px-3 py-2 text-xs ${palette.text} space-y-1.5 w-full`}>
+        <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-2 text-left">
+          {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          {palette.icon}
+          <span className="font-semibold">[{palette.label}]</span>
+          <span className="font-mono opacity-80">{data.targetAgent}</span>
+          {data.task && !open && (
+            <span className="opacity-60 truncate flex-1 text-[11px]">— {data.task.slice(0, 60)}</span>
+          )}
+        </button>
+        {open && (
+          <div className="pl-5 space-y-1 text-[11px]">
+            {data.task && <div><span className="opacity-60">작업:</span> {data.task}</div>}
+            {data.session && <div><span className="opacity-60">세션:</span> <span className="font-mono opacity-80">{data.session}</span></div>}
+            {data.summary && (
+              <div className="mt-1 pt-1 border-t border-current/10 opacity-90 whitespace-pre-wrap break-words">
+                {data.summary}
+              </div>
             )}
           </div>
         )}

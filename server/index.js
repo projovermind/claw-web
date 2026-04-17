@@ -2,6 +2,8 @@ import express from 'express';
 import http from 'node:http';
 import cors from 'cors';
 import path from 'node:path';
+import fs from 'node:fs/promises';
+import fssync from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadWebConfig } from './lib/web-config.js';
 import { createConfigStore } from './lib/config-store.js';
@@ -131,21 +133,19 @@ async function main() {
   // CLAUDE.md / AGENTS.md editor mounted on same prefix
   app.use('/api/projects', createProjectMdRouter({ projectsStore, webConfig, eventBus }));
   app.use('/api/sessions', createSessionsRouter({ sessionsStore, configStore, runner, eventBus }));
-  app.use(
-    '/api/chat',
-    createChatRouter({
-      sessionsStore,
-      configStore,
-      metadataStore,
-      skillsStore,
-      systemSkillsStore,
-      projectsStore,
-      backendsStore,
-      runner,
-      eventBus,
-      delegationTracker
-    })
-  );
+  const { router: chatRouter, resumeInterruptedSession } = createChatRouter({
+    sessionsStore,
+    configStore,
+    metadataStore,
+    skillsStore,
+    systemSkillsStore,
+    projectsStore,
+    backendsStore,
+    runner,
+    eventBus,
+    delegationTracker
+  });
+  app.use('/api/chat', chatRouter);
   app.use('/api/backends', createBackendsRouter({ backendsStore, eventBus }));
   app.use('/api/uploads', createUploadsRouter({ uploadsDir: UPLOADS_DIR, eventBus }));
   app.use(
@@ -181,13 +181,57 @@ async function main() {
     logger.info({ port: webConfig.port }, 'hivemind-web server listening');
   });
 
+  // ── 재시작 시 자동 이어가기 ──
+  // shutdown 시 저장한 active 세션들을 읽어 마지막 user 메시지로 재제출
+  const resumeFile = path.join(path.dirname(WEB_CONFIG_PATH), 'logs', 'pending-resume.json');
+  try {
+    if (fssync.existsSync(resumeFile)) {
+      const raw = await fs.readFile(resumeFile, 'utf8');
+      await fs.unlink(resumeFile).catch(() => {});
+      const ids = JSON.parse(raw);
+      if (Array.isArray(ids) && ids.length > 0) {
+        logger.info({ count: ids.length }, 'resuming interrupted sessions');
+        // server.listen 직후 즉시 실행하면 일부 store 초기화 경쟁 가능 → 약간 지연
+        setTimeout(async () => {
+          for (const sid of ids) {
+            try { await resumeInterruptedSession(sid); } catch (err) {
+              logger.warn({ sid, err: err.message }, 'resume failed');
+            }
+          }
+        }, 1500);
+      }
+    }
+  } catch (err) {
+    logger.warn({ err: err.message }, 'resume file read failed');
+  }
+
   const shutdown = async (sig) => {
     logger.info({ sig }, 'shutting down');
     scheduler.stop();
     autoBackup.stop();
     wsHub.close();
     server.close();
-    for (const id of runner.activeIds()) runner.abort(id);
+    // 재발 방지 + 자동 이어가기:
+    // 진행 중이던 세션을 pending-resume.json 에 저장 → 다음 기동 시 자동 재제출
+    const activeIds = runner.activeIds();
+    if (activeIds.length > 0) {
+      logger.warn({ sessions: activeIds }, 'aborting active sessions due to shutdown');
+      try {
+        await fs.mkdir(path.dirname(resumeFile), { recursive: true }).catch(() => {});
+        await fs.writeFile(resumeFile, JSON.stringify(activeIds), 'utf8');
+      } catch (err) {
+        logger.warn({ err: err.message }, 'failed to persist resume queue');
+      }
+      for (const id of activeIds) {
+        try {
+          await sessionsStore.appendMessage(id, {
+            role: 'assistant',
+            content: '⚠️ **서버 재시작됨** — 다음 기동 시 자동으로 작업을 이어갑니다.'
+          });
+        } catch { /* abort 는 계속 */ }
+        runner.abort(id);
+      }
+    }
     await configStore.close();
     await metadataStore.close();
     await projectsStore.close();

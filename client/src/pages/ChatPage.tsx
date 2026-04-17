@@ -503,11 +503,12 @@ function MobileHeader({
     queryFn: api.allSessions,
     refetchInterval: 5000
   });
-  // 에이전트별 상태 집계 (현재 열린 세션은 unread 제외)
+  // 에이전트별 상태 집계 (현재 열린 세션 + 위임 세션 제외)
   const agentStatus = useMemo(() => {
     const all = allSessionsQ.data?.sessions ?? [];
     const byAgent: Record<string, { unread: boolean; running: boolean }> = {};
     for (const s of all) {
+      if (s.title?.startsWith('[위임]')) continue;
       if (!byAgent[s.agentId]) byAgent[s.agentId] = { unread: false, running: false };
       if (unread[s.id] && s.id !== currentSessionId) byAgent[s.agentId].unread = true;
       if (s.isRunning) byAgent[s.agentId].running = true;

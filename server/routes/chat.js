@@ -279,6 +279,11 @@ export function createChatRouter({
         },
         onError(err) {
           eventBus.publish('chat.error', { sessionId, error: err.message });
+          // 재발 방지: 에러 시 세션에 에러 메시지 append (사용자가 UI 열면 바로 인지)
+          sessionsStore.appendMessage(sessionId, {
+            role: 'assistant',
+            content: `⚠️ **응답 중단됨** — ${err.message}\n\n메시지를 다시 보내주세요.`
+          }).catch(() => {});
           // 세션 손상 자동 복구: 에러 시 claudeSessionId 클리어 → 다음 시도는 새 세션
           if (session.claudeSessionId) {
             logger.warn({ sessionId, err: err.message }, 'chat: clearing claudeSessionId on error (auto-recovery)');
@@ -289,8 +294,17 @@ export function createChatRouter({
             if (del) delegationTracker.fail(sessionId, err.message);
           }
         },
-        onExit() {
-          eventBus.publish('chat.exit', { sessionId });
+        onExit({ code } = {}) {
+          eventBus.publish('chat.exit', { sessionId, code });
+          // 비정상 종료 + 응답이 없었던 경우 방어막:
+          // accumText 가 비어있고 code !== 0 이면 onError 에서 이미 처리됐을 것이지만,
+          // code === 0 인데도 응답이 없을 수도 있어서 (CLI 가 조용히 실패) 한 번 더 체크.
+          if ((code === 0 || code === null) && !accumText.trim()) {
+            sessionsStore.appendMessage(sessionId, {
+              role: 'assistant',
+              content: '⚠️ **응답이 비어있습니다** — runner 가 응답 없이 종료. 다시 시도해 주세요.'
+            }).catch(() => {});
+          }
         }
       }
     });
@@ -620,5 +634,26 @@ export function createChatRouter({
     res.json({ aborted });
   });
 
-  return router;
+  /**
+   * 서버 재시작 시 중단된 세션을 자동 재개 — 마지막 user 메시지를 runner 에 재제출.
+   * index.js 의 시작 단계에서 pending-resume.json 기반으로 호출.
+   */
+  async function resumeInterruptedSession(sessionId) {
+    const session = sessionsStore.get(sessionId);
+    if (!session) return false;
+    const msgs = Array.isArray(session.messages) ? session.messages : [];
+    // 마지막 user 메시지 찾기 (응답 중단 알림 직전의 user 입력)
+    const lastUser = [...msgs].reverse().find((m) => m?.role === 'user');
+    if (!lastUser?.content) return false;
+    logger.info({ sessionId }, 'resuming interrupted session from last user message');
+    // 재개 안내 메시지 append → 사용자가 UI 에서 인지
+    await sessionsStore.appendMessage(sessionId, {
+      role: 'assistant',
+      content: '▶ **재시작 후 작업 이어가기** — 마지막 메시지로 다시 시도합니다.'
+    }).catch(() => {});
+    sendRunnerMessage(sessionId, lastUser.content);
+    return true;
+  }
+
+  return { router, resumeInterruptedSession };
 }

@@ -58,9 +58,14 @@ export function ChatSidebar({
     queryFn: api.allSessions,
     refetchInterval: 3000
   });
+  // 위임 세션 (title 이 '[위임]' 으로 시작) 은 사용자 UI 에서 숨김
+  // — planner 세션 안에 "🔄 위임 시작" 메시지로 이미 표시되며,
+  //   사용자가 running 섹션에서 위임 세션을 클릭하면 대상 에이전트로
+  //   전환되어 기획자에 작업 지시 못 하는 혼동 방지.
+  const isHiddenDelegation = (s: Session) => s.title?.startsWith('[위임]');
   const runningSessions = useMemo(() => {
     const all = allSessionsData?.sessions ?? [];
-    return all.filter((s: Session) => s.isRunning);
+    return all.filter((s: Session) => s.isRunning && !isHiddenDelegation(s));
   }, [allSessionsData]);
 
   // 프로젝트/에이전트별 상태 계산 (unread/running)
@@ -69,6 +74,8 @@ export function ChatSidebar({
     const all = allSessionsData?.sessions ?? [];
     const byAgent: Record<string, { unread: boolean; running: boolean }> = {};
     for (const s of all) {
+      // 위임 세션은 agent 단위 상태점 계산에서 제외 (planner 세션에 이미 표시됨)
+      if (isHiddenDelegation(s)) continue;
       if (!byAgent[s.agentId]) byAgent[s.agentId] = { unread: false, running: false };
       if (unread[s.id] && s.id !== currentSessionId) byAgent[s.agentId].unread = true;
       if (s.isRunning) byAgent[s.agentId].running = true;
@@ -413,6 +420,7 @@ export function ChatSidebar({
           </div>
         )}
         {sessions
+          .filter((s) => !isHiddenDelegation(s))
           .slice()
           .sort((a, b) => {
             // 현재 열린 세션은 항상 읽음 취급
@@ -513,6 +521,7 @@ export function ChatSidebar({
         const recent = (allSessionsData?.sessions ?? [])
           .filter((s: Session) => s.agentId !== currentAgentId)
           .filter((s: Session) => agents.some(a => a.id === s.agentId))
+          .filter((s: Session) => !isHiddenDelegation(s))
           .slice()
           .sort((a: Session, b: Session) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
           .slice(0, 5);
