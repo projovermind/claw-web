@@ -8,12 +8,13 @@
 
 set -e
 
-VERSION="1.0.5"
-PKG_ID="com.claw-web"
-INSTALL_LOCATION="/usr/local/lib/claw-web"
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
+
+# package.json 에서 자동 추출 (매번 수정 필요 없음)
+VERSION=$(node -p "require('./package.json').version")
+PKG_ID="com.claw-web"
+INSTALL_LOCATION="/usr/local/lib/claw-web"
 
 BUILD_DIR="$SCRIPT_DIR/dist/pkg-build"
 OUTPUT_DIR="$SCRIPT_DIR/dist"
