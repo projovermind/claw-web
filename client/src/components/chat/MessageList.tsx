@@ -275,14 +275,57 @@ function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessag
   );
 }
 
-/** 위임 메시지 파싱 — 서버가 생성하는 "🔄 **위임 시작**" / "✅ **위임 완료**" / "⚠️ 위임 실패" 패턴 */
+/** 위임 메시지 파싱 — 4가지 패턴:
+ *  - 'request': 에이전트가 내보낸 `{"delegate":{...}}` JSON (서버가 파싱하기 전 원본 응답)
+ *  - 'start':   서버가 append 하는 "🔄 **위임 시작**"
+ *  - 'done':    "✅ **위임 완료**"
+ *  - 'fail':    "⚠️ 위임 실패"
+ */
 interface DelegationData {
-  kind: 'start' | 'done' | 'fail';
+  kind: 'request' | 'start' | 'done' | 'fail';
   targetAgent: string;
   task?: string;
   session?: string;
   summary?: string;
   loop?: boolean;
+  /** request 케이스에서 JSON 의 message 필드 */
+  note?: string;
+}
+
+/** 에이전트 응답에서 delegate JSON 블록(코드블록 안 + 일반 텍스트) 을 추출 */
+function extractDelegateJsonFromText(text: string): Record<string, unknown> | null {
+  const candidates: string[] = [];
+  // ```json ... ``` 코드블록
+  for (const m of text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)) candidates.push(m[1]);
+  candidates.push(text);
+  for (const src of candidates) {
+    let idx = src.indexOf('"delegate"');
+    while (idx !== -1) {
+      const start = src.lastIndexOf('{', idx);
+      if (start === -1) break;
+      // 중괄호 균형 맞는 닫기 찾기
+      let depth = 0, end = -1, inStr = false, prev = '';
+      for (let i = start; i < src.length; i++) {
+        const c = src[i];
+        if (inStr) { if (c === '"' && prev !== '\\') inStr = false; }
+        else {
+          if (c === '"') inStr = true;
+          else if (c === '{') depth++;
+          else if (c === '}') { depth--; if (depth === 0) { end = i; break; } }
+        }
+        prev = c;
+      }
+      if (end !== -1) {
+        try {
+          const obj = JSON.parse(src.slice(start, end + 1)) as Record<string, unknown>;
+          const del = obj?.delegate as Record<string, unknown> | undefined;
+          if (del?.agent && del?.task) return obj;
+        } catch { /* skip */ }
+      }
+      idx = src.indexOf('"delegate"', idx + 1);
+    }
+  }
+  return null;
 }
 
 function parseDelegationMessage(content: string): DelegationData | null {
@@ -318,6 +361,19 @@ function parseDelegationMessage(content: string): DelegationData | null {
   if (failMatch) {
     return { kind: 'fail', targetAgent: failMatch[1] };
   }
+  // 요청: 에이전트가 내보낸 {"delegate":{...}} JSON 원본 응답
+  // — 서버의 "🔄 위임 시작" 메시지와 중복되지만 먼저 찍히는 raw JSON 을 정리하기 위해 카드로 치환
+  const obj = extractDelegateJsonFromText(content);
+  if (obj) {
+    const del = obj.delegate as Record<string, unknown>;
+    return {
+      kind: 'request',
+      targetAgent: String(del.agent),
+      task: typeof del.task === 'string' ? del.task : undefined,
+      loop: del.loop === true,
+      note: typeof obj.message === 'string' ? obj.message : undefined
+    };
+  }
   return null;
 }
 
@@ -328,7 +384,11 @@ function DelegationCard({ data }: { data: DelegationData }) {
     ? { border: 'border-emerald-800/60', bg: 'bg-emerald-950/30', text: 'text-emerald-200', icon: <CheckCircle2 size={14} className="text-emerald-400" />, label: '위임 완료' }
     : data.kind === 'fail'
       ? { border: 'border-red-800/60', bg: 'bg-red-950/30', text: 'text-red-200', icon: <XCircle size={14} className="text-red-400" />, label: '위임 실패' }
-      : { border: 'border-sky-800/60', bg: 'bg-sky-950/30', text: 'text-sky-200', icon: <ArrowRight size={14} className="text-sky-400 animate-pulse" />, label: data.loop ? '위임 (Ralph Loop)' : '위임 중' };
+      : data.kind === 'request'
+        ? { border: 'border-zinc-700', bg: 'bg-zinc-900/60', text: 'text-zinc-300', icon: <ArrowRight size={14} className="text-zinc-400" />, label: data.loop ? '위임 요청 (Loop)' : '위임 요청' }
+        : { border: 'border-sky-800/60', bg: 'bg-sky-950/30', text: 'text-sky-200', icon: <ArrowRight size={14} className="text-sky-400 animate-pulse" />, label: data.loop ? '위임 (Ralph Loop)' : '위임 중' };
+  // 접힘 라벨: note 우선 → task
+  const preview = data.note || data.task || '';
   return (
     <div className="flex justify-start">
       <div className={`max-w-[85%] rounded-lg border ${palette.border} ${palette.bg} px-3 py-2 text-xs ${palette.text} space-y-1.5 w-full`}>
@@ -337,12 +397,13 @@ function DelegationCard({ data }: { data: DelegationData }) {
           {palette.icon}
           <span className="font-semibold">[{palette.label}]</span>
           <span className="font-mono opacity-80">{data.targetAgent}</span>
-          {data.task && !open && (
-            <span className="opacity-60 truncate flex-1 text-[11px]">— {data.task.slice(0, 60)}</span>
+          {preview && !open && (
+            <span className="opacity-60 truncate flex-1 text-[11px]">— {preview.slice(0, 80)}</span>
           )}
         </button>
         {open && (
           <div className="pl-5 space-y-1 text-[11px]">
+            {data.note && <div className="italic opacity-80">"{data.note}"</div>}
             {data.task && <div><span className="opacity-60">작업:</span> {data.task}</div>}
             {data.session && <div><span className="opacity-60">세션:</span> <span className="font-mono opacity-80">{data.session}</span></div>}
             {data.summary && (
