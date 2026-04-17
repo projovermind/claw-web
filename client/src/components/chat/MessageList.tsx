@@ -5,10 +5,12 @@ import rehypeHighlight from 'rehype-highlight';
 import { Wrench, ChevronDown, ChevronRight } from 'lucide-react';
 import type { ChatMessage } from '../../lib/types';
 import ToolCallCard from './ToolCallCard';
+import { useT } from '../../lib/i18n';
 
 // 도구 호출 접혀있는 뷰
 function ToolCallsCollapsed({ toolCalls, ts }: { toolCalls: { name: string; input: Record<string, unknown>; ts?: string }[]; ts: string }) {
   const [open, setOpen] = useState(false);
+  const t = useT();
   return (
     <div className="mt-3">
       <button
@@ -17,7 +19,7 @@ function ToolCallsCollapsed({ toolCalls, ts }: { toolCalls: { name: string; inpu
       >
         {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         <Wrench size={11} />
-        <span>도구 {toolCalls.length}회 사용</span>
+        <span>{t('chat.toolUsed', { count: toolCalls.length })}</span>
         {!open && (
           <span className="text-zinc-600 truncate max-w-[220px]">
             · {toolCalls.slice(0, 4).map(tc => tc.name).join(', ')}
@@ -44,6 +46,7 @@ function ToolCallsCollapsed({ toolCalls, ts }: { toolCalls: { name: string; inpu
 export function ChoicesList({ choices, onChoice }: { choices: ChoiceItem[]; onChoice: (c: string) => void }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [custom, setCustom] = useState('');
+  const t = useT();
 
   const submitCustom = () => {
     const v = custom.trim();
@@ -76,7 +79,7 @@ export function ChoicesList({ choices, onChoice }: { choices: ChoiceItem[]; onCh
           </span>
           {c.recommended && (
             <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-amber-500 text-zinc-900 text-[10px] font-bold">
-              추천
+              {t('chat.choices.recommended')}
             </span>
           )}
         </button>
@@ -90,7 +93,7 @@ export function ChoicesList({ choices, onChoice }: { choices: ChoiceItem[]; onCh
               if (e.key === 'Enter') submitCustom();
               if (e.key === 'Escape') { setCustomOpen(false); setCustom(''); }
             }}
-            placeholder="직접 입력..."
+            placeholder={t('chat.choices.customPlaceholder')}
             autoFocus
             className="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-2 text-xs outline-none focus:border-sky-500"
           />
@@ -98,7 +101,7 @@ export function ChoicesList({ choices, onChoice }: { choices: ChoiceItem[]; onCh
             onClick={submitCustom}
             disabled={!custom.trim()}
             className="px-3 rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-30 text-white text-xs"
-          >전송</button>
+          >{t('chat.choices.send')}</button>
         </div>
       ) : (
         <button
@@ -106,7 +109,7 @@ export function ChoicesList({ choices, onChoice }: { choices: ChoiceItem[]; onCh
           className="text-left px-3 py-2 rounded border border-dashed border-zinc-700 bg-zinc-900/20 hover:border-sky-600 hover:bg-sky-900/20 text-zinc-400 hover:text-zinc-200 text-xs transition-colors"
         >
           <span className="text-sky-400 font-mono mr-2">✎</span>
-          기타 (직접 입력)
+          {t('chat.choices.custom')}
         </button>
       )}
     </div>
@@ -207,6 +210,7 @@ function HighlightText({ text, query }: { text: string; query: string }) {
 }
 
 function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessage; searchQuery?: string; onChoice?: (c: string) => void }) {
+  const t = useT();
   const isUser = message.role === 'user';
   const isQueued = isUser && (message as ChatMessage & { queued?: boolean }).queued;
   const { body, choices } = useMemo(() => isUser ? { body: message.content, choices: [] } : extractChoices(message.content), [message.content, isUser]);
@@ -227,7 +231,7 @@ function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessag
       >
         {isQueued && (
           <div className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-sky-600 text-white text-[10px] font-semibold animate-pulse">
-            대기 중
+            {t('chat.queued')}
           </div>
         )}
         {isUser ? (

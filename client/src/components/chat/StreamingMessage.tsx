@@ -46,7 +46,7 @@ export default function StreamingMessage({ text, toolCalls, running, error, onCh
             >
               {toolsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
               <Wrench size={11} />
-              <span>도구 {toolCalls.length}회 사용</span>
+              <span>{t('chat.toolUsed', { count: toolCalls.length })}</span>
               {!toolsOpen && (
                 <span className="text-zinc-600 truncate max-w-[200px]">
                   · {toolCalls.slice(-3).map(tc => tc.name).join(', ')}

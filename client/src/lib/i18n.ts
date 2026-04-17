@@ -132,10 +132,10 @@ const DICT: Record<Lang, Record<string, string>> = {
     'common.saving': '저장 중…',
 
     // Settings
-    'settings.title': 'Settings',
-    'settings.tab.backends': 'AI Backends',
-    'settings.tab.access': 'Access & Tokens',
-    'settings.tab.features': 'Features',
+    'settings.title': '설정',
+    'settings.tab.backends': 'AI 백엔드',
+    'settings.tab.access': '접근/토큰',
+    'settings.tab.features': '기능',
     'settings.global': 'Global',
     'settings.activeBackend': 'Active Backend',
     'settings.austerity': '긴축모드 (Austerity)',
@@ -376,7 +376,53 @@ const DICT: Record<Lang, Record<string, string>> = {
     'framework.seedDesc': '새 프로젝트 기획',
     'framework.paulDesc': 'Plan→Apply→Unify',
     'framework.aegisDesc': '보안 감사',
-    'framework.skillDesc': '스킬 생성'
+    'framework.skillDesc': '스킬 생성',
+
+    // Sidebar / Commands palette
+    'sidebar.searchPlaceholder': '검색…',
+    'sidebar.searchAria': '검색',
+    'common.revert': '되돌리기',
+    'common.default': '기본값',
+    'common.preview': '미리보기',
+
+    // Settings tabs (신규)
+    'settings.tab.appearance': '외관',
+    'settings.tab.hooks': '훅',
+    'settings.tab.mcp': 'MCP 서버',
+    'settings.tab.schedules': '스케줄',
+
+    // Appearance tab
+    'appearance.appNameTitle': '앱 이름',
+    'appearance.appNameDesc': '좌측 상단 + 탭 제목에 표시됩니다.',
+    'appearance.bubbleTitle': '채팅 버블 색상',
+    'appearance.bubbleUser': '사용자 (내 메시지)',
+    'appearance.bubbleAssistant': '에이전트 응답',
+    'appearance.previewUser': '미리보기 — 사용자 메시지',
+    'appearance.previewAssistant': '미리보기 — 에이전트 응답입니다.',
+
+    // Chat session dots/status titles
+    'chat.session.unread': '안 읽음',
+    'chat.session.running': '실행 중',
+    // Tool calls
+    'chat.toolUsed': '도구 {count}회 사용',
+    // Choices
+    'chat.choices.recommended': '추천',
+    'chat.choices.custom': '기타 (직접 입력)',
+    'chat.choices.customPlaceholder': '직접 입력...',
+    'chat.choices.send': '전송',
+    // Queued message badge
+    'chat.queued': '대기 중',
+
+    // Command palette
+    'palette.placeholder': '검색: 에이전트, 프로젝트, 스킬, 세션, 페이지…',
+    'palette.empty': '결과 없음',
+    'palette.hint.move': '이동',
+    'palette.hint.select': '선택',
+    'palette.hint.toggle': '열기/닫기',
+    'palette.kind.agent': '에이전트',
+    'palette.kind.project': '프로젝트',
+    'palette.kind.skill': '스킬',
+    'palette.kind.session': '세션'
   },
 
   en: {
@@ -746,7 +792,53 @@ const DICT: Record<Lang, Record<string, string>> = {
     'framework.seedDesc': 'New project ideation',
     'framework.paulDesc': 'Plan→Apply→Unify',
     'framework.aegisDesc': 'Security audit',
-    'framework.skillDesc': 'Create skill'
+    'framework.skillDesc': 'Create skill',
+
+    // Sidebar / Commands palette
+    'sidebar.searchPlaceholder': 'Search…',
+    'sidebar.searchAria': 'Search',
+    'common.revert': 'Revert',
+    'common.default': 'Default',
+    'common.preview': 'Preview',
+
+    // Settings tabs (new)
+    'settings.tab.appearance': 'Appearance',
+    'settings.tab.hooks': 'Hooks',
+    'settings.tab.mcp': 'MCP Servers',
+    'settings.tab.schedules': 'Schedules',
+
+    // Appearance tab
+    'appearance.appNameTitle': 'App Name',
+    'appearance.appNameDesc': 'Shown in top-left + tab title.',
+    'appearance.bubbleTitle': 'Chat Bubble Colors',
+    'appearance.bubbleUser': 'User (my messages)',
+    'appearance.bubbleAssistant': 'Agent response',
+    'appearance.previewUser': 'Preview — user message',
+    'appearance.previewAssistant': 'Preview — agent response.',
+
+    // Chat session dots/status titles
+    'chat.session.unread': 'Unread',
+    'chat.session.running': 'Running',
+    // Tool calls
+    'chat.toolUsed': '{count} tool calls',
+    // Choices
+    'chat.choices.recommended': 'Recommended',
+    'chat.choices.custom': 'Other (type your own)',
+    'chat.choices.customPlaceholder': 'Type your answer...',
+    'chat.choices.send': 'Send',
+    // Queued message badge
+    'chat.queued': 'Queued',
+
+    // Command palette
+    'palette.placeholder': 'Search: agents, projects, skills, sessions, pages…',
+    'palette.empty': 'No results',
+    'palette.hint.move': 'Move',
+    'palette.hint.select': 'Select',
+    'palette.hint.toggle': 'Open/Close',
+    'palette.kind.agent': 'Agent',
+    'palette.kind.project': 'Project',
+    'palette.kind.skill': 'Skill',
+    'palette.kind.session': 'Session'
   }
 };
 

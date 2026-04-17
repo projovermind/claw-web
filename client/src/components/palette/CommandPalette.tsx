@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 
 type PaletteItem = {
   id: string;
@@ -44,6 +45,7 @@ export default function CommandPalette() {
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
+  const t = useT();
 
   // Global hotkey
   useEffect(() => {
@@ -124,7 +126,7 @@ export default function CommandPalette() {
         id: `agent:${a.id}`,
         kind: 'agent',
         label: a.name || a.id,
-        sublabel: `에이전트 · ${a.model ?? 'sonnet'} · ${a.id}`,
+        sublabel: `${t('palette.kind.agent')} · ${a.model ?? 'sonnet'} · ${a.id}`,
         icon: Users,
         iconColor: 'text-emerald-400',
         action: () => navigate(`/chat?agent=${encodeURIComponent(a.id)}`),
@@ -138,7 +140,7 @@ export default function CommandPalette() {
         id: `project:${p.id}`,
         kind: 'project',
         label: p.name,
-        sublabel: `프로젝트 · ${p.path}`,
+        sublabel: `${t('palette.kind.project')} · ${p.path}`,
         icon: Folder,
         iconColor: 'text-amber-400',
         action: () => navigate('/projects'),
@@ -152,7 +154,7 @@ export default function CommandPalette() {
         id: `skill:${s.id}`,
         kind: 'skill',
         label: s.name,
-        sublabel: `스킬${s.system ? ' · system' : ''}${s.description ? ' · ' + s.description : ''}`,
+        sublabel: `${t('palette.kind.skill')}${s.system ? ' · system' : ''}${s.description ? ' · ' + s.description : ''}`,
         icon: Sparkles,
         iconColor: 'text-purple-400',
         action: () => navigate('/skills'),
@@ -168,7 +170,7 @@ export default function CommandPalette() {
         id: `session:${sess.id}`,
         kind: 'session',
         label: sess.title || sess.id,
-        sublabel: `세션 · @${sess.agentId} · ${sess.updatedAt?.slice(0, 10) ?? ''}`,
+        sublabel: `${t('palette.kind.session')} · @${sess.agentId} · ${sess.updatedAt?.slice(0, 10) ?? ''}`,
         icon: MessageSquare,
         iconColor: 'text-pink-400',
         action: () =>
@@ -233,7 +235,7 @@ export default function CommandPalette() {
               setCursor(0);
             }}
             onKeyDown={onKeyDown}
-            placeholder="검색: 에이전트, 프로젝트, 스킬, 세션, 페이지…"
+            placeholder={t('palette.placeholder')}
             className="flex-1 bg-transparent outline-none text-sm placeholder:text-zinc-600"
           />
           <kbd className="text-[11px] text-zinc-500 px-1.5 py-0.5 rounded border border-zinc-700 font-mono">
@@ -242,7 +244,7 @@ export default function CommandPalette() {
         </div>
         <div className="max-h-[60vh] overflow-y-auto">
           {filtered.length === 0 ? (
-            <div className="py-8 text-center text-xs text-zinc-600 italic">결과 없음</div>
+            <div className="py-8 text-center text-xs text-zinc-600 italic">{t('palette.empty')}</div>
           ) : (
             filtered.map((it, i) => {
               const Icon = it.icon;
@@ -273,10 +275,10 @@ export default function CommandPalette() {
           )}
         </div>
         <div className="flex items-center gap-3 px-4 py-2 border-t border-zinc-800 text-[11px] text-zinc-600">
-          <span><kbd className="font-mono">↑↓</kbd> 이동</span>
-          <span><kbd className="font-mono">Enter</kbd> 선택</span>
+          <span><kbd className="font-mono">↑↓</kbd> {t('palette.hint.move')}</span>
+          <span><kbd className="font-mono">Enter</kbd> {t('palette.hint.select')}</span>
           <span className="ml-auto">
-            <kbd className="font-mono">⌘K</kbd> 열기/닫기
+            <kbd className="font-mono">⌘K</kbd> {t('palette.hint.toggle')}
           </span>
         </div>
       </div>

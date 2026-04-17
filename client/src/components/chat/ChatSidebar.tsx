@@ -455,10 +455,10 @@ export function ChatSidebar({
                   </span>
                 )}
                 {!selectMode && isUnread && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0 animate-pulse" title="안 읽음" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0 animate-pulse" title={t('chat.session.unread')} />
                 )}
                 {!selectMode && !isUnread && s.isRunning && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title="실행 중" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title={t('chat.session.running')} />
                 )}
                 {!selectMode && s.pinned && (
                   <Star size={10} className="text-amber-400 shrink-0" fill="currentColor" />

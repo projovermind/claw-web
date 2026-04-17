@@ -117,7 +117,7 @@ export default function Sidebar() {
           className="mt-3 w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
         >
           <Search size={12} />
-          <span className="flex-1 text-left">검색…</span>
+          <span className="flex-1 text-left">{t('sidebar.searchPlaceholder')}</span>
           <kbd className="text-[11px] font-mono text-zinc-600">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
         </button>
       </div>
@@ -196,7 +196,7 @@ export default function Sidebar() {
         <button
           onClick={openPalette}
           className="ml-auto p-2 rounded hover:bg-zinc-800 text-zinc-400"
-          aria-label="Search"
+          aria-label={t('sidebar.searchAria')}
         >
           <Search size={16} />
         </button>
