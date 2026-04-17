@@ -28,13 +28,15 @@ export function DragCard({
   return (
     <div
       ref={setNodeRef}
+      {...listeners}
+      {...attributes}
       onContextMenu={(e) => onContextMenu?.(e, agent)}
-      className={`rounded border ${cls} p-2.5 select-none transition-all group relative ${
+      onDoubleClick={(e) => { e.stopPropagation(); onEdit?.(agent); }}
+      className={`rounded border ${cls} p-2.5 select-none transition-all group relative cursor-grab active:cursor-grabbing ${
         isDragging ? 'opacity-30 scale-95' : ''
       }`}
     >
-      {/* Draggable handle = entire card (desktop only via pointer sensor) */}
-      <div {...listeners} {...attributes} className="cursor-grab">
+      <div>
         <div className="flex items-center gap-2 pr-16">
           <span className="text-lg">{agent.avatar ?? '🤖'}</span>
           <div className="flex-1 min-w-0">

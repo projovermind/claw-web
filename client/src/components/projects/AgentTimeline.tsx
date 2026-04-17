@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { MessageSquare, Clock } from 'lucide-react';
 import { api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 import type { Agent, Session } from '../../lib/types';
 
 function timeAgo(ts: string): string {
@@ -18,6 +19,7 @@ export function AgentTimeline({
   agents: Agent[];
   projectId: string;
 }) {
+  const t = useT();
   const projectAgents = agents.filter(a => a.projectId === projectId);
   const agentIds = projectAgents.map(a => a.id);
 
@@ -42,13 +44,13 @@ export function AgentTimeline({
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800">
         <Clock size={14} className="text-zinc-500" />
-        <span className="text-sm font-semibold text-zinc-300 flex-1">에이전트 타임라인</span>
-        <span className="text-[11px] text-zinc-600">{projectAgents.length}명</span>
+        <span className="text-sm font-semibold text-zinc-300 flex-1">{t('projects.timeline')}</span>
+        <span className="text-[11px] text-zinc-600">{t('projects.timelineAgentCount', { count: projectAgents.length })}</span>
       </div>
       <div className="max-h-[240px] overflow-y-auto">
         {projectSessions.length === 0 ? (
           <div className="text-[11px] text-zinc-600 italic text-center py-6">
-            최근 활동 없음
+            {t('projects.timelineEmpty')}
           </div>
         ) : (
           <div className="divide-y divide-zinc-800/60">
@@ -63,7 +65,7 @@ export function AgentTimeline({
                     <div className="text-[11px] text-zinc-500 truncate flex items-center gap-1">
                       <MessageSquare size={9} />
                       <span>{s.title}</span>
-                      <span className="text-zinc-600">· {msgCount}개</span>
+                      <span className="text-zinc-600">· {t('projects.msgCount', { count: msgCount })}</span>
                     </div>
                   </div>
                   <div className="text-[11px] text-zinc-600 shrink-0 flex items-center gap-1">

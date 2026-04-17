@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { FileText, Loader2 } from 'lucide-react';
 import { api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 
 /**
  * Popover that appears when the user types `@` in the ChatInput.
@@ -24,6 +25,7 @@ export default function AtFilePopover({
   onCursorChange: (idx: number) => void;
   onClose: () => void;
 }) {
+  const t = useT();
   const listRef = useRef<HTMLDivElement>(null);
   const [results, setResults] = useState<{ name: string; path: string; rel: string }[]>([]);
   const [loading, setLoading] = useState(false);
@@ -68,7 +70,7 @@ export default function AtFilePopover({
   if (!workingDir) {
     return (
       <div className="absolute left-0 bottom-full mb-1 w-80 rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl z-20 p-3 text-xs text-zinc-500 italic">
-        에이전트의 workingDir이 설정돼 있지 않아서 파일 검색 불가
+        {t('atfile.noWorkingDir')}
       </div>
     );
   }
@@ -76,7 +78,7 @@ export default function AtFilePopover({
   if (loading && results.length === 0) {
     return (
       <div className="absolute left-0 bottom-full mb-1 w-80 rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl z-20 p-3 text-xs text-zinc-500 flex items-center gap-2">
-        <Loader2 size={12} className="animate-spin" /> 검색 중…
+        <Loader2 size={12} className="animate-spin" /> {t('common.searching')}
       </div>
     );
   }
@@ -84,7 +86,7 @@ export default function AtFilePopover({
   if (!query.trim()) {
     return (
       <div className="absolute left-0 bottom-full mb-1 w-80 rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl z-20 p-3 text-xs text-zinc-500 italic">
-        파일명을 입력하면 프로젝트 내 파일을 검색합니다
+        {t('atfile.searchPrompt')}
       </div>
     );
   }
@@ -92,7 +94,7 @@ export default function AtFilePopover({
   if (results.length === 0 && !loading) {
     return (
       <div className="absolute left-0 bottom-full mb-1 w-80 rounded-lg border border-zinc-700 bg-zinc-900 shadow-2xl z-20 p-3 text-xs text-zinc-500 italic">
-        결과 없음
+        {t('common.noResults')}
       </div>
     );
   }
@@ -123,7 +125,7 @@ export default function AtFilePopover({
       ))}
       {loading && (
         <div className="px-3 py-1 text-[11px] text-zinc-600 flex items-center gap-1">
-          <Loader2 size={10} className="animate-spin" /> 업데이트 중…
+          <Loader2 size={10} className="animate-spin" /> {t('common.updating')}
         </div>
       )}
     </div>

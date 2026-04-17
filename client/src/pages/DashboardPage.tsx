@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Activity, Zap, MessageSquare, Loader2, Clock, Server, Globe, Shield } from 'lucide-react';
 import { api } from '../lib/api';
 import { useWsStore } from '../store/ws-store';
@@ -40,17 +40,18 @@ export default function DashboardPage() {
     refetchInterval: 30_000,
   });
 
-  const allSessions: Session[] = sessionsRaw?.sessions ?? [];
+  const allSessionsRaw: Session[] = sessionsRaw?.sessions ?? [];
   const activeIds: string[] = sessionsRaw?.activeIds ?? [];
+  const agentById = new Map<string, Agent>((agents ?? []).map((a) => [a.id, a]));
+  const getAgent = (id: string) => agentById.get(id);
+  // 에이전트가 없는(삭제된) 세션 제외
+  const allSessions = allSessionsRaw.filter(s => agentById.has(s.agentId));
   const runningSessions = allSessions.filter((s) => s.isRunning);
   const recentSessions = allSessions
     .slice()
     .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
     .slice(0, 10);
   const quickAccessSessions = recentSessions.slice(0, 5);
-
-  const agentById = new Map<string, Agent>((agents ?? []).map((a) => [a.id, a]));
-  const getAgent = (id: string) => agentById.get(id);
 
   // Project activity: message count per project in last 24h
   const projectActivity = useMemo(() => {
@@ -313,10 +314,18 @@ function StatCard({
 
 function SessionRow({ session, agent, running }: { session: Session; agent?: Agent; running?: boolean }) {
   const t = useT();
+  const navigate = useNavigate();
+  const setCurrentAgent = useChatStore((s) => s.setCurrentAgent);
+  const setCurrentSession = useChatStore((s) => s.setCurrentSession);
+
   return (
-    <Link
-      to={`/chat`}
-      className="flex items-center gap-3 rounded px-2 py-2 hover:bg-zinc-900 transition-colors group"
+    <button
+      onClick={() => {
+        setCurrentAgent(session.agentId);
+        setCurrentSession(session.id);
+        navigate('/chat');
+      }}
+      className="w-full text-left flex items-center gap-3 rounded px-2 py-2 hover:bg-zinc-900 transition-colors group"
     >
       <span className="text-xl">{agent?.avatar ?? '🤖'}</span>
       <div className="flex-1 min-w-0">
@@ -334,7 +343,7 @@ function SessionRow({ session, agent, running }: { session: Session; agent?: Age
         </span>
       )}
       <MessageSquare size={12} className="text-zinc-700 group-hover:text-zinc-500" />
-    </Link>
+    </button>
   );
 }
 

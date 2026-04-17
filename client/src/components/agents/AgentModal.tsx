@@ -137,7 +137,7 @@ export function AgentModal({
               <input
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
-                placeholder="하이브마인드, 알고리즘 개발자..."
+                placeholder={t('agents.namePlaceholder')}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
               />
             </Field>
@@ -201,11 +201,11 @@ export function AgentModal({
           </Field>
 
           <Field
-            label="Skills"
+            label={t('agents.skills')}
             help={
               inheritedIds.length > 0
-                ? `선택된 스킬들이 채팅 호출 시 systemPrompt에 concat돼. 현재 프로젝트의 기본 스킬 ${inheritedIds.length}개는 자동 상속됨 (체크 해제 불가).`
-                : '선택된 스킬들이 채팅 호출 시 systemPrompt에 concat됨. 프로젝트에 배치하면 해당 프로젝트의 기본 스킬이 자동 상속돼.'
+                ? t('agents.skillsHelpWithInherit', { count: inheritedIds.length })
+                : t('agents.skillsHelpNoInherit')
             }
           >
             <SkillPicker
@@ -219,21 +219,21 @@ export function AgentModal({
           {/* Tool permissions section */}
           <div className="border-t border-zinc-800 pt-4 space-y-3">
             <div>
-              <div className="text-sm font-semibold text-zinc-200">도구 설정</div>
+              <div className="text-sm font-semibold text-zinc-200">{t('agents.toolsTitle')}</div>
               <p className="text-[11px] text-zinc-500 mt-0.5">
-                이 에이전트가 호출할 수 있는 Claude 도구를 제한. Claude CLI에{' '}
-                <code>--allowedTools</code> / <code>--disallowedTools</code>로 전달됨.
+                {t('agents.toolsDesc')}{' '}
+                <code>--allowedTools</code> / <code>--disallowedTools</code>.
                 {inheritedProject && (inheritedAllowedTools.length > 0 || inheritedDisallowedTools.length > 0) && (
                   <>
-                    {' '}프로젝트 <strong>{inheritedProject.name}</strong>의 기본 도구가 자동 상속됨 (↑ 표시).
+                    {' '}{t('agents.toolsDescInherit', { name: inheritedProject.name })}
                   </>
                 )}
               </p>
             </div>
 
             <Field
-              label="허용 도구 (allowedTools)"
-              help="체크된 도구만 Claude가 호출 가능. 비어있으면 Claude 기본값 (전부 허용)."
+              label={t('agents.allowedTools')}
+              help={t('agents.allowedToolsHelp')}
             >
               <ToolPicker
                 selected={form.allowedTools}
@@ -243,8 +243,8 @@ export function AgentModal({
             </Field>
 
             <Field
-              label="차단 도구 (disallowedTools)"
-              help="체크된 도구는 명시적으로 차단. allowedTools보다 우선. 예: router 에이전트는 Edit/Write/Bash 차단."
+              label={t('agents.disallowedTools')}
+              help={t('agents.disallowedToolsHelp')}
             >
               <ToolPicker
                 selected={form.disallowedTools}

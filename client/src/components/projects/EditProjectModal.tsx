@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, AlertTriangle, Sparkles, FileText, Save, FolderOpen, Wrench } from 'lucide-react';
 import { api } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 import type { Project } from '../../lib/types';
 import SkillPicker from '../common/SkillPicker';
 import PathPicker from '../common/PathPicker';
@@ -40,6 +41,7 @@ export function EditProjectModal({
   onSubmit: (patch: Partial<Project>) => void;
 }) {
   const qc = useQueryClient();
+  const t = useT();
   const [form, setForm] = useState<Project>({
     ...project,
     defaultSkillIds: project.defaultSkillIds ?? []
@@ -74,9 +76,7 @@ export function EditProjectModal({
     onError: (err: Error) => {
       // 409 conflict: someone else edited the file on disk.
       if (/MTIME_CONFLICT|modified externally|409/.test(err.message)) {
-        setMdConflict(
-          '파일이 외부에서 수정됐어. 디스크에 있는 최신 내용을 무조건 덮어쓸까, 아니면 다시 불러올까?'
-        );
+        setMdConflict(t('projects.mdConflictPrompt'));
       }
     }
   });
@@ -117,7 +117,7 @@ export function EditProjectModal({
         className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-3xl max-h-[90vh] flex flex-col"
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
-          <h3 className="text-lg font-semibold">프로젝트 편집: {project.name}</h3>
+          <h3 className="text-lg font-semibold">{t('projects.editTitle')} {project.name}</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-zinc-800 text-zinc-400">
             <X size={18} />
           </button>
@@ -131,7 +131,7 @@ export function EditProjectModal({
                 : 'border-transparent text-zinc-500 hover:text-zinc-300'
             }`}
           >
-            설정
+            {t('projects.settings')}
           </button>
           <button
             onClick={() => setTab('md')}
@@ -150,9 +150,9 @@ export function EditProjectModal({
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs text-zinc-500 truncate">
                 {mdQuery.isLoading
-                  ? '로딩 중...'
+                  ? t('projects.mdLoading')
                   : mdQuery.error
-                    ? `에러: ${(mdQuery.error as Error).message}`
+                    ? `${t('projects.mdErrorPrefix')}: ${(mdQuery.error as Error).message}`
                     : mdQuery.data?.exists
                       ? (
                         <span>
@@ -162,7 +162,7 @@ export function EditProjectModal({
                       )
                       : (
                         <span className="text-amber-400">
-                          ⚠ 파일 없음 &mdash; 저장하면 새로 생성됨
+                          {t('projects.mdNoFile')}
                         </span>
                       )}
               </div>
@@ -172,7 +172,7 @@ export function EditProjectModal({
                   onClick={() => saveMd.mutate()}
                   className="rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-3 py-1.5 text-xs flex items-center gap-1 shrink-0 ml-2"
                 >
-                  <Save size={12} /> {saveMd.isPending ? '저장 중...' : '파일에 저장'}
+                  <Save size={12} /> {saveMd.isPending ? t('common.saving') : t('projects.mdSaveToFile')}
                 </button>
               )}
             </div>
@@ -180,26 +180,26 @@ export function EditProjectModal({
               <div className="mb-2 rounded border border-amber-900/60 bg-amber-900/20 p-3 text-[11px] text-amber-100 flex items-start gap-2">
                 <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                 <div className="flex-1">
-                  <div className="font-semibold mb-1">충돌 감지</div>
+                  <div className="font-semibold mb-1">{t('common.conflict')}</div>
                   <div className="mb-2 text-amber-200/80">{mdConflict}</div>
                   <div className="flex gap-2">
                     <button
                       onClick={forceSave}
                       className="rounded bg-red-900/50 hover:bg-red-900/70 text-red-200 px-2.5 py-1 text-[11px]"
                     >
-                      내 수정으로 덮어쓰기
+                      {t('common.overwriteWithMine')}
                     </button>
                     <button
                       onClick={reloadMd}
                       className="rounded bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1 text-[11px]"
                     >
-                      디스크에서 다시 불러오기
+                      {t('common.reloadFromDisk')}
                     </button>
                     <button
                       onClick={() => setMdConflict(null)}
                       className="rounded bg-zinc-800 hover:bg-zinc-700 px-2.5 py-1 text-[11px] ml-auto"
                     >
-                      닫기
+                      {t('common.close')}
                     </button>
                   </div>
                 </div>
@@ -211,27 +211,25 @@ export function EditProjectModal({
               placeholder={
                 mdQuery.isLoading
                   ? ''
-                  : '# 프로젝트 이름\n\n## 기술 스택\n- ...\n\n## 빌드 & 배포\n```bash\n...\n```\n\n## 에이전트 가이드라인\n- ...'
+                  : t('projects.mdPlaceholder')
               }
               className="flex-1 min-h-[400px] w-full resize-none bg-zinc-950 border border-zinc-800 rounded px-3 py-2 font-mono leading-relaxed focus:outline-none focus:border-zinc-600"
               style={{ fontSize: '13px' }}
             />
             <p className="text-[11px] text-zinc-600 mt-2 leading-snug">
-              💡 이 파일은 해당 프로젝트 폴더의 <code>CLAUDE.md</code>. Claude CLI가 이 프로젝트를 cwd로
-              실행할 때 자동으로 로드해서 컨텍스트로 쓰임. Lightweight Mode 에이전트는 이 내용이 systemPrompt
-              역할을 해. 저장 시 실제 파일 시스템에 쓰여.
+              {t('projects.mdEditorHint')}
             </p>
           </div>
         ) : (
           <div className="p-5 space-y-3 overflow-y-auto flex-1">
-            <LabeledField label="ID (변경 불가)">
+            <LabeledField label={t('projects.idImmutable')}>
               <input
                 disabled
                 value={form.id}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono opacity-50"
               />
             </LabeledField>
-            <LabeledField label="이름">
+            <LabeledField label={t('projects.fieldName')}>
               <input
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -239,8 +237,8 @@ export function EditProjectModal({
               />
             </LabeledField>
             <LabeledField
-              label="경로 (Path)"
-              help="수정 시 이 프로젝트에 배치된 에이전트의 workingDir이 자동 cascade 업데이트됨. 실제 폴더는 건드리지 않음."
+              label={t('projects.fieldPath')}
+              help={t('projects.pathChangeHelp')}
             >
               <div className="flex gap-1.5">
                 <input
@@ -252,13 +250,13 @@ export function EditProjectModal({
                   type="button"
                   onClick={() => setPickerOpen(true)}
                   className="rounded bg-zinc-800 hover:bg-zinc-700 px-3 text-sm text-zinc-300 flex items-center gap-1.5 shrink-0"
-                  title="폴더 선택"
+                  title={t('common.selectFolder')}
                 >
-                  <FolderOpen size={14} /> 찾기
+                  <FolderOpen size={14} /> {t('common.find')}
                 </button>
               </div>
             </LabeledField>
-            <LabeledField label="색상">
+            <LabeledField label={t('projects.fieldColor')}>
               <div className="flex items-center gap-2">
                 <input
                   type="color"
@@ -272,10 +270,10 @@ export function EditProjectModal({
             <div className="border-t border-zinc-800 pt-3">
               <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1 flex items-center gap-1.5">
                 <Sparkles size={11} className="text-amber-400" />
-                기본 스킬 (Default Skills)
+                {t('projects.defaultSkills')}
               </div>
               <p className="text-[11px] text-zinc-600 leading-snug mb-2">
-                이 프로젝트에 배치된 모든 에이전트(Lead + Addon)가 자동 상속함. 에이전트 개별 설정에서 추가 스킬을 더할 수는 있지만 상속된 스킬은 빼지 못해. 전역 일괄 분배에 최적.
+                {t('projects.defaultSkillsHelp')}
               </p>
               <SkillPicker
                 allSkills={skills ?? []}
@@ -283,17 +281,17 @@ export function EditProjectModal({
                 onChange={(ids) => setForm({ ...form, defaultSkillIds: ids })}
               />
               <div className="text-[11px] text-zinc-600 mt-1.5">
-                💡 배치된 에이전트 {placedCount}명이 이 스킬들을 자동으로 받게 돼.
+                {t('projects.defaultSkillsInherit', { count: placedCount })}
               </div>
             </div>
 
             <div className="border-t border-zinc-800 pt-3">
               <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1 flex items-center gap-1.5">
                 <Wrench size={11} className="text-sky-400" />
-                기본 허용 도구 (Default Allowed Tools)
+                {t('projects.defaultAllowedTools')}
               </div>
               <p className="text-[11px] text-zinc-600 leading-snug mb-2">
-                이 프로젝트의 모든 에이전트가 자동으로 호출할 수 있는 Claude 도구. 에이전트 개별 설정에서 추가로 도구를 더할 수는 있음. 비우면 상속 없음(Claude 기본값).
+                {t('projects.defaultAllowedToolsHelp')}
               </p>
               <ToolPicker
                 selected={form.defaultAllowedTools ?? []}
@@ -304,10 +302,10 @@ export function EditProjectModal({
             <div className="border-t border-zinc-800 pt-3">
               <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1 flex items-center gap-1.5">
                 <Wrench size={11} className="text-red-400" />
-                기본 차단 도구 (Default Disallowed Tools)
+                {t('projects.defaultDisallowedTools')}
               </div>
               <p className="text-[11px] text-zinc-600 leading-snug mb-2">
-                이 프로젝트의 모든 에이전트가 절대 못 쓰는 도구. 에이전트 개별 설정보다 우선. 예: router 계열 에이전트는 Edit/Write/Bash 차단.
+                {t('projects.defaultDisallowedToolsHelp')}
               </p>
               <ToolPicker
                 selected={form.defaultDisallowedTools ?? []}
@@ -319,8 +317,7 @@ export function EditProjectModal({
               <div className="rounded bg-amber-900/20 border border-amber-900/40 p-3 text-[11px] text-amber-200 flex items-start gap-2">
                 <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                 <div>
-                  경로를 변경하면 이 프로젝트에 배치된 <strong>{placedCount}개 에이전트</strong>의{' '}
-                  <code>workingDir</code>이 새 경로로 자동 업데이트됨. 실제 폴더는 건드리지 않아.
+                  {t('projects.pathChangeWarn', { count: placedCount })}
                 </div>
               </div>
             )}
@@ -332,7 +329,7 @@ export function EditProjectModal({
               onClick={onClose}
               className="px-4 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-sm"
             >
-              닫기
+              {t('common.close')}
             </button>
           ) : (
             <>
@@ -340,7 +337,7 @@ export function EditProjectModal({
                 onClick={onClose}
                 className="px-4 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-sm"
               >
-                취소
+                {t('common.cancel')}
               </button>
               <button
                 disabled={!valid || busy}
@@ -356,7 +353,7 @@ export function EditProjectModal({
                 }
                 className="px-4 py-2 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-sm"
               >
-                {busy ? '저장 중...' : '저장'}
+                {busy ? t('common.saving') : t('common.save')}
               </button>
             </>
           )}

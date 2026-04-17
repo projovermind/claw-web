@@ -8,6 +8,7 @@ import {
 import { api } from '../lib/api';
 import type { Session, ChatMessage, Agent, Project } from '../lib/types';
 import { useChatStore } from '../store/chat-store';
+import { useT } from '../lib/i18n';
 import MessageList from '../components/chat/MessageList';
 import StreamingMessage from '../components/chat/StreamingMessage';
 import ChatInput from '../components/chat/ChatInput';
@@ -17,6 +18,7 @@ import { SessionTitleEditor } from '../components/chat/SessionTitleEditor';
 import { FrameworkActions } from '../components/chat/FrameworkActions';
 
 export default function ChatPage() {
+  const t = useT();
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const currentAgentId = useChatStore((s) => s.currentAgentId);
@@ -54,6 +56,12 @@ export default function ChatPage() {
     }
   }, [agentsQ.data, currentAgentId, setCurrentAgent]);
 
+  // 현재 세션 열려있으면 자동으로 읽음 처리 (새로고침/탭 복귀 포함)
+  const markRead = useChatStore((s) => s.markRead);
+  useEffect(() => {
+    if (currentSessionId) markRead(currentSessionId);
+  }, [currentSessionId, markRead, sessionQ.data?.messages?.length]);
+
   const createSession = useMutation({
     mutationFn: () => api.createSession(currentAgentId!),
     onSuccess: (session) => {
@@ -78,7 +86,7 @@ export default function ChatPage() {
       await qc.cancelQueries({ queryKey: ['session', currentSessionId] });
       const prev = qc.getQueryData<Session>(['session', currentSessionId]);
       const content = paths.length > 0
-        ? `${message}\n\n[첨부 파일]\n${paths.map((p) => `- ${p}`).join('\n')}\n\n위 경로의 파일들을 Read 도구로 확인해주세요.`
+        ? `${message}\n\n${t('chat.attachmentHeader')}\n${paths.map((p) => `- ${p}`).join('\n')}\n\n${t('chat.attachmentFooter')}`
         : message;
       const optimistic: ChatMessage = { role: 'user', content, ts: new Date().toISOString() };
       qc.setQueryData<Session>(['session', currentSessionId], (old) =>
@@ -204,7 +212,7 @@ export default function ChatPage() {
         {/* ─── Chat content ─── */}
         {!currentSessionId ? (
           <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm px-4 text-center">
-            프로젝트를 선택하고 세션을 시작하세요
+            {t('chat.sessionSelectHint')}
           </div>
         ) : (
           <>
@@ -219,7 +227,7 @@ export default function ChatPage() {
                   busy={renameSession.isPending}
                 />
               ) : (
-                <div className="font-semibold text-zinc-500">Loading...</div>
+                <div className="font-semibold text-zinc-500">{t('chat.loading')}</div>
               )}
               {/* Right-aligned controls — all same height (h-7) */}
               <div className="ml-auto flex items-center gap-1.5 shrink-0">
@@ -272,7 +280,7 @@ export default function ChatPage() {
                       qc.invalidateQueries({ queryKey: ['agents'] });
                     }}
                     className="h-7 px-1.5 rounded bg-zinc-800 text-[11px] text-zinc-400 border-none focus:outline-none cursor-pointer"
-                    title="Thinking Effort"
+                    title={t('chat.thinkingEffort')}
                   >
                     <option value="auto">🧠 auto</option>
                     <option value="low">🧠 low</option>
@@ -292,7 +300,7 @@ export default function ChatPage() {
               </div>
               {running && (
                 <div className="flex items-center gap-1 text-[11px] text-amber-300 shrink-0">
-                  <Zap size={10} /> running
+                  <Zap size={10} /> {t('chat.running')}
                 </div>
               )}
             </div>
@@ -302,7 +310,7 @@ export default function ChatPage() {
               <div className="px-4 lg:px-6 py-2 border-b border-zinc-800 flex items-center gap-2 bg-zinc-900/40">
                 <Search size={14} className="text-zinc-500 shrink-0" />
                 <input autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="메시지 검색..." className="flex-1 bg-transparent text-sm text-zinc-200 placeholder-zinc-600 outline-none" />
+                  placeholder={t('chat.searchPlaceholder')} className="flex-1 bg-transparent text-sm text-zinc-200 placeholder-zinc-600 outline-none" />
                 {searchQuery && <button onClick={() => setSearchQuery('')} className="text-zinc-500"><X size={14} /></button>}
               </div>
             )}
@@ -315,11 +323,11 @@ export default function ChatPage() {
                   : 'bg-emerald-900/20 border-emerald-900/40 text-emerald-200'
               }`}>
                 {currentSession.loop.paused ? (
-                  <><AlertTriangle size={12} className="shrink-0" /><span className="flex-1 truncate">에스컬레이션: {currentSession.loop.escalateReason}</span></>
+                  <><AlertTriangle size={12} className="shrink-0" /><span className="flex-1 truncate">{t('chat.escalation')}: {currentSession.loop.escalateReason}</span></>
                 ) : (
                   <><RotateCw size={12} className="animate-spin shrink-0" /><span className="flex-1 truncate">Loop {currentSession.loop.currentIteration}/{currentSession.loop.maxIterations}</span></>
                 )}
-                <button onClick={async () => { if (confirm('루프 중단?')) { await api.stopLoop(currentSessionId!); qc.invalidateQueries({ queryKey: ['session', currentSessionId] }); } }}
+                <button onClick={async () => { if (confirm(t('chat.loopStopConfirm'))) { await api.stopLoop(currentSessionId!); qc.invalidateQueries({ queryKey: ['session', currentSessionId] }); } }}
                   className="shrink-0 px-2 py-1 rounded bg-red-900/50 text-red-200 text-[11px]"><Square size={10} /></button>
               </div>
             )}
@@ -327,9 +335,19 @@ export default function ChatPage() {
             {/* Messages */}
             <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-3 lg:px-6">
               {currentSession && (
-                <MessageList messages={currentSession.messages ?? []} searchQuery={searchQuery || undefined} />
+                <MessageList
+                  messages={currentSession.messages ?? []}
+                  searchQuery={searchQuery || undefined}
+                  onChoice={(c) => sendMessage.mutate({ message: c, paths: [] })}
+                />
               )}
-              <StreamingMessage text={streaming} toolCalls={toolCalls} running={running} error={error} />
+              <StreamingMessage
+                text={streaming}
+                toolCalls={toolCalls}
+                running={running}
+                error={error}
+                onChoice={(c) => sendMessage.mutate({ message: c, paths: [] })}
+              />
             </div>
 
             {/* Framework action buttons */}
@@ -349,7 +367,7 @@ export default function ChatPage() {
               onSystemCommand={async (cmd, arg) => {
                 switch (cmd) {
                   case 'clear':
-                    if (currentSessionId && confirm('현재 세션을 삭제하고 새로 시작할까?')) {
+                    if (currentSessionId && confirm(t('chat.clearConfirm'))) {
                       await api.deleteSession(currentSessionId);
                       qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
                       createSession.mutate();
@@ -362,14 +380,14 @@ export default function ChatPage() {
                     if (currentSessionId && arg) {
                       renameSession.mutate({ id: currentSessionId, title: arg });
                     } else if (currentSessionId) {
-                      const title = prompt('새 세션 제목:', currentSession?.title ?? '');
+                      const title = prompt(t('chat.renamePrompt'), currentSession?.title ?? '');
                       if (title) renameSession.mutate({ id: currentSessionId, title });
                     }
                     break;
                   case 'export':
                     if (currentSessionId) {
                       try { await api.downloadSessionExport(currentSessionId, 'md'); }
-                      catch (e) { alert(`Export 실패: ${(e as Error).message}`); }
+                      catch (e) { alert(`${t('chat.exportFailed')}: ${(e as Error).message}`); }
                     }
                     break;
                   case 'pin':
@@ -381,7 +399,7 @@ export default function ChatPage() {
                     setSearchOpen((v) => !v);
                     break;
                   case 'help':
-                    alert('사용 가능한 명령어:\n\n/commit — 커밋\n/review — 코드 리뷰\n/test — 테스트\n/plan — 계획\n/fix — 버그 수정\n/loop — Ralph Loop\n/run — Background task\n/clear — 세션 초기화\n/new — 새 세션\n/rename — 이름 변경\n/export — 내보내기\n/pin — 고정\n/search — 검색\n/help — 도움말');
+                    alert(t('chat.helpMessage'));
                     break;
                 }
               }}
@@ -421,6 +439,7 @@ function MobileHeader({
   isPinned: boolean;
   canCreate: boolean;
 }) {
+  const t = useT();
   const [projOpen, setProjOpen] = useState(false);
   const [sessOpen, setSessOpen] = useState(false);
   const projRef = useRef<HTMLDivElement>(null);
@@ -458,7 +477,7 @@ function MobileHeader({
               <span className="truncate font-semibold">{currentAgent.name}</span>
             </>
           ) : (
-            <span className="text-zinc-500">프로젝트</span>
+            <span className="text-zinc-500">{t('chat.mobileProject')}</span>
           )}
           <ChevronDown size={12} className="text-zinc-500 shrink-0 ml-auto" />
         </button>
@@ -474,7 +493,7 @@ function MobileHeader({
             ))}
             {globalAgents.length > 0 && (
               <>
-                <div className="border-t border-zinc-800 px-3 py-1 text-[11px] text-zinc-500">글로벌</div>
+                <div className="border-t border-zinc-800 px-3 py-1 text-[11px] text-zinc-500">{t('chat.mobileGlobal')}</div>
                 {globalAgents.slice(0, 5).map((a) => (
                   <button key={a.id}
                     onClick={() => { onSelectAgent(a.id); onSelectSession(null); setProjOpen(false); }}
@@ -496,7 +515,7 @@ function MobileHeader({
           onClick={() => { setSessOpen((v) => !v); setProjOpen(false); }}
           className="w-full flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs"
         >
-          <span className="truncate">{currentSession?.title ?? '세션 선택'}</span>
+          <span className="truncate">{currentSession?.title ?? t('chat.mobileSessionSelect')}</span>
           <ChevronDown size={12} className="text-zinc-500 shrink-0 ml-auto" />
         </button>
         {sessOpen && (
@@ -505,7 +524,7 @@ function MobileHeader({
               onClick={() => { onNewSession(); setSessOpen(false); }}
               disabled={!canCreate}
               className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 text-emerald-300 hover:bg-zinc-800/50 disabled:opacity-40 border-b border-zinc-800">
-              <Plus size={12} /> 새 세션
+              <Plus size={12} /> {t('chat.mobileNewSession')}
             </button>
             {sessions.map((s) => (
               <button key={s.id}
@@ -516,7 +535,7 @@ function MobileHeader({
               </button>
             ))}
             {sessions.length === 0 && (
-              <div className="px-3 py-4 text-[11px] text-zinc-600 text-center italic">세션 없음</div>
+              <div className="px-3 py-4 text-[11px] text-zinc-600 text-center italic">{t('chat.mobileNoSessions')}</div>
             )}
           </div>
         )}
@@ -527,7 +546,7 @@ function MobileHeader({
         <button
           onClick={onTogglePin}
           className={`p-1.5 rounded shrink-0 ${isPinned ? 'text-amber-400 bg-amber-900/30' : 'text-zinc-500 hover:text-amber-400'}`}
-          title={isPinned ? '고정 해제' : '고정'}
+          title={isPinned ? t('chat.unpin') : t('chat.pin')}
         >
           <Pin size={14} />
         </button>

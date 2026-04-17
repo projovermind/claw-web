@@ -13,6 +13,9 @@ import {
   X
 } from 'lucide-react';
 import { useI18nStore, useT } from '../../lib/i18n';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../lib/api';
+import { useChatStore } from '../../store/chat-store';
 
 export default function Sidebar() {
   const t = useT();
@@ -20,6 +23,16 @@ export default function Sidebar() {
   const setLang = useI18nStore((s) => s.setLang);
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
+  const unread = useChatStore((s) => s.unread);
+  const { data: sessionsData } = useQuery({
+    queryKey: ['sessions-all'],
+    queryFn: api.allSessions,
+    refetchInterval: 5000
+  });
+  const hasUnread = Object.keys(unread).length > 0;
+  const hasRunning = (sessionsData?.sessions ?? []).some((s) => s.isRunning);
+  // 안 읽은게 우선, 없으면 실행중 표시
+  const chatDotColor = hasUnread ? 'bg-sky-400' : hasRunning ? 'bg-amber-400' : null;
 
   // Close drawer on route change (mobile)
   useEffect(() => {
@@ -92,23 +105,29 @@ export default function Sidebar() {
             key={gi}
             className={`space-y-1 ${gi > 0 ? 'mt-4 pt-4 border-t border-zinc-800/60' : ''}`}
           >
-            {group.items.map(({ to, icon: Icon, label }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={to === '/'}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
-                    isActive
-                      ? 'bg-zinc-800 text-white'
-                      : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-                  }`
-                }
-              >
-                <Icon size={16} />
-                <span>{label}</span>
-              </NavLink>
-            ))}
+            {group.items.map(({ to, icon: Icon, label }) => {
+              const showChatDot = to === '/chat' && chatDotColor;
+              return (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={to === '/'}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                      isActive
+                        ? 'bg-zinc-800 text-white'
+                        : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
+                    }`
+                  }
+                >
+                  <Icon size={16} />
+                  <span className="flex-1">{label}</span>
+                  {showChatDot && (
+                    <span className={`w-2 h-2 rounded-full ${chatDotColor} ${hasUnread ? 'animate-pulse' : hasRunning ? 'animate-pulse' : ''}`} />
+                  )}
+                </NavLink>
+              );
+            })}
           </div>
         ))}
       </nav>

@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, Star, Download, CheckSquare, Square, X, ChevronDown } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
+import { useChatStore } from '../../store/chat-store';
 import type { Session, Agent, Project, BackendsState } from '../../lib/types';
 
 /** 실제 호출되는 모델명을 해석해서 뱃지로 표시 */
@@ -50,6 +51,7 @@ export function ChatSidebar({
 }) {
   const qc = useQueryClient();
   const t = useT();
+  const unread = useChatStore((s) => s.unread);
   const { data: backendsState } = useQuery({ queryKey: ['backends'], queryFn: api.backends });
   const { data: allSessionsData } = useQuery({
     queryKey: ['sessions-all'],
@@ -138,7 +140,7 @@ export function ChatSidebar({
     try {
       await api.downloadSessionExport(id, 'md');
     } catch (err) {
-      alert(`Export 실패: ${(err as Error).message}`);
+      alert(`${t('chat.sidebar.exportFailed')}: ${(err as Error).message}`);
     }
   };
 
@@ -147,7 +149,7 @@ export function ChatSidebar({
     ? currentProject.name
     : currentAgent
       ? currentAgent.name
-      : '프로젝트 선택';
+      : t('chat.sidebar.selectProject');
   const contextColor = currentProject?.color ?? '#666';
   const contextSubLabel = currentAgent
     ? `${currentAgent.avatar ?? '🤖'} ${currentAgent.name}`
@@ -158,7 +160,7 @@ export function ChatSidebar({
       {/* Project/Agent picker */}
       <div className="p-3 border-b border-zinc-800 relative">
         <label className="text-[11px] uppercase tracking-wider text-zinc-500 block mb-1">
-          프로젝트
+          {t('chat.sidebar.project')}
         </label>
         <button
           onClick={() => setProjectPickerOpen((v) => !v)}
@@ -280,7 +282,7 @@ export function ChatSidebar({
       {/* Session list header */}
       <div className="flex items-center justify-between px-3 py-2">
         <span className="text-[11px] uppercase tracking-wider text-zinc-500">
-          세션
+          {t('chat.sidebar.sessions')}
         </span>
         {selectMode ? (
           <div className="flex items-center gap-2">
@@ -288,13 +290,13 @@ export function ChatSidebar({
               onClick={() => {
                 const ids = Array.from(selectedIds);
                 if (ids.length === 0) return;
-                if (confirm(`${ids.length}개 세션을 삭제할까?`))
+                if (confirm(t('chat.sidebar.deleteCountConfirm', { count: ids.length })))
                   bulkDelete.mutate(ids);
               }}
               disabled={selectedIds.size === 0}
               className="text-[11px] text-red-400 hover:text-red-300 disabled:opacity-40 flex items-center gap-1"
             >
-              <Trash2 size={11} /> {selectedIds.size}개 삭제
+              <Trash2 size={11} /> {t('chat.sidebar.deleteCount', { count: selectedIds.size })}
             </button>
             <button
               onClick={() => {
@@ -311,7 +313,7 @@ export function ChatSidebar({
             <button
               onClick={() => setSelectMode(true)}
               className="text-[11px] text-zinc-500 hover:text-zinc-300"
-              title="다중 선택"
+              title={t('chat.sidebar.multiSelect')}
             >
               <CheckSquare size={11} />
             </button>
@@ -320,7 +322,7 @@ export function ChatSidebar({
               disabled={!currentAgentId}
               className="text-xs text-zinc-400 hover:text-white disabled:opacity-40 flex items-center gap-1"
             >
-              <Plus size={12} /> 새
+              <Plus size={12} /> {t('common.new')}
             </button>
           </div>
         )}
@@ -330,20 +332,27 @@ export function ChatSidebar({
       <div className="flex-1 overflow-y-auto px-2 pb-2">
         {sessions.length === 0 && (
           <div className="text-[11px] text-zinc-600 italic px-2 py-1">
-            세션 없음
+            {t('chat.sidebar.noSessions')}
           </div>
         )}
         {sessions
           .slice()
           .sort((a, b) => {
+            // 1순위: 안 읽음
+            const au = unread[a.id] ? 1 : 0;
+            const bu = unread[b.id] ? 1 : 0;
+            if (au !== bu) return bu - au;
+            // 2순위: 핀
             const ap = a.pinned ? 1 : 0;
             const bp = b.pinned ? 1 : 0;
             if (ap !== bp) return bp - ap;
+            // 3순위: 최신
             return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
           })
           .map((s) => {
             const isSelected = selectedIds.has(s.id);
             const isDelegated = s.title?.startsWith('[위임]');
+            const isUnread = !!unread[s.id];
             return (
               <div
                 key={s.id}
@@ -369,6 +378,12 @@ export function ChatSidebar({
                       <Square size={11} className="text-zinc-600" />
                     )}
                   </span>
+                )}
+                {!selectMode && isUnread && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0 animate-pulse" title="안 읽음" />
+                )}
+                {!selectMode && !isUnread && s.isRunning && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title="실행 중" />
                 )}
                 {!selectMode && s.pinned && (
                   <Star size={10} className="text-amber-400 shrink-0" fill="currentColor" />
@@ -404,7 +419,7 @@ export function ChatSidebar({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm(`"${s.title}" 삭제?`))
+                        if (confirm(t('chat.sidebar.deleteConfirm', { title: s.title })))
                           deleteSession.mutate(s.id);
                       }}
                       className="p-0.5 rounded hover:bg-red-900/40 text-zinc-500 hover:text-red-400"

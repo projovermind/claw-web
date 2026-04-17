@@ -25,12 +25,16 @@ interface ChatState {
   currentAgentId: string | null;
   currentSessionId: string | null;
   runtime: Record<string, SessionRuntime>;
+  /** 세션별 안 읽은 메시지 플래그 + 마지막 업데이트 시각 (정렬용) */
+  unread: Record<string, { at: number }>;
   setCurrentAgent: (id: string | null) => void;
   setCurrentSession: (id: string | null) => void;
   startRun: (sessionId: string) => void;
   appendChunk: (sessionId: string, text: string) => void;
   addToolCall: (sessionId: string, tool: { name: string; input: Record<string, unknown> }) => void;
   finishRun: (sessionId: string, error?: string | null) => void;
+  markUnread: (sessionId: string) => void;
+  markRead: (sessionId: string) => void;
 }
 
 const emptyRuntime = (): SessionRuntime => ({
@@ -44,55 +48,72 @@ const emptyRuntime = (): SessionRuntime => ({
 export const useChatStore = create<ChatState>()(
   persist(
     (set) => ({
-  currentAgentId: null,
-  currentSessionId: null,
-  runtime: {},
-  setCurrentAgent: (currentAgentId) => set({ currentAgentId }),
-  setCurrentSession: (currentSessionId) => set({ currentSessionId }),
-  startRun: (sessionId) =>
-    set((s) => ({
-      runtime: { ...s.runtime, [sessionId]: { ...emptyRuntime(), running: true } }
-    })),
-  appendChunk: (sessionId, text) =>
-    set((s) => {
-      const r = { ...(s.runtime[sessionId] ?? emptyRuntime()) };
-      r.streaming += text;
-      r.running = true;
-      return { runtime: { ...s.runtime, [sessionId]: r } };
-    }),
-  addToolCall: (sessionId, tool) =>
-    set((s) => {
-      const r = { ...(s.runtime[sessionId] ?? emptyRuntime()) };
-      const tc: ToolCall = { ...tool, ts: new Date().toISOString() };
-      r.toolCalls = [...r.toolCalls, tc];
-      // TodoWrite tool — extract todos into widget
-      if (tool.name === 'TodoWrite') {
-        const todos = (tool.input as { todos?: TodoItem[] })?.todos;
-        if (Array.isArray(todos)) r.todos = todos;
-      }
-      return { runtime: { ...s.runtime, [sessionId]: r } };
-    }),
-  /**
-   * Called when chat.done arrives AFTER the session query has been refetched.
-   * Clears streaming + toolCalls + todos so the StreamingMessage component
-   * vanishes cleanly and the persisted assistant message (now in the session
-   * query cache) is the only thing visible. Prevents the "response shown
-   * twice" bug where both the live-streaming bubble and the newly-fetched
-   * persisted bubble render simultaneously.
-   */
-  finishRun: (sessionId, error = null) =>
-    set((s) => ({
-      runtime: {
-        ...s.runtime,
-        [sessionId]: { ...emptyRuntime(), error }
-      }
-    }))
+      currentAgentId: null,
+      currentSessionId: null,
+      runtime: {},
+      unread: {},
+      setCurrentAgent: (currentAgentId) => set({ currentAgentId }),
+      setCurrentSession: (currentSessionId) =>
+        set((s) => {
+          if (!currentSessionId) return { currentSessionId };
+          // 세션 열면 자동으로 read 처리
+          const next = { ...s.unread };
+          delete next[currentSessionId];
+          return { currentSessionId, unread: next };
+        }),
+      startRun: (sessionId) =>
+        set((s) => ({
+          runtime: { ...s.runtime, [sessionId]: { ...emptyRuntime(), running: true } }
+        })),
+      appendChunk: (sessionId, text) =>
+        set((s) => {
+          const r = { ...(s.runtime[sessionId] ?? emptyRuntime()) };
+          r.streaming += text;
+          r.running = true;
+          return { runtime: { ...s.runtime, [sessionId]: r } };
+        }),
+      addToolCall: (sessionId, tool) =>
+        set((s) => {
+          const r = { ...(s.runtime[sessionId] ?? emptyRuntime()) };
+          const tc: ToolCall = { ...tool, ts: new Date().toISOString() };
+          r.toolCalls = [...r.toolCalls, tc];
+          if (tool.name === 'TodoWrite') {
+            const todos = (tool.input as { todos?: TodoItem[] })?.todos;
+            if (Array.isArray(todos)) r.todos = todos;
+          }
+          return { runtime: { ...s.runtime, [sessionId]: r } };
+        }),
+      finishRun: (sessionId, error = null) =>
+        set((s) => {
+          // 채팅 완료 시 현재 열려있는 세션이 아니면 unread 표시
+          const isActive = s.currentSessionId === sessionId;
+          const nextUnread = { ...s.unread };
+          if (!isActive && !error) {
+            nextUnread[sessionId] = { at: Date.now() };
+          }
+          return {
+            runtime: {
+              ...s.runtime,
+              [sessionId]: { ...emptyRuntime(), error }
+            },
+            unread: nextUnread
+          };
+        }),
+      markUnread: (sessionId) =>
+        set((s) => ({ unread: { ...s.unread, [sessionId]: { at: Date.now() } } })),
+      markRead: (sessionId) =>
+        set((s) => {
+          const next = { ...s.unread };
+          delete next[sessionId];
+          return { unread: next };
+        })
     }),
     {
       name: 'claw-chat',
       partialize: (state) => ({
         currentAgentId: state.currentAgentId,
-        currentSessionId: state.currentSessionId
+        currentSessionId: state.currentSessionId,
+        unread: state.unread
       })
     }
   )

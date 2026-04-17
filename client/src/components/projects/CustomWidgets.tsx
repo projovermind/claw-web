@@ -1,16 +1,21 @@
 import { useState } from 'react';
 import { Plus, Trash2, ExternalLink, FileText, Key, Edit3 } from 'lucide-react';
 import type { CustomWidget } from '../../lib/types';
+import { useT } from '../../lib/i18n';
 
-const WIDGET_TYPES: { type: CustomWidget['type']; label: string; icon: typeof ExternalLink; placeholder: string }[] = [
-  { type: 'link', label: '링크', icon: ExternalLink, placeholder: 'https://...' },
-  { type: 'text', label: '텍스트', icon: FileText, placeholder: '내용 입력' },
-  { type: 'kv', label: '키-값', icon: Key, placeholder: 'KEY=VALUE (줄바꿈 구분)' },
-  { type: 'markdown', label: '마크다운', icon: Edit3, placeholder: '## 제목\n내용...' },
-];
+function getWidgetTypes(t: (key: string) => string): { type: CustomWidget['type']; label: string; icon: typeof ExternalLink; placeholder: string }[] {
+  return [
+    { type: 'link', label: t('projects.widgetLink'), icon: ExternalLink, placeholder: 'https://...' },
+    { type: 'text', label: t('projects.widgetText'), icon: FileText, placeholder: t('projects.widgetTextPlaceholder') },
+    { type: 'kv', label: t('projects.widgetKV'), icon: Key, placeholder: t('projects.widgetKVPlaceholder') },
+    { type: 'markdown', label: t('projects.widgetMd'), icon: Edit3, placeholder: t('projects.widgetMdPlaceholder') },
+  ];
+}
 
 function WidgetCard({ widget, onRemove }: { widget: CustomWidget; onRemove: () => void }) {
-  const typeMeta = WIDGET_TYPES.find(t => t.type === widget.type) ?? WIDGET_TYPES[1];
+  const t = useT();
+  const WIDGET_TYPES = getWidgetTypes(t);
+  const typeMeta = WIDGET_TYPES.find(x => x.type === widget.type) ?? WIDGET_TYPES[1];
   const Icon = typeMeta.icon;
 
   return (
@@ -56,6 +61,8 @@ export function CustomWidgets({
   widgets: CustomWidget[];
   onUpdate: (widgets: CustomWidget[]) => void;
 }) {
+  const t = useT();
+  const WIDGET_TYPES = getWidgetTypes(t);
   const [adding, setAdding] = useState(false);
   const [draftType, setDraftType] = useState<CustomWidget['type']>('link');
   const [draftTitle, setDraftTitle] = useState('');
@@ -83,12 +90,12 @@ export function CustomWidgets({
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800">
         <span className="text-sm">📌</span>
-        <span className="text-sm font-semibold text-zinc-300 flex-1">커스텀 위젯</span>
+        <span className="text-sm font-semibold text-zinc-300 flex-1">{t('projects.customWidgets')}</span>
         <button
           onClick={() => setAdding(v => !v)}
           className="text-[11px] px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 flex items-center gap-1"
         >
-          <Plus size={10} /> 추가
+          <Plus size={10} /> {t('common.add')}
         </button>
       </div>
 
@@ -107,23 +114,23 @@ export function CustomWidgets({
             <input
               value={draftTitle}
               onChange={(e) => setDraftTitle(e.target.value)}
-              placeholder="위젯 제목"
+              placeholder={t('projects.widgetTitle')}
               className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] outline-none"
             />
           </div>
           <textarea
             value={draftValue}
             onChange={(e) => setDraftValue(e.target.value)}
-            placeholder={WIDGET_TYPES.find(t => t.type === draftType)?.placeholder}
+            placeholder={WIDGET_TYPES.find(x => x.type === draftType)?.placeholder}
             className="w-full bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-[11px] min-h-[60px] resize-y outline-none font-mono"
           />
           <div className="flex justify-end gap-1">
-            <button onClick={() => setAdding(false)} className="px-2 py-1 text-[11px] text-zinc-500 hover:text-zinc-300">취소</button>
+            <button onClick={() => setAdding(false)} className="px-2 py-1 text-[11px] text-zinc-500 hover:text-zinc-300">{t('common.cancel')}</button>
             <button
               onClick={addWidget}
               disabled={!draftTitle.trim() || !draftValue.trim()}
               className="px-3 py-1 text-[11px] rounded bg-emerald-900/40 hover:bg-emerald-900/60 text-emerald-200 disabled:opacity-30"
-            >추가</button>
+            >{t('common.add')}</button>
           </div>
         </div>
       )}
@@ -131,7 +138,7 @@ export function CustomWidgets({
       <div className="p-3">
         {widgets.length === 0 && !adding ? (
           <div className="text-[11px] text-zinc-600 italic text-center py-4">
-            위젯 없음 — 추가 버튼으로 URL, 메모 등을 고정하세요
+            {t('projects.widgetsEmpty')}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

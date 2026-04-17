@@ -26,6 +26,24 @@ export function createChatRouter({
 }) {
   const router = Router();
 
+  // ── 응답 중 입력 메시지 큐 ──
+  // sessionId → 큐잉된 유저 메시지 배열
+  // 현재 응답 끝날 때 합쳐서 다음 턴으로 자동 전송
+  const messageQueue = new Map();
+
+  function enqueueMessage(sessionId, message) {
+    if (!messageQueue.has(sessionId)) messageQueue.set(sessionId, []);
+    messageQueue.get(sessionId).push(message);
+  }
+
+  function flushQueue(sessionId) {
+    const q = messageQueue.get(sessionId);
+    if (!q || q.length === 0) return null;
+    messageQueue.delete(sessionId);
+    // 여러 메시지를 합쳐서 하나로 (각각 줄 구분)
+    return q.length === 1 ? q[0] : q.map((m, i) => `[추가 ${i + 1}] ${m}`).join('\n\n');
+  }
+
   // ── Shared helpers ─────────────────────────────────────
 
   function resolveSkills(ids) {
@@ -143,6 +161,9 @@ export function createChatRouter({
       agent.dashboardHint = `\n<dashboard-api>\n작업 완료/진행 시 프로젝트 대시보드를 업데이트할 수 있습니다.\n- 목표 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/goals -H "Content-Type: application/json" -d '{"title":"목표","status":"todo"}'\n- 목표 완료: curl -s -X PATCH http://localhost:3838/api/projects/${meta.projectId}/goals/GOAL_ID -H "Content-Type: application/json" -d '{"status":"done"}'\n- 위젯 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/widgets -H "Content-Type: application/json" -d '{"type":"link","title":"제목","value":"URL"}'\n- 메모 수정: curl -s -X PUT http://localhost:3838/api/projects/${meta.projectId}/notes -H "Content-Type: application/json" -d '{"notes":"내용"}'\n</dashboard-api>`;
     }
 
+    // 선택지 버튼 UI 힌트: 여러 옵션 중 하나 고르게 할 때 <choices> 태그 사용
+    agent.choicesHint = `\n<ui-hints>\n사용자가 여러 옵션 중 하나를 선택해야 할 때 응답 끝에 <choices> 태그로 감싸서 제공하세요. UI에서 버튼으로 렌더링됩니다.\n예시:\n<choices>\n- 옵션 A\n- 옵션 B\n- 옵션 C\n</choices>\n</ui-hints>`;
+
     let accumText = '';
     const toolCalls = [];
 
@@ -187,6 +208,21 @@ export function createChatRouter({
             const responseText = result.text ?? accumText;
             handleDelegation(sessionId, responseText);
             handleLoopContinuation(sessionId, responseText);
+
+            // 응답 중 큐잉된 메시지 있으면 자동으로 다음 턴에 전송
+            // (메시지는 이미 session.messages에 queued:true 플래그로 저장됨 → 중복 저장 안 함)
+            const queued = flushQueue(sessionId);
+            if (queued) {
+              logger.info({ sessionId }, 'chat: flushing queued messages — next turn with context ref');
+              setTimeout(() => {
+                try {
+                  const prefixed = `[이전 답변 중에 추가된 요청 — 이전 맥락을 참고해서 답변하세요]\n\n${queued}`;
+                  sendRunnerMessage(sessionId, prefixed);
+                } catch (err) {
+                  logger.warn({ err, sessionId }, 'chat: failed to flush queue');
+                }
+              }, 500);
+            }
 
             // Delegation report-back: if THIS session was a delegated task,
             // report the result to the originating session.
@@ -438,8 +474,25 @@ export function createChatRouter({
       if (!configStore.getAgent(session.agentId)) {
         throw new HttpError(404, `Agent ${session.agentId} not found`, 'AGENT_NOT_FOUND');
       }
+      // 실행 중이면 큐잉 — 현재 응답 끝나면 자동으로 다음 턴에 전송
+      // (Claude Code와 동일한 방식: LLM은 스트림 도중 끊으면 컨텍스트 손실)
       if (runner.isRunning(sessionId)) {
-        throw new HttpError(409, 'Session is currently running', 'BUSY');
+        let augmentedMessage = message;
+        if (attachmentPaths && attachmentPaths.length > 0) {
+          const fileList = attachmentPaths.map((p) => `- ${p}`).join('\n');
+          augmentedMessage = `${message}\n\n[첨부 파일]\n${fileList}`;
+        }
+        enqueueMessage(sessionId, augmentedMessage);
+        // UI에 표시되도록 세션에도 저장 (queued 플래그로 구분)
+        await sessionsStore.appendMessage(sessionId, {
+          role: 'user',
+          content: augmentedMessage,
+          attachmentPaths: attachmentPaths ?? [],
+          queued: true
+        });
+        eventBus.publish('chat.queued', { sessionId, count: messageQueue.get(sessionId)?.length ?? 0 });
+        logger.info({ sessionId, queue: messageQueue.get(sessionId)?.length }, 'chat: queued during running');
+        return res.status(202).json({ sessionId, status: 'queued', queueLength: messageQueue.get(sessionId)?.length });
       }
 
       // Auto-title on first message

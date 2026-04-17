@@ -2,6 +2,8 @@ import { useState, useMemo } from 'react';
 import {
   DndContext,
   DragEndEvent,
+  DragStartEvent,
+  DragOverlay,
   PointerSensor,
   TouchSensor,
   useSensor,
@@ -44,6 +46,7 @@ export default function AgentHierarchy({
   const [search, setSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
+  const [draggingAgent, setDraggingAgent] = useState<Agent | null>(null);
 
   const toggleCollapse = (projectId: string) => {
     setCollapsed((prev) => {
@@ -128,7 +131,14 @@ export default function AgentHierarchy({
   if (agentsQ.isLoading || projectsQ.isLoading)
     return <div className="text-zinc-500">Loading hierarchy...</div>;
 
+  function onDragStart(e: DragStartEvent) {
+    const id = String(e.active.id);
+    const a = agents.find(ag => ag.id === id);
+    if (a) setDraggingAgent(a);
+  }
+
   function onDragEnd(e: DragEndEvent) {
+    setDraggingAgent(null);
     const agentId = String(e.active.id);
     const overId = e.over?.id;
     if (!overId) return;
@@ -187,7 +197,7 @@ export default function AgentHierarchy({
     // Case 2: dropped on a named drop zone (main / project-lead / project-addon / palette)
     const target = decodeDrop(overStr);
     if (!target) return;
-    const patch = targetToPatch(target, hierarchy);
+    const patch = targetToPatch(target, hierarchy, agentId);
 
     // Special: if target is the same project's addon container AND we're already an addon
     // there -> append to end (gets highest order)
@@ -235,6 +245,7 @@ export default function AgentHierarchy({
         if (pointer.length > 0) return pointer;
         return rectIntersection(args);
       }}
+      onDragStart={onDragStart}
       onDragEnd={onDragEnd}
     >
       <div
@@ -300,6 +311,23 @@ export default function AgentHierarchy({
           }}
         />
       )}
+      {/* Drag overlay: 드래그 중인 카드를 커서 따라 움직이는 프리뷰 */}
+      <DragOverlay dropAnimation={{ duration: 200 }}>
+        {draggingAgent && (
+          <div className="rounded border-2 border-emerald-400/60 bg-zinc-900 shadow-2xl shadow-emerald-900/40 p-2.5 select-none rotate-2 opacity-95 pointer-events-none">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">{draggingAgent.avatar ?? '🤖'}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold truncate">{draggingAgent.name}</div>
+                <div className="text-[11px] text-zinc-400 font-mono">{draggingAgent.id}</div>
+              </div>
+            </div>
+            <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-zinc-400">
+              <span className="px-1.5 py-0.5 rounded bg-zinc-800">{draggingAgent.model ?? '—'}</span>
+            </div>
+          </div>
+        )}
+      </DragOverlay>
     </DndContext>
   );
 }

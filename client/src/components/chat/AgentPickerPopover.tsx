@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Search, ChevronDown, Crown, Boxes, Inbox } from 'lucide-react';
 import type { Agent, Project } from '../../lib/types';
+import { useT } from '../../lib/i18n';
 
 interface Props {
   agents: Agent[];
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export default function AgentPickerPopover({ agents, projects, currentId, onSelect }: Props) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -91,7 +93,7 @@ export default function AgentPickerPopover({ agents, projects, currentId, onSele
             </div>
           </>
         ) : (
-          <span className="text-zinc-500">— 에이전트 선택 —</span>
+          <span className="text-zinc-500">{t('agentPicker.selectPlaceholder')}</span>
         )}
         <ChevronDown size={14} className="text-zinc-500" />
       </button>
@@ -104,7 +106,7 @@ export default function AgentPickerPopover({ agents, projects, currentId, onSele
               ref={inputRef}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="이름 / id / 모델 / 프로젝트 검색"
+              placeholder={t('agentPicker.searchPlaceholder')}
               className="flex-1 bg-transparent text-sm focus:outline-none placeholder:text-zinc-600"
               style={{ fontSize: '14px' }}
             />
@@ -113,7 +115,7 @@ export default function AgentPickerPopover({ agents, projects, currentId, onSele
 
           <div className="flex-1 overflow-y-auto py-1">
             {groups.main.length > 0 && (
-              <Group icon={<Crown size={12} className="text-amber-400" />} label="Main">
+              <Group icon={<Crown size={12} className="text-amber-400" />} label={t('agentPicker.main')}>
                 {groups.main.map((a) => (
                   <AgentRow key={a.id} agent={a} active={a.id === currentId} onSelect={handleSelect} />
                 ))}
@@ -137,7 +139,7 @@ export default function AgentPickerPopover({ agents, projects, currentId, onSele
             })}
 
             {groups.unassigned.length > 0 && (
-              <Group icon={<Inbox size={12} className="text-zinc-500" />} label="Unassigned">
+              <Group icon={<Inbox size={12} className="text-zinc-500" />} label={t('agentPicker.unassigned')}>
                 {groups.unassigned.map((a) => (
                   <AgentRow key={a.id} agent={a} active={a.id === currentId} onSelect={handleSelect} />
                 ))}
@@ -145,13 +147,13 @@ export default function AgentPickerPopover({ agents, projects, currentId, onSele
             )}
 
             {filtered.length === 0 && (
-              <div className="text-[11px] text-zinc-600 italic px-3 py-8 text-center">결과 없음</div>
+              <div className="text-[11px] text-zinc-600 italic px-3 py-8 text-center">{t('common.noResults')}</div>
             )}
           </div>
 
           <div className="px-3 py-1.5 border-t border-zinc-800 text-[11px] text-zinc-600 flex items-center gap-2">
             <Boxes size={10} />
-            <span>{agents.length}개 에이전트 · {projects.length}개 프로젝트</span>
+            <span>{t('agentPicker.summary', { agents: agents.length, projects: projects.length })}</span>
           </div>
         </div>
       )}

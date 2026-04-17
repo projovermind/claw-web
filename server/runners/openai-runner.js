@@ -136,7 +136,11 @@ async function runAgent(options) {
     }
 
     let response;
-    const RETRY_DELAYS = [30000, 60000, 120000, 180000, 240000, 300000, 300000, 300000, 300000, 300000]; // 30초~300초, 10회 재시도
+    // fastFail: fallback 있으면 429 즉시 실패 → runner가 fallback 실행
+    // 없으면 기존처럼 재시도
+    const RETRY_DELAYS = options.fastFail
+      ? []  // fallback 있으면 재시도 안 함
+      : [30000, 60000, 120000, 180000, 240000, 300000, 300000, 300000, 300000, 300000];
     let lastErr;
     for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
       try {
@@ -151,7 +155,7 @@ async function runAgent(options) {
           console.log(`⏳ [ZAI] 429 rate limit — ${delay / 1000}초 후 재시도 (${attempt + 1}/${RETRY_DELAYS.length})`);
           await new Promise(r => setTimeout(r, delay));
         } else if (err.status === 429) {
-          throw new Error(`API rate limit exceeded after ${RETRY_DELAYS.length} retries: ${errorMsg}`);
+          throw new Error(`API rate limit exceeded: ${errorMsg}`);
         } else {
           throw new Error(`API error (${backendName}/${model}): ${errorMsg}`);
         }

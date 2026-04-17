@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
 import { agentPatchSchema, splitPatch } from '../schemas/agent.js';
+import { autoAssignAgent, autoAssignAll, detectRole } from '../lib/auto-assigner.js';
 
 const createSchema = z.object({
   id: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i, 'id must be alphanumeric / - / _'),
@@ -20,7 +21,7 @@ const cloneSchema = z.object({
   copyMetadata: z.boolean().optional() // default: true (preserve tier/projectId/skillIds)
 }).strict();
 
-export function createAgentsRouter({ configStore, metadataStore, projectsStore, eventBus }) {
+export function createAgentsRouter({ configStore, metadataStore, projectsStore, skillsStore, eventBus }) {
   const router = Router();
 
   function merge(id, configAgent) {
@@ -117,6 +118,49 @@ export function createAgentsRouter({ configStore, metadataStore, projectsStore, 
       if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid patch', 'INVALID_PATCH'));
       next(err);
     }
+  });
+
+  // ── 역할 기반 자동 스킬/도구 배분 ──
+
+  // 단일 에이전트 자동 배분
+  router.post('/:id/auto-assign', async (req, res, next) => {
+    try {
+      const id = req.params.id;
+      const agentCfg = configStore.getAgent(id);
+      if (!agentCfg) throw new HttpError(404, 'Agent not found', 'AGENT_NOT_FOUND');
+      const force = req.body?.force === true;
+      const result = await autoAssignAgent(
+        { id, ...agentCfg },
+        { configStore, metadataStore, skillsStore },
+        { force }
+      );
+      if (eventBus) eventBus.publish('agent.updated', { agentId: id, auto: true });
+      res.json(result);
+    } catch (err) { next(err); }
+  });
+
+  // 모든 에이전트 일괄 배분
+  router.post('/auto-assign-all', async (req, res, next) => {
+    try {
+      const force = req.body?.force === true;
+      const results = await autoAssignAll(
+        { configStore, metadataStore, skillsStore },
+        { force }
+      );
+      if (eventBus) eventBus.publish('agents.refreshed', {});
+      res.json({ total: results.length, results });
+    } catch (err) { next(err); }
+  });
+
+  // 역할 감지 미리보기
+  router.get('/:id/detect-role', (req, res, next) => {
+    try {
+      const id = req.params.id;
+      const agentCfg = configStore.getAgent(id);
+      if (!agentCfg) throw new HttpError(404, 'Agent not found', 'AGENT_NOT_FOUND');
+      const detected = detectRole({ id, ...agentCfg });
+      res.json(detected);
+    } catch (err) { next(err); }
   });
 
   router.delete('/:id', async (req, res, next) => {

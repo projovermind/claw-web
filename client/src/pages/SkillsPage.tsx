@@ -9,6 +9,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { api } from '../lib/api';
+import { useT } from '../lib/i18n';
 import type { Skill, Agent } from '../lib/types';
 import { SkillDetail } from '../components/skills/SkillDetail';
 import { BulkAssignModal } from '../components/skills/BulkAssignModal';
@@ -16,6 +17,7 @@ import { BulkAssignModal } from '../components/skills/BulkAssignModal';
 const emptyDraft = () => ({ name: '', description: '', content: '' });
 
 export default function SkillsPage() {
+  const t = useT();
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ['skills'], queryFn: api.skills });
   const { data: agents } = useQuery({ queryKey: ['agents'], queryFn: api.agents });
@@ -88,12 +90,11 @@ export default function SkillsPage() {
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
       <div>
         <h2 className="text-2xl font-semibold flex items-center gap-2">
-          <Sparkles size={22} className="text-amber-400" /> 스킬
+          <Sparkles size={22} className="text-amber-400" /> {t('skills.title')}
         </h2>
         <p className="text-sm text-zinc-500 mt-2 max-w-4xl leading-relaxed">
-          스킬은 재사용 가능한 Markdown 지침. 에이전트 편집 모달에서 선택하면, 채팅 호출 시 선택된 스킬들의 본문이{' '}
-          <code className="text-zinc-400 text-xs">--append-system-prompt</code>에 concat되어 주입돼. 여러
-          에이전트가 같은 스킬을 공유 가능 (TDD 워크플로, 코드 리뷰 규칙, 배포 체크리스트 등).
+          {t('skills.intro')}{' '}
+          <code className="text-zinc-400 text-xs">--append-system-prompt</code>{t('skills.introSuffix')}
         </p>
       </div>
 
@@ -101,17 +102,17 @@ export default function SkillsPage() {
         {/* Left: list + create */}
         <div className="space-y-3 min-w-0">
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
-            <div className="text-base font-semibold text-zinc-200">+ 스킬 추가</div>
+            <div className="text-base font-semibold text-zinc-200">{t('skills.add')}</div>
             <input
               value={draft.name}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-              placeholder="이름 (예: TDD Workflow)"
+              placeholder={t('skills.namePlaceholder')}
               className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
             />
             <input
               value={draft.description}
               onChange={(e) => setDraft({ ...draft, description: e.target.value })}
-              placeholder="설명 (한 줄)"
+              placeholder={t('skills.descPlaceholder')}
               className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
             />
             <button
@@ -125,7 +126,7 @@ export default function SkillsPage() {
               }
               className="w-full rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-3 py-2 text-sm flex items-center justify-center gap-1.5"
             >
-              <Plus size={14} /> 생성 (빈 본문)
+              <Plus size={14} /> {t('skills.createEmpty')}
             </button>
           </div>
 
@@ -135,7 +136,7 @@ export default function SkillsPage() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="스킬 검색"
+                placeholder={t('skills.searchPlaceholder')}
                 className="flex-1 bg-transparent text-sm focus:outline-none placeholder:text-zinc-600"
                 style={{ fontSize: '14px' }}
               />
@@ -149,7 +150,7 @@ export default function SkillsPage() {
                 <>
                   <div className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] uppercase tracking-wider text-zinc-500">
                     <Sparkles size={11} className="text-amber-400" />
-                    <span>내 스킬 &middot; {customFiltered.length}</span>
+                    <span>{t('skills.mySkills')} &middot; {customFiltered.length}</span>
                   </div>
                   {customFiltered.map((s) => (
                     <SkillListButton
@@ -167,16 +168,16 @@ export default function SkillsPage() {
                   <div className="flex items-center justify-between gap-1.5 px-2 py-1.5 mt-3 text-[11px] uppercase tracking-wider text-zinc-500">
                     <div className="flex items-center gap-1.5">
                       <Package size={11} className="text-sky-400" />
-                      <span>시스템 스킬 &middot; {systemFiltered.length}</span>
+                      <span>{t('skills.systemSkills')} &middot; {systemFiltered.length}</span>
                     </div>
                     <button
                       onClick={() => refreshSystem.mutate()}
                       disabled={refreshSystem.isPending}
                       className="text-[11px] text-zinc-500 hover:text-zinc-300 flex items-center gap-1"
-                      title="~/.claude/plugins 재스캔"
+                      title={t('skills.rescan')}
                     >
                       <RefreshCw size={11} className={refreshSystem.isPending ? 'animate-spin' : ''} />
-                      새로고침
+                      {t('common.refresh')}
                     </button>
                   </div>
                   {systemFiltered.map((s) => (
@@ -191,7 +192,7 @@ export default function SkillsPage() {
               )}
               {customFiltered.length === 0 && systemFiltered.length === 0 && (
                 <div className="text-sm text-zinc-600 italic text-center py-8">
-                  {search ? '결과 없음' : '아직 스킬 없음 — 위에서 생성하세요'}
+                  {search ? t('common.noResults') : t('skills.emptyNoSearch')}
                 </div>
               )}
             </div>
@@ -202,7 +203,7 @@ export default function SkillsPage() {
         <div className="min-w-0">
           {!selected ? (
             <div className="rounded-lg border border-zinc-800 bg-zinc-900/30 p-8 text-center text-zinc-600 text-sm">
-              왼쪽에서 스킬을 선택하거나 새로 생성하세요.
+              {t('skills.selectHint')}
             </div>
           ) : (
             <SkillDetail
@@ -292,6 +293,7 @@ function EditSkillModal({
   onClose: () => void;
   onSubmit: (patch: Partial<Omit<Skill, 'id'>>) => void;
 }) {
+  const t = useT();
   const [form, setForm] = useState({
     name: skill.name,
     description: skill.description,
@@ -310,7 +312,7 @@ function EditSkillModal({
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
           <h3 className="text-lg font-semibold flex items-center gap-2">
-            <Sparkles size={16} className="text-amber-400" /> 스킬 편집
+            <Sparkles size={16} className="text-amber-400" /> {t('skills.editTitle')}
           </h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-zinc-800 text-zinc-400">
             <X size={18} />
@@ -318,7 +320,7 @@ function EditSkillModal({
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-3">
           <label className="block">
-            <span className="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1">이름</span>
+            <span className="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1">{t('skills.name')}</span>
             <input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -326,23 +328,23 @@ function EditSkillModal({
             />
           </label>
           <label className="block">
-            <span className="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1">설명</span>
+            <span className="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1">{t('skills.desc')}</span>
             <input
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
-              placeholder="한 줄 요약 (이 스킬이 뭐고 언제 써야 하는지)"
+              placeholder={t('skills.descLongPlaceholder')}
               className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
             />
           </label>
           <label className="block">
             <span className="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1">
-              Content (Markdown)
+              {t('skills.contentLabel')}
             </span>
             <textarea
               value={form.content}
               onChange={(e) => setForm({ ...form, content: e.target.value })}
               rows={20}
-              placeholder="## TDD Workflow&#10;&#10;1. 실패하는 테스트 작성&#10;2. 테스트 돌려서 실패 확인&#10;3. 통과하는 최소 구현&#10;..."
+              placeholder={t('skills.contentPlaceholder')}
               className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono leading-relaxed"
               style={{ fontSize: '13px' }}
             />
@@ -350,14 +352,14 @@ function EditSkillModal({
         </div>
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-zinc-800">
           <button onClick={onClose} className="px-4 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">
-            취소
+            {t('common.cancel')}
           </button>
           <button
             disabled={!valid || busy}
             onClick={() => onSubmit(form)}
             className="px-4 py-2 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-sm"
           >
-            {busy ? '저장 중...' : '저장'}
+            {busy ? t('common.saving') : t('common.save')}
           </button>
         </div>
       </div>

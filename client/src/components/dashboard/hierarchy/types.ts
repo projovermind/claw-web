@@ -27,7 +27,8 @@ export function decodeDrop(id: string): DropTarget | null {
 
 export function targetToPatch(
   target: DropTarget,
-  hierarchy: ReturnType<typeof buildHierarchy>
+  hierarchy: ReturnType<typeof buildHierarchy>,
+  movingAgentId?: string
 ): Partial<Agent> {
   if (target.kind === 'palette') return { tier: null, projectId: null, parentId: null };
   if (target.kind === 'main') return { tier: 'main', projectId: null, parentId: null };
@@ -35,7 +36,9 @@ export function targetToPatch(
   if (target.kind === 'project-lead') {
     return { tier: 'project', projectId: target.projectId, parentId: mainId };
   }
+  // project-addon: parentId = 프로젝트 lead. 단, 자기 자신이 lead면 main으로 대체
   const projBucket = hierarchy.projects.find((p) => p.project?.id === target.projectId);
-  const leadId = projBucket?.lead?.id ?? mainId;
+  let leadId: string | null = projBucket?.lead?.id ?? mainId;
+  if (leadId === movingAgentId) leadId = mainId;
   return { tier: 'addon', projectId: target.projectId, parentId: leadId };
 }

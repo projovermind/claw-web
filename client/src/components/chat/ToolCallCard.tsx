@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight, Wrench, Download, Image } from 'lucide-react';
 import { getAuthToken } from '../../lib/api';
+import { useT } from '../../lib/i18n';
 import type { ToolCall } from '../../store/chat-store';
 
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg']);
@@ -33,17 +34,30 @@ const TOOL_ICONS: Record<string, string> = {
 function summarize(tool: ToolCall): string {
   const input = tool.input as Record<string, unknown>;
   if (tool.name === 'Read' || tool.name === 'Write' || tool.name === 'Edit') {
-    return (input.file_path as string) ?? '';
+    // 파일명만 표시 (경로 축약)
+    const fp = (input.file_path as string) ?? '';
+    const last = fp.split('/').pop() ?? fp;
+    return last;
   }
-  if (tool.name === 'Bash') return (input.command as string)?.slice(0, 120) ?? '';
-  if (tool.name === 'Grep') return (input.pattern as string) ?? '';
-  if (tool.name === 'Glob') return (input.pattern as string) ?? '';
-  if (tool.name === 'WebFetch' || tool.name === 'WebSearch') return (input.url || input.query) as string ?? '';
+  if (tool.name === 'Bash') {
+    const cmd = (input.command as string) ?? '';
+    // 명령어 첫 단어 + 짧은 요약
+    return cmd.split('\n')[0].slice(0, 60);
+  }
+  if (tool.name === 'Grep') return (input.pattern as string)?.slice(0, 40) ?? '';
+  if (tool.name === 'Glob') return (input.pattern as string)?.slice(0, 40) ?? '';
+  if (tool.name === 'WebFetch' || tool.name === 'WebSearch') {
+    const u = (input.url || input.query) as string ?? '';
+    // 도메인만 추출
+    try { return new URL(u).hostname; } catch { return u.slice(0, 40); }
+  }
   if (tool.name === 'TodoWrite') {
     const todos = (input.todos as { content?: string }[] | undefined) ?? [];
-    return `${todos.length} items`;
+    const inProgress = todos.filter(t => (t as { status?: string }).status === 'in_progress').length;
+    const done = todos.filter(t => (t as { status?: string }).status === 'completed').length;
+    return `${done}/${todos.length} ${inProgress > 0 ? `(진행 중 ${inProgress})` : ''}`;
   }
-  if (tool.name === 'Task') return (input.description as string) ?? (input.subagent_type as string) ?? '';
+  if (tool.name === 'Task') return (input.description as string)?.slice(0, 40) ?? (input.subagent_type as string) ?? '';
   return '';
 }
 
@@ -59,6 +73,7 @@ function formatTs(iso: string): string {
 
 /** Inline image/file preview from the fs/file endpoint. */
 function FilePreview({ filePath }: { filePath: string }) {
+  const t = useT();
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState(false);
   const isImg = isImagePath(filePath);
@@ -88,11 +103,11 @@ function FilePreview({ filePath }: { filePath: string }) {
         />
       ) : (
         <div className="text-[11px] text-zinc-500 italic p-2 flex items-center gap-1">
-          <Image size={12} /> 이미지 로드 실패
+          <Image size={12} /> {t('common.imageLoadFail')}
         </div>
       )}
       {!loaded && !err && (
-        <div className="text-[11px] text-zinc-500 p-2">로딩 중...</div>
+        <div className="text-[11px] text-zinc-500 p-2">{t('common.loading')}</div>
       )}
       <div className="mt-1 flex items-center gap-2">
         <a
@@ -101,7 +116,7 @@ function FilePreview({ filePath }: { filePath: string }) {
           rel="noopener noreferrer"
           className="text-sky-400 hover:text-sky-300 flex items-center gap-1 text-[11px]"
         >
-          <Download size={11} /> 다운로드
+          <Download size={11} /> {t('tools.download')}
         </a>
         <span className="text-[11px] text-zinc-600 truncate">{filePath.split('/').pop()}</span>
       </div>
@@ -110,6 +125,7 @@ function FilePreview({ filePath }: { filePath: string }) {
 }
 
 export default function ToolCallCard({ tool, index }: { tool: ToolCall; index?: number }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const icon = TOOL_ICONS[tool.name] ?? '🔧';
   const summary = summarize(tool);
@@ -161,7 +177,7 @@ export default function ToolCallCard({ tool, index }: { tool: ToolCall; index?: 
             />
           ) : isRead && filePath && isImagePath(filePath) ? (
             <div className="space-y-1">
-              <div className="text-zinc-500 truncate">📄 {filePath} (읽기)</div>
+              <div className="text-zinc-500 truncate">📄 {filePath} ({t('tools.read')})</div>
               <FilePreview filePath={filePath} />
             </div>
           ) : (
@@ -184,20 +200,21 @@ function EditDiff({
   oldStr: string;
   newStr: string;
 }) {
-  if (!oldStr && !newStr) return <span className="text-zinc-500">empty edit</span>;
+  const t = useT();
+  if (!oldStr && !newStr) return <span className="text-zinc-500">{t('tools.emptyEdit')}</span>;
 
   return (
     <div className="space-y-1.5">
       <div className="text-zinc-500 truncate">📄 {filePath}</div>
       {oldStr && (
         <div className="rounded bg-red-950/30 border border-red-900/30 p-2">
-          <div className="text-[11px] text-red-400 mb-1 uppercase tracking-wider">- 삭제</div>
+          <div className="text-[11px] text-red-400 mb-1 uppercase tracking-wider">{t('tools.removed')}</div>
           <pre className="text-red-300 whitespace-pre-wrap break-all">{oldStr}</pre>
         </div>
       )}
       {newStr && (
         <div className="rounded bg-emerald-950/30 border border-emerald-900/30 p-2">
-          <div className="text-[11px] text-emerald-400 mb-1 uppercase tracking-wider">+ 추가</div>
+          <div className="text-[11px] text-emerald-400 mb-1 uppercase tracking-wider">{t('tools.added')}</div>
           <pre className="text-emerald-300 whitespace-pre-wrap break-all">{newStr}</pre>
         </div>
       )}
@@ -206,19 +223,20 @@ function EditDiff({
 }
 
 function WriteDiff({ filePath, content }: { filePath: string; content: string }) {
+  const t = useT();
   const isImg = isImagePath(filePath);
   return (
     <div className="space-y-1.5">
       <div className="text-zinc-500 truncate flex items-center gap-2">
-        <span>📄 {filePath} (전체 쓰기)</span>
+        <span>📄 {filePath} ({t('tools.writeFull')})</span>
         <a
           href={fileUrl(filePath, true)}
           target="_blank"
           rel="noopener noreferrer"
           className="shrink-0 text-sky-400 hover:text-sky-300 flex items-center gap-1"
-          title="다운로드"
+          title={t('tools.download')}
         >
-          <Download size={11} /> 다운로드
+          <Download size={11} /> {t('tools.download')}
         </a>
       </div>
       {isImg ? (

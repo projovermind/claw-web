@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Plus, Trash2, GripVertical } from 'lucide-react';
 import type { GoalCard } from '../../lib/types';
+import { useT } from '../../lib/i18n';
 
 const COLUMNS: { key: GoalCard['status']; label: string; color: string; bg: string }[] = [
   { key: 'todo', label: 'Todo', color: 'border-zinc-700', bg: 'bg-zinc-700/20' },
@@ -15,6 +16,7 @@ export function GoalBoard({
   goals: GoalCard[];
   onUpdate: (goals: GoalCard[]) => void;
 }) {
+  const t = useT();
   const [adding, setAdding] = useState<GoalCard['status'] | null>(null);
   const [draft, setDraft] = useState('');
   const [dragId, setDragId] = useState<string | null>(null);
@@ -51,7 +53,7 @@ export function GoalBoard({
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-2 border-b border-zinc-800">
         <span className="text-sm">🎯</span>
-        <span className="text-sm font-semibold text-zinc-300">목표</span>
+        <span className="text-sm font-semibold text-zinc-300">{t('projects.goals')}</span>
         {goals.length > 0 && (
           <div className="flex items-center gap-2 ml-2 flex-1">
             <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden max-w-[120px]">
@@ -115,7 +117,7 @@ export function GoalBoard({
                         if (e.key === 'Enter') addGoal(col.key);
                         if (e.key === 'Escape') { setAdding(null); setDraft(''); }
                       }}
-                      placeholder="목표 입력..."
+                      placeholder={t('projects.goalInput')}
                       className="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-1 text-[11px] outline-none focus:border-zinc-500"
                       autoFocus
                     />
@@ -125,7 +127,7 @@ export function GoalBoard({
                     onClick={() => setAdding(col.key)}
                     className="w-full text-[11px] text-zinc-600 hover:text-zinc-400 py-1 flex items-center justify-center gap-1"
                   >
-                    <Plus size={10} /> 추가
+                    <Plus size={10} /> {t('common.add')}
                   </button>
                 )}
               </div>

@@ -122,7 +122,7 @@ async function main() {
   app.use('/api', createAuthMiddleware({ webConfig }));
 
   app.use('/api/health', createHealthRouter({ healthCheck }));
-  app.use('/api/agents', createAgentsRouter({ configStore, metadataStore, projectsStore, eventBus }));
+  app.use('/api/agents', createAgentsRouter({ configStore, metadataStore, projectsStore, skillsStore, eventBus }));
   app.use(
     '/api/projects',
     createProjectsRouter({ projectsStore, configStore, metadataStore, eventBus })

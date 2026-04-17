@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DndContext, DragEndEvent, PointerSensor, TouchSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { api } from '../lib/api';
+import { useT } from '../lib/i18n';
 import type { Project, Agent } from '../lib/types';
 import { Plus, GripVertical, FolderOpen } from 'lucide-react';
 import PathPicker from '../components/common/PathPicker';
@@ -41,6 +42,7 @@ function StatMini({ label, value }: { label: string; value: number }) {
 const emptyDraft = (): Project => ({ id: '', name: '', path: '', color: '#7bcce0' });
 
 export default function ProjectsPage() {
+  const t = useT();
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ['projects'], queryFn: api.projects });
   const { data: agents } = useQuery({ queryKey: ['agents'], queryFn: api.agents });
@@ -129,19 +131,16 @@ export default function ProjectsPage() {
     const count = placedCountByProject(p.id);
     const msg =
       count > 0
-        ? `"${p.name}" 프로젝트를 삭제할까요?\n\n⚠️ 이 프로젝트에 ${count}개 에이전트가 배치돼 있어. 삭제하면 그 에이전트들은 자동으로 "미배치"로 돌아가. (파일 시스템 폴더는 건드리지 않아 — projects.json 항목만 제거됨)`
-        : `"${p.name}" 프로젝트를 삭제할까요?\n\n파일 시스템 폴더는 건드리지 않아 — projects.json 항목만 제거됨.`;
+        ? t('projects.confirmDeleteWithAgents', { name: p.name, count })
+        : t('projects.confirmDelete', { name: p.name });
     if (confirm(msg)) remove.mutate(p.id);
   };
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
-      <h2 className="text-2xl font-semibold">Projects</h2>
+      <h2 className="text-2xl font-semibold">{t('projects.title')}</h2>
       <p className="text-xs text-zinc-500 max-w-4xl leading-relaxed">
-        프로젝트는 대시보드 계층 트리에서 에이전트가 배치되는 버킷이야. 여기 등록된 path가 해당 프로젝트에 배치된
-        에이전트의 <code className="text-zinc-400">workingDir</code>로 자동 동기화됨. 📁{' '}
-        <strong>경로 수정해도 실제 폴더는 건드리지 않아</strong> — projects.json 참조값만 바뀌고, 배치된
-        에이전트 workingDir이 cascade 업데이트돼.
+        {t('projects.intro')}
       </p>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
@@ -149,11 +148,11 @@ export default function ProjectsPage() {
         <div className="space-y-5 min-w-0">
           {/* Create panel */}
           <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-4">
-            <div className="text-base font-semibold text-zinc-200">+ 프로젝트 추가</div>
+            <div className="text-base font-semibold text-zinc-200">{t('projects.add')}</div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <LabeledField
-                label="ID"
-                help="이후 변경 불가. 소문자/숫자/하이픈만."
+                label={t('projects.fieldId')}
+                help={t('projects.fieldIdHelp')}
               >
                 <input
                   className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
@@ -162,7 +161,7 @@ export default function ProjectsPage() {
                   onChange={(e) => setDraft({ ...draft, id: e.target.value })}
                 />
               </LabeledField>
-              <LabeledField label="이름" help="대시보드에 표시되는 이름.">
+              <LabeledField label={t('projects.fieldName')} help={t('projects.fieldNameHelp')}>
                 <input
                   className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
                   placeholder="Project Overmind"
@@ -172,8 +171,8 @@ export default function ProjectsPage() {
               </LabeledField>
             </div>
             <LabeledField
-              label="경로 (Path)"
-              help="절대 경로. Claude CLI의 cwd로 쓰이고 CLAUDE.md가 자동 로드됨."
+              label={t('projects.fieldPath')}
+              help={t('projects.fieldPathHelp')}
             >
               <div className="flex gap-1.5">
                 <input
@@ -186,14 +185,14 @@ export default function ProjectsPage() {
                   type="button"
                   onClick={() => setPickerOpen(true)}
                   className="rounded bg-zinc-800 hover:bg-zinc-700 px-3 text-sm text-zinc-300 flex items-center gap-1.5 shrink-0"
-                  title="폴더 선택"
+                  title={t('common.selectFolder')}
                 >
-                  <FolderOpen size={14} /> 찾기
+                  <FolderOpen size={14} /> {t('common.find')}
                 </button>
               </div>
             </LabeledField>
             <div className="flex items-center gap-4">
-              <LabeledField label="색상" help="카드 헤더 엑센트.">
+              <LabeledField label={t('projects.fieldColor')} help={t('projects.fieldColorHelp')}>
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
@@ -209,7 +208,7 @@ export default function ProjectsPage() {
                 onClick={() => create.mutate(draft)}
                 className="flex-1 self-end rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 text-sm flex items-center justify-center gap-2"
               >
-                <Plus size={14} /> 프로젝트 생성
+                <Plus size={14} /> {t('projects.create')}
               </button>
             </div>
           </div>
@@ -217,7 +216,7 @@ export default function ProjectsPage() {
           {/* Sortable list */}
           <div className="space-y-2 min-w-0">
             <div className="flex items-center gap-2 text-xs text-zinc-500">
-              <GripVertical size={12} /> 드래그로 순서 변경 · {(data ?? []).length}개
+              <GripVertical size={12} /> {t('projects.dragHint')} · {(data ?? []).length}
             </div>
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
               <SortableContext
@@ -245,24 +244,24 @@ export default function ProjectsPage() {
         {/* RIGHT column: project dashboard */}
         <div className="lg:sticky lg:top-0 lg:self-start min-w-0">
           {selectedProject ? (
-            <ProjectDashboard project={selectedProject} agents={agents ?? []} />
+            <ProjectDashboard project={selectedProject} agents={(agents ?? []).filter(a => a.projectId === selectedProject.id)} />
           ) : (
             <div className="space-y-4">
-              <div className="text-base font-semibold text-zinc-200">프로젝트 대시보드</div>
+              <div className="text-base font-semibold text-zinc-200">{t('projects.dashboard')}</div>
               <div className="grid grid-cols-3 gap-3">
-                <StatMini label="프로젝트" value={(data ?? []).length} />
+                <StatMini label={t('projects.statProjects')} value={(data ?? []).length} />
                 <StatMini
-                  label="배치된 에이전트"
+                  label={t('projects.statPlaced')}
                   value={(agents ?? []).filter((a: Agent) => a.projectId).length}
                 />
                 <StatMini
-                  label="미배치"
+                  label={t('projects.statUnassigned')}
                   value={(agents ?? []).filter((a: Agent) => !a.projectId).length}
                 />
               </div>
               <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 text-center">
                 <FolderOpen size={24} className="mx-auto text-zinc-600 mb-2" />
-                <div className="text-sm text-zinc-500">프로젝트를 클릭하면 대시보드가 열립니다</div>
+                <div className="text-sm text-zinc-500">{t('projects.dashboardHint')}</div>
               </div>
             </div>
           )}

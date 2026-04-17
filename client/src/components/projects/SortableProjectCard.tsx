@@ -2,6 +2,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Pencil, Trash2, GripVertical } from 'lucide-react';
 import type { Project, Agent } from '../../lib/types';
+import { useT } from '../../lib/i18n';
 
 export function SortableProjectCard({
   project,
@@ -18,6 +19,7 @@ export function SortableProjectCard({
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const t = useT();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: project.id
   });
@@ -42,7 +44,7 @@ export function SortableProjectCard({
           {...listeners}
           {...attributes}
           className="cursor-grab text-zinc-600 hover:text-zinc-300 p-0.5 -ml-1"
-          title="드래그로 순서 변경"
+          title={t('projects.cardDragReorder')}
         >
           <GripVertical size={14} />
         </button>
@@ -55,14 +57,14 @@ export function SortableProjectCard({
         <button
           onClick={onEdit}
           className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-zinc-700 text-zinc-400 hover:text-white transition-opacity"
-          title="편집"
+          title={t('common.edit')}
         >
           <Pencil size={13} />
         </button>
         <button
           onClick={onDelete}
           className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-900/50 text-zinc-500 hover:text-red-300 transition-opacity"
-          title="삭제"
+          title={t('common.delete')}
         >
           <Trash2 size={13} />
         </button>

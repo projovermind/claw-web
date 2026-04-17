@@ -4,6 +4,7 @@ import type { Project, Agent, GoalCard, CustomWidget, ProjectDashboard as Dashbo
 import { NotesEditor } from './NotesEditor';
 import { GoalBoard } from './GoalBoard';
 import { AgentTimeline } from './AgentTimeline';
+import { AgentTokenStats } from './AgentTokenStats';
 import { CustomWidgets } from './CustomWidgets';
 
 const EMPTY_DASHBOARD: DashboardData = { notes: '', goals: [], widgets: [] };
@@ -48,6 +49,9 @@ export function ProjectDashboard({
         goals={dashboard.goals}
         onUpdate={(goals: GoalCard[]) => save.mutate({ goals })}
       />
+
+      {/* 에이전트 토큰 사용량 */}
+      <AgentTokenStats agents={agents} />
 
       {/* 에이전트 타임라인 */}
       <AgentTimeline agents={agents} projectId={project.id} />

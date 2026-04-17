@@ -8,7 +8,7 @@
 
 set -e
 
-VERSION="1.0.2"
+VERSION="1.0.3"
 PKG_ID="com.claw-web"
 INSTALL_LOCATION="/usr/local/lib/claw-web"
 

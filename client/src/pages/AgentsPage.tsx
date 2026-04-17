@@ -70,9 +70,7 @@ export default function AgentsPage() {
     onError: (err: Error, vars) => {
       if (/UPDATEDAT_CONFLICT|modified by another session|409/.test(err.message)) {
         if (
-          confirm(
-            '이 에이전트가 다른 창/탭에서 수정됐어.\n\n확인: 내 수정으로 덮어쓰기\n취소: 취소하고 최신 상태 불러오기'
-          )
+          confirm(t('agents.conflictConfirm'))
         ) {
           updateAgent.mutate({ id: vars.id, form: vars.form });
         } else {
@@ -80,7 +78,7 @@ export default function AgentsPage() {
           setModal(null);
         }
       } else {
-        alert(`저장 실패: ${err.message}`);
+        alert(`${t('agents.saveFailed')}: ${err.message}`);
       }
     }
   });
@@ -98,7 +96,7 @@ export default function AgentsPage() {
 
   const handleClone = (agent: Agent) => {
     const defaultId = `${agent.id}_copy`;
-    const newId = prompt(`복제할 에이전트의 새 ID를 입력하세요 (소문자/숫자/하이픈/언더스코어만):`, defaultId);
+    const newId = prompt(t('agents.clonePrompt'), defaultId);
     if (!newId) return;
     cloneAgent.mutate({ id: agent.id, newId: newId.trim() });
   };
@@ -115,7 +113,7 @@ export default function AgentsPage() {
         <div>
           <h2 className="text-2xl font-semibold">{t('agents.title')}</h2>
           <p className="text-[11px] text-zinc-500 mt-1">
-            총 {data?.length ?? 0} · {t('agents.help')}
+            {t('agents.totalLabel')} {data?.length ?? 0} · {t('agents.help')}
           </p>
         </div>
       </div>

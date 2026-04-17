@@ -3,6 +3,7 @@ import { Send, Square, X, Paperclip, Loader2, AlertTriangle, FileText } from 'lu
 import { useUploadsStore } from '../../store/uploads-store';
 import { getAuthToken, api } from '../../lib/api';
 import { COMMANDS, expandCommand, type SlashCommand } from '../../lib/commands';
+import { useT } from '../../lib/i18n';
 import SlashPopover from './SlashPopover';
 import AtFilePopover from './AtFilePopover';
 
@@ -30,6 +31,7 @@ function isImage(contentType: string): boolean {
 type PopoverMode = 'none' | 'slash' | 'atfile';
 
 export default function ChatInput({ disabled, running, workingDir, sessionId, onSend, onAbort, onSystemCommand }: Props) {
+  const t = useT();
   const [value, setValue] = useState('');
   const staged = useUploadsStore((s) => s.staged);
   const removeStaged = useUploadsStore((s) => s.remove);
@@ -106,7 +108,7 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
           setValue('');
           closePopover();
         } catch (err) {
-          alert(`태스크 시작 실패: ${(err as Error).message}`);
+          alert(`${t('chat.input.taskFailed')}: ${(err as Error).message}`);
         }
       })();
       return;
@@ -122,7 +124,7 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
           setValue('');
           closePopover();
         } catch (err) {
-          alert(`루프 시작 실패: ${(err as Error).message}`);
+          alert(`${t('chat.input.loopFailed')}: ${(err as Error).message}`);
         }
       })();
       return;
@@ -164,7 +166,7 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
     if (!trimmed && staged.length === 0) return;
     closePopover();
     const paths = staged.map((u) => u.path);
-    onSend(trimmed || '(파일만 첨부)', paths);
+    onSend(trimmed || t('chat.input.attachOnly'), paths);
     setValue('');
     clearStaged();
     // Reset textarea height after send
@@ -247,7 +249,7 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
         <div className="mx-3 mt-2 flex items-start gap-2 rounded border border-red-900/60 bg-red-900/20 p-2 text-[11px] text-red-200">
           <AlertTriangle size={12} className="shrink-0 mt-0.5" />
           <span className="flex-1 break-all">{lastError}</span>
-          <button onClick={() => clearError(null)} className="shrink-0 text-red-300 hover:text-red-100" title="닫기">
+          <button onClick={() => clearError(null)} className="shrink-0 text-red-300 hover:text-red-100" title={t('common.close')}>
             <X size={11} />
           </button>
         </div>
@@ -257,7 +259,7 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
       {uploading > 0 && (
         <div className="px-3 pt-2 flex items-center gap-1.5 text-[11px] text-sky-300">
           <Loader2 size={12} className="animate-spin" />
-          <span>업로드 중… ({uploading})</span>
+          <span>{t('chat.input.uploading')} ({uploading})</span>
         </div>
       )}
 
@@ -267,10 +269,10 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
           <div className="flex items-center gap-1.5 mb-1.5">
             <Paperclip size={12} className="text-emerald-400" />
             <span className="text-[11px] uppercase tracking-wider text-emerald-300 font-semibold">
-              첨부됨 · {staged.length}개
+              {t('chat.input.attached', { count: staged.length })}
             </span>
             <button onClick={clearStaged} className="ml-auto text-[11px] text-zinc-500 hover:text-zinc-300">
-              전체 제거
+              {t('common.removeAll')}
             </button>
           </div>
           <div className="flex items-start gap-2 flex-wrap">
@@ -300,14 +302,14 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
             onChange={(e) => { handleInput(e.target.value); autoResize(); }}
             onKeyDown={onKeyDown}
             disabled={disabled}
-            placeholder={disabled ? '세션을 선택하세요' : '메시지 입력 · / 커맨드 · @파일'}
+            placeholder={disabled ? t('chat.input.disabledPlaceholder') : t('chat.input.placeholder')}
             rows={1}
             className="w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-sm focus:outline-none disabled:opacity-50 overflow-hidden"
             style={{ fontSize: '16px', minHeight: '44px', maxHeight: '160px' }}
           />
           {/* Bottom bar inside the input box: attach left, send right */}
           <div className="flex items-center justify-between px-2 pb-2">
-            <label className="p-1.5 rounded hover:bg-zinc-800 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors" title="파일 첨부">
+            <label className="p-1.5 rounded hover:bg-zinc-800 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors" title={t('chat.input.attachBtn')}>
               <Paperclip size={18} />
               <input type="file" multiple className="hidden" onChange={async (e) => {
                 const files = Array.from(e.target.files ?? []);
@@ -323,14 +325,23 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
               }} />
             </label>
             {running ? (
-              <button onClick={onAbort}
-                className="p-1.5 rounded bg-red-900/60 hover:bg-red-900 text-red-200 transition-colors" title="중단">
-                <Square size={18} />
-              </button>
+              <div className="flex gap-1">
+                {/* 응답 중 메시지 → 현재 응답 중단하고 참고해서 이어서 답변 */}
+                <button onClick={submit}
+                  disabled={disabled || (!value.trim() && staged.length === 0)}
+                  className="p-1.5 rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-30 text-white transition-colors"
+                  title="응답 중 참고 — 현재 응답 중단 후 이전 진행사항 + 새 메시지로 이어서 답변">
+                  <Send size={18} />
+                </button>
+                <button onClick={onAbort}
+                  className="p-1.5 rounded bg-red-900/60 hover:bg-red-900 text-red-200 transition-colors" title={t('chat.input.abortBtn')}>
+                  <Square size={18} />
+                </button>
+              </div>
             ) : (
               <button onClick={submit}
                 disabled={disabled || (!value.trim() && staged.length === 0)}
-                className="p-1.5 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-30 text-white transition-colors" title="전송">
+                className="p-1.5 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-30 text-white transition-colors" title={t('chat.input.sendBtn')}>
                 <Send size={18} />
               </button>
             )}
@@ -348,6 +359,7 @@ function StagedChip({
   u: import('../../store/uploads-store').StagedUpload;
   onRemove: () => void;
 }) {
+  const t = useT();
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const isImg = isImage(u.contentType);
 
@@ -387,7 +399,7 @@ function StagedChip({
         <span className="text-[11px] text-zinc-200 truncate max-w-[180px]">{u.filename}</span>
         <span className="text-[11px] text-zinc-500">{formatSize(u.size)}</span>
       </div>
-      <button onClick={onRemove} className="ml-1 text-zinc-500 hover:text-red-400" title="제거">
+      <button onClick={onRemove} className="ml-1 text-zinc-500 hover:text-red-400" title={t('common.remove')}>
         <X size={12} />
       </button>
     </div>
