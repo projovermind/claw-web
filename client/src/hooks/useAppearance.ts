@@ -7,13 +7,22 @@ export interface Appearance {
   theme: 'dark' | 'light' | 'system';
   userBubbleColor: string;
   assistantBubbleColor: string;
+  /** 라이트 모드에서 사용하는 4개 기본 색. CSS 변수(--app-*) 로 주입됨 */
+  lightBg: string;       // 메인 배경
+  lightSurface: string;  // 카드/사이드바 서피스
+  lightText: string;     // 기본 본문 텍스트
+  lightMuted: string;    // 메타/보조 텍스트
 }
 
 export const DEFAULT_APPEARANCE: Appearance = {
   appName: 'Claw Web',
   theme: 'dark',
   userBubbleColor: '#3f3f46',
-  assistantBubbleColor: '#18181b'
+  assistantBubbleColor: '#18181b',
+  lightBg: '#fafafa',
+  lightSurface: '#f4f4f5',
+  lightText: '#18181b',
+  lightMuted: '#52525b'
 };
 
 /**
@@ -59,7 +68,19 @@ export function useAppearance(): Appearance {
     const root = document.documentElement;
     root.style.setProperty('--user-bubble', appearance.userBubbleColor);
     root.style.setProperty('--assistant-bubble', appearance.assistantBubbleColor);
-  }, [appearance.userBubbleColor, appearance.assistantBubbleColor]);
+    // 라이트 모드 4대 색상 (index.css 의 html.light 선택자가 이 변수를 사용)
+    root.style.setProperty('--app-bg',      appearance.lightBg);
+    root.style.setProperty('--app-surface', appearance.lightSurface);
+    root.style.setProperty('--app-text',    appearance.lightText);
+    root.style.setProperty('--app-muted',   appearance.lightMuted);
+  }, [
+    appearance.userBubbleColor,
+    appearance.assistantBubbleColor,
+    appearance.lightBg,
+    appearance.lightSurface,
+    appearance.lightText,
+    appearance.lightMuted
+  ]);
 
   useEffect(() => {
     document.title = appearance.appName;

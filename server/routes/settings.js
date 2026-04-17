@@ -16,7 +16,11 @@ const featurePatchSchema = z.object({
       appName: z.string().min(1).max(40).optional(),
       theme: z.enum(['dark', 'light', 'system']).optional(),
       userBubbleColor: z.string().max(40).optional(),
-      assistantBubbleColor: z.string().max(40).optional()
+      assistantBubbleColor: z.string().max(40).optional(),
+      lightBg: z.string().max(40).optional(),
+      lightSurface: z.string().max(40).optional(),
+      lightText: z.string().max(40).optional(),
+      lightMuted: z.string().max(40).optional()
     })
     .optional()
 }).strict();

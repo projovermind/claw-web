@@ -62,51 +62,74 @@ export function AppearanceTab() {
             </button>
           ))}
         </div>
-        {draft.theme === 'light' && (
-          <p className="text-[11px] text-amber-400 mt-2">
-            ⚠️ 라이트 모드는 초기 단계 — 일부 컴포넌트는 다크 톤 유지됨.
-          </p>
-        )}
       </section>
+
+      {/* 라이트 모드 미세 조정 — theme=light 또는 system 일 때만 노출 */}
+      {(draft.theme === 'light' || draft.theme === 'system') && (
+        <section className="bg-zinc-900/40 border border-zinc-800 rounded-lg p-4">
+          <h3 className="text-sm font-semibold mb-1">라이트 모드 색상</h3>
+          <p className="text-xs text-zinc-500 mb-3">
+            라이트 모드에서 적용되는 기본 배경 / 텍스트 색. CSS 변수로 실시간 반영됩니다.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <ColorField label="메인 배경" value={draft.lightBg}
+              onChange={(v) => setDraft({ ...draft, lightBg: v })} />
+            <ColorField label="카드/사이드바 배경" value={draft.lightSurface}
+              onChange={(v) => setDraft({ ...draft, lightSurface: v })} />
+            <ColorField label="본문 텍스트" value={draft.lightText}
+              onChange={(v) => setDraft({ ...draft, lightText: v })} />
+            <ColorField label="보조 텍스트 (메타)" value={draft.lightMuted}
+              onChange={(v) => setDraft({ ...draft, lightMuted: v })} />
+          </div>
+
+          {/* 라이트 미리보기 */}
+          <div className="mt-4 p-4 rounded border" style={{
+            background: draft.lightBg, borderColor: '#e4e4e7'
+          }}>
+            <div className="text-sm mb-2" style={{ color: draft.lightText }}>
+              본문 텍스트 — <strong>강조</strong> 는 여기서 더 진하게.
+            </div>
+            <div className="text-xs" style={{ color: draft.lightMuted }}>
+              메타 정보 — 날짜, 카운트 등
+            </div>
+            <div className="mt-3 rounded px-3 py-2 text-sm" style={{
+              background: draft.lightSurface, color: draft.lightText
+            }}>
+              카드 / 사이드바 영역 미리보기
+            </div>
+          </div>
+
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={() => setDraft({ ...draft,
+                lightBg: '#fafafa', lightSurface: '#f4f4f5',
+                lightText: '#18181b', lightMuted: '#52525b' })}
+              className="text-xs px-2 py-1 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200"
+            >기본 (Zinc)</button>
+            <button
+              onClick={() => setDraft({ ...draft,
+                lightBg: '#ffffff', lightSurface: '#f8fafc',
+                lightText: '#0f172a', lightMuted: '#475569' })}
+              className="text-xs px-2 py-1 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200"
+            >차분 (Slate)</button>
+            <button
+              onClick={() => setDraft({ ...draft,
+                lightBg: '#fffbeb', lightSurface: '#fef3c7',
+                lightText: '#451a03', lightMuted: '#78350f' })}
+              className="text-xs px-2 py-1 rounded border border-zinc-700 text-zinc-400 hover:text-zinc-200"
+            >따뜻 (Amber)</button>
+          </div>
+        </section>
+      )}
 
       {/* 버블 색상 */}
       <section>
         <h3 className="text-sm font-semibold mb-2">채팅 버블 색상</h3>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="text-xs text-zinc-400 block mb-1">사용자 (내 메시지)</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={draft.userBubbleColor}
-                onChange={(e) => setDraft({ ...draft, userBubbleColor: e.target.value })}
-                className="w-12 h-9 rounded border border-zinc-700 bg-transparent cursor-pointer"
-              />
-              <input
-                type="text"
-                value={draft.userBubbleColor}
-                onChange={(e) => setDraft({ ...draft, userBubbleColor: e.target.value })}
-                className="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-xs font-mono outline-none focus:border-sky-500"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-zinc-400 block mb-1">에이전트 응답</label>
-            <div className="flex items-center gap-2">
-              <input
-                type="color"
-                value={draft.assistantBubbleColor}
-                onChange={(e) => setDraft({ ...draft, assistantBubbleColor: e.target.value })}
-                className="w-12 h-9 rounded border border-zinc-700 bg-transparent cursor-pointer"
-              />
-              <input
-                type="text"
-                value={draft.assistantBubbleColor}
-                onChange={(e) => setDraft({ ...draft, assistantBubbleColor: e.target.value })}
-                className="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-xs font-mono outline-none focus:border-sky-500"
-              />
-            </div>
-          </div>
+        <div className="grid grid-cols-2 gap-3">
+          <ColorField label="사용자 (내 메시지)" value={draft.userBubbleColor}
+            onChange={(v) => setDraft({ ...draft, userBubbleColor: v })} />
+          <ColorField label="에이전트 응답" value={draft.assistantBubbleColor}
+            onChange={(v) => setDraft({ ...draft, assistantBubbleColor: v })} />
         </div>
 
         {/* 미리보기 */}
@@ -146,6 +169,29 @@ export function AppearanceTab() {
         >
           기본값
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** 컬러 피커 + hex 입력 필드 */
+function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <label className="text-xs text-zinc-400 block mb-1">{label}</label>
+      <div className="flex items-center gap-2">
+        <input
+          type="color"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-12 h-9 rounded border border-zinc-700 bg-transparent cursor-pointer shrink-0"
+        />
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-xs font-mono outline-none focus:border-sky-500"
+        />
       </div>
     </div>
   );
