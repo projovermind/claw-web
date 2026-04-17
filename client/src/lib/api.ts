@@ -156,13 +156,8 @@ export const api = {
     auth?: { enabled?: boolean; token?: string | null };
     appearance?: {
       appName?: string;
-      theme?: 'dark' | 'light' | 'system';
       userBubbleColor?: string;
       assistantBubbleColor?: string;
-      lightBg?: string;
-      lightSurface?: string;
-      lightText?: string;
-      lightMuted?: string;
     };
   }) =>
     patch === undefined ? Promise.reject(new Error('patch is required')) : req<WebSettings>('/settings', { method: 'PATCH', body: JSON.stringify(patch) }),

@@ -176,8 +176,30 @@ export default function ChatPage() {
     });
   }, [sessionsQ.data]);
 
-  // Project selection → auto-connect to lead
+  // 전체 세션 — 프로젝트 선택 시 마지막 세션 찾기용 (같은 key 쿼리는 캐시 공유)
+  const projectSelectAllSessionsQ = useQuery<{ sessions: Session[] }>({
+    queryKey: ['sessions-all'],
+    queryFn: api.allSessions,
+    staleTime: 5_000
+  });
+
+  // Project selection — 해당 프로젝트 에이전트 중 가장 최근 업데이트된 세션 자동 선택
   const selectProject = (project: Project) => {
+    const projectAgentIds = new Set(
+      (agentsQ.data ?? []).filter((a) => a.projectId === project.id).map((a) => a.id)
+    );
+    const projectSessions = (projectSelectAllSessionsQ.data?.sessions ?? [])
+      .filter((s) => projectAgentIds.has(s.agentId))
+      .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+
+    const lastSession = projectSessions[0];
+    if (lastSession) {
+      // 마지막 세션이 있으면 그 세션의 agent + session 모두 설정
+      setCurrentAgent(lastSession.agentId);
+      setCurrentSession(lastSession.id);
+      return;
+    }
+    // 세션이 없으면 lead(project tier) → addon 순으로 에이전트만 선택
     const lead = (agentsQ.data ?? []).find(
       (a) => a.projectId === project.id && a.tier === 'project'
     );

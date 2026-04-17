@@ -140,19 +140,31 @@ export function ChatSidebar({
     [agents]
   );
 
-  // Select a project → auto-connect to its lead
+  // Select a project → 가장 최근 세션 자동 선택 (없으면 lead agent 만)
   const selectProject = (project: Project) => {
-    const lead = agents.find(
-      (a) => a.projectId === project.id && a.tier === 'project'
+    const projectAgentIds = new Set(
+      agents.filter((a) => a.projectId === project.id).map((a) => a.id)
     );
-    if (lead) {
-      setCurrentAgent(lead.id);
+    const projectSessions = (allSessionsData?.sessions ?? [])
+      .filter((s: Session) => projectAgentIds.has(s.agentId))
+      .sort((a: Session, b: Session) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+
+    const lastSession = projectSessions[0];
+    if (lastSession) {
+      setCurrentAgent(lastSession.agentId);
+      setCurrentSession(lastSession.id);
     } else {
-      // No lead — pick first agent in project
-      const first = agents.find((a) => a.projectId === project.id);
-      if (first) setCurrentAgent(first.id);
+      const lead = agents.find(
+        (a) => a.projectId === project.id && a.tier === 'project'
+      );
+      if (lead) {
+        setCurrentAgent(lead.id);
+      } else {
+        const first = agents.find((a) => a.projectId === project.id);
+        if (first) setCurrentAgent(first.id);
+      }
+      setCurrentSession(null);
     }
-    setCurrentSession(null);
     setProjectPickerOpen(false);
   };
 
