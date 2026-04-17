@@ -91,6 +91,7 @@ export function createRunner({ processTracker } = {}) {
       if (agent.paulContext) parts.push(agent.paulContext);
       if (agent.dashboardHint) parts.push(agent.dashboardHint);
       if (agent.choicesHint) parts.push(agent.choicesHint);
+      if (agent.delegateHint) parts.push(agent.delegateHint);
       if (agent.systemPrompt) parts.push(agent.systemPrompt);
       const systemPrompt = parts.join('\n').trim() || 'You are a helpful assistant.';
 

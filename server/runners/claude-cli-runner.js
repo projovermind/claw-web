@@ -92,6 +92,7 @@ export function startClaudeRun({
   if (agent.paulContext) parts.push(agent.paulContext);
   if (agent.dashboardHint) parts.push(agent.dashboardHint);
   if (agent.choicesHint) parts.push(agent.choicesHint);
+  if (agent.delegateHint) parts.push(agent.delegateHint);
   if (!agent.lightweightMode && agent.systemPrompt) {
     parts.push(agent.systemPrompt);
   }

@@ -164,6 +164,27 @@ export function createChatRouter({
     // 선택지 버튼 UI 힌트: 여러 옵션 중 하나 고르게 할 때 <choices> 태그 사용
     agent.choicesHint = `\n<ui-hints>\n사용자가 여러 옵션 중 하나를 선택해야 할 때 응답 끝에 <choices> 태그로 감싸서 제공하세요. UI에서 버튼으로 렌더링됩니다.\n가장 추천하는 옵션 하나에 ⭐ 마커를 앞에 붙이면 추천 배지로 강조됩니다. (또는 [추천] / (추천) 태그도 가능)\n예시:\n<choices>\n- ⭐ 옵션 A (가장 추천)\n- 옵션 B\n- 옵션 C\n</choices>\n</ui-hints>`;
 
+    // 위임 포맷 안내: 같은 프로젝트 내 다른 에이전트 ID + JSON 포맷 자동 주입
+    {
+      const allAgents = configStore.getAgents?.() || {};
+      const sameProject = [];
+      const selfMeta = metadataStore?.getAgent(session.agentId);
+      const myProj = selfMeta?.projectId;
+      if (myProj) {
+        for (const [id, cfg] of Object.entries(allAgents)) {
+          if (id === session.agentId) continue;
+          const m = metadataStore?.getAgent(id);
+          if (m?.projectId === myProj) {
+            sameProject.push({ id, name: cfg?.name || id });
+          }
+        }
+      }
+      const delegateTargets = sameProject.length > 0
+        ? sameProject.map(a => `- ${a.id}${a.name && a.name !== a.id ? ` (${a.name})` : ''}`).join('\n')
+        : '- (동일 프로젝트 내 다른 에이전트 없음 — 필요 시 범용 planner_office 또는 다른 프로젝트 에이전트 ID 사용)';
+      agent.delegateHint = `\n<delegation>\n다른 에이전트에게 작업을 맡기려면 응답에 아래 JSON을 포함하세요 (코드블록 안이어도 됨):\n\n\`\`\`json\n{"message": "짧은 안내", "delegate": {"agent": "실제_에이전트_ID", "task": "작업 설명(200자 이내)", "model": "glm-5.1 또는 sonnet/opus", "loop": false}}\n\`\`\`\n\n중요:\n- agent ID는 반드시 실제 등록된 ID(언더스코어 표기). 점(.)/대시(-) 표기는 자동 정규화되지만 혼동 방지를 위해 언더스코어 권장.\n- task 는 한국어 200자 이내 요약. 파일 전체 본문을 붙여넣지 마세요.\n- loop:true 면 Ralph Loop 모드 (DONE 출력까지 반복).\n- "새 세션을 열어 붙여넣으세요" 같은 우회 응답 금지 — 직접 이 JSON 을 출력하세요.\n\n같은 프로젝트 내 위임 가능 에이전트:\n${delegateTargets}\n</delegation>`;
+    }
+
     let accumText = '';
     const toolCalls = [];
 
@@ -347,14 +368,40 @@ export function createChatRouter({
     );
   }
 
-  async function executeDelegation(originSessionId, targetAgentId, task, rawText) {
+  /**
+   * agent ID 정규화: 플래너 systemPrompt가 "cf.router"로 적어도 실제 ID "cf_router"로 매칭.
+   * 또 "cf/router", "cf-router", 대소문자 차이, 뒤쪽 점표기(.planner → _planner)도 허용.
+   */
+  function resolveAgentId(raw) {
+    if (!raw || typeof raw !== 'string') return null;
+    const trimmed = raw.trim();
+    // 1) 정확 일치
+    if (configStore.getAgent(trimmed)) return trimmed;
+    // 2) 구분자 바꿔 시도 (., -, /, 공백 → _)
+    const normalized = trimmed.replace(/[.\-/\s]+/g, '_');
+    if (configStore.getAgent(normalized)) return normalized;
+    // 3) _ → . 반대 방향
+    const dotted = trimmed.replace(/_/g, '.');
+    if (configStore.getAgent(dotted)) return dotted;
+    // 4) 대소문자 무시로 전체 탐색
+    const all = configStore.getAgents() || {};
+    const lowerNorm = normalized.toLowerCase();
+    for (const id of Object.keys(all)) {
+      const idNorm = id.replace(/[.\-/\s]+/g, '_').toLowerCase();
+      if (idNorm === lowerNorm) return id;
+    }
+    return null;
+  }
+
+  async function executeDelegation(originSessionId, targetAgentIdRaw, task, rawText) {
     try {
-      // Verify target agent exists
-      if (!configStore.getAgent(targetAgentId)) {
-        logger.warn({ targetAgentId }, 'delegation: target agent not found');
+      // Verify target agent exists (with ID normalization)
+      const targetAgentId = resolveAgentId(targetAgentIdRaw);
+      if (!targetAgentId) {
+        logger.warn({ targetAgentIdRaw }, 'delegation: target agent not found');
         await sessionsStore.appendMessage(originSessionId, {
           role: 'assistant',
-          content: `⚠️ 위임 실패 — 에이전트 "${targetAgentId}"를 찾을 수 없습니다.`
+          content: `⚠️ 위임 실패 — 에이전트 "${targetAgentIdRaw}"를 찾을 수 없습니다.`
         });
         return;
       }
