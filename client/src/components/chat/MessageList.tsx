@@ -216,6 +216,11 @@ function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessag
   // 위임 메시지는 특수 카드로 렌더 (사이드바에서는 위임 세션 숨김 → 여기서 인라인 표시)
   const delegationMatch = !isUser && parseDelegationMessage(message.content);
   if (delegationMatch) return <DelegationCard data={delegationMatch} />;
+  // 시스템 트리거 user 메시지 ([위임 결과 보고] / [위임 에스컬레이션])
+  // — 사용자가 쓴 게 아니라 서버가 planner 재진입시키려고 주입한 메시지
+  if (isUser && /^\[(?:위임 결과 보고|위임 에스컬레이션)\]/.test(message.content)) {
+    return <SystemTriggerCard content={message.content} />;
+  }
   const { body, choices } = useMemo(() => isUser ? { body: message.content, choices: [] } : extractChoices(message.content), [message.content, isUser]);
   // 버블 색상 — CSS 변수(useAppearance 훅이 주입) 기반
   const userBubbleStyle = isUser && !isQueued ? { background: 'var(--user-bubble, #3f3f46)' } : undefined;
@@ -275,14 +280,42 @@ function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessag
   );
 }
 
-/** 위임 메시지 파싱 — 4가지 패턴:
- *  - 'request': 에이전트가 내보낸 `{"delegate":{...}}` JSON (서버가 파싱하기 전 원본 응답)
- *  - 'start':   서버가 append 하는 "🔄 **위임 시작**"
- *  - 'done':    "✅ **위임 완료**"
- *  - 'fail':    "⚠️ 위임 실패"
+/** 서버가 planner 재진입을 트리거하려고 주입한 user 메시지 카드
+ *  ([위임 결과 보고] / [위임 에스컬레이션]) — 일반 user 버블로 렌더하면
+ *  마치 사용자가 직접 쓴 듯 보이므로 별도 스타일. */
+function SystemTriggerCard({ content }: { content: string }) {
+  const [open, setOpen] = useState(false);
+  const isEscalate = /^\[위임 에스컬레이션\]/.test(content);
+  const label = isEscalate ? '시스템: 위임 에스컬레이션 → 기획자 재진입' : '시스템: 위임 결과 보고 → 기획자 재진입';
+  const color = isEscalate
+    ? { border: 'border-amber-700/60', bg: 'bg-amber-950/20', text: 'text-amber-300' }
+    : { border: 'border-zinc-700', bg: 'bg-zinc-900/40', text: 'text-zinc-400' };
+  return (
+    <div className="flex justify-center">
+      <div className={`max-w-[85%] rounded-lg border border-dashed ${color.border} ${color.bg} px-3 py-2 text-[11px] ${color.text} w-full`}>
+        <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-2 text-left">
+          {open ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+          <span className="opacity-80">{label}</span>
+        </button>
+        {open && (
+          <pre className="mt-1.5 pt-1.5 border-t border-current/10 whitespace-pre-wrap break-words text-[10px] opacity-70 font-sans">
+            {content}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 위임 메시지 파싱 — 패턴:
+ *  - 'request':  에이전트가 내보낸 `{"delegate":{...}}` JSON (서버가 파싱하기 전 원본 응답)
+ *  - 'start':    서버가 append 하는 "🔄 **위임 시작**"
+ *  - 'done':     "✅ **위임 완료**"
+ *  - 'fail':     "⚠️ 위임 실패"
+ *  - 'escalate': "🚨 **Loop 에스컬레이션**" (Ralph Loop 중단 시)
  */
 interface DelegationData {
-  kind: 'request' | 'start' | 'done' | 'fail';
+  kind: 'request' | 'start' | 'done' | 'fail' | 'escalate';
   targetAgent: string;
   task?: string;
   session?: string;
@@ -290,6 +323,10 @@ interface DelegationData {
   loop?: boolean;
   /** request 케이스에서 JSON 의 message 필드 */
   note?: string;
+  /** escalate 케이스의 이유 */
+  reason?: string;
+  /** escalate 케이스의 iteration 표시 */
+  iteration?: string;
 }
 
 /** 에이전트 응답에서 delegate JSON 블록(코드블록 안 + 일반 텍스트) 을 추출 */
@@ -361,6 +398,17 @@ function parseDelegationMessage(content: string): DelegationData | null {
   if (failMatch) {
     return { kind: 'fail', targetAgent: failMatch[1] };
   }
+  // 에스컬레이션: "🚨 **Loop 에스컬레이션** ({iter}/{max})\n\n**이유**: {reason}\n\n후속 지시..."
+  const escalateMatch = content.match(/^🚨\s*\*\*Loop 에스컬레이션\*\*(?:\s*\(([^)]+)\))?/);
+  if (escalateMatch) {
+    const reasonMatch = content.match(/\*\*이유\*\*:\s*([\s\S]*?)(?:\n\n|$)/);
+    return {
+      kind: 'escalate',
+      targetAgent: '',
+      iteration: escalateMatch[1]?.trim(),
+      reason: reasonMatch?.[1]?.trim()
+    };
+  }
   // 요청: 에이전트가 내보낸 {"delegate":{...}} JSON 원본 응답
   // — 서버의 "🔄 위임 시작" 메시지와 중복되지만 먼저 찍히는 raw JSON 을 정리하기 위해 카드로 치환
   const obj = extractDelegateJsonFromText(content);
@@ -379,14 +427,16 @@ function parseDelegationMessage(content: string): DelegationData | null {
 
 /** 위임 카드 — MessageBubble 대체 렌더 */
 function DelegationCard({ data }: { data: DelegationData }) {
-  const [open, setOpen] = useState(data.kind === 'fail');
+  const [open, setOpen] = useState(data.kind === 'fail' || data.kind === 'escalate');
   const palette = data.kind === 'done'
     ? { border: 'border-emerald-800/60', bg: 'bg-emerald-950/30', text: 'text-emerald-200', icon: <CheckCircle2 size={14} className="text-emerald-400" />, label: '위임 완료' }
     : data.kind === 'fail'
       ? { border: 'border-red-800/60', bg: 'bg-red-950/30', text: 'text-red-200', icon: <XCircle size={14} className="text-red-400" />, label: '위임 실패' }
-      : data.kind === 'request'
-        ? { border: 'border-zinc-700', bg: 'bg-zinc-900/60', text: 'text-zinc-300', icon: <ArrowRight size={14} className="text-zinc-400" />, label: data.loop ? '위임 요청 (Loop)' : '위임 요청' }
-        : { border: 'border-sky-800/60', bg: 'bg-sky-950/30', text: 'text-sky-200', icon: <ArrowRight size={14} className="text-sky-400 animate-pulse" />, label: data.loop ? '위임 (Ralph Loop)' : '위임 중' };
+      : data.kind === 'escalate'
+        ? { border: 'border-amber-700/60', bg: 'bg-amber-950/30', text: 'text-amber-200', icon: <XCircle size={14} className="text-amber-400 animate-pulse" />, label: `Loop 에스컬레이션${data.iteration ? ` ${data.iteration}` : ''}` }
+        : data.kind === 'request'
+          ? { border: 'border-zinc-700', bg: 'bg-zinc-900/60', text: 'text-zinc-300', icon: <ArrowRight size={14} className="text-zinc-400" />, label: data.loop ? '위임 요청 (Loop)' : '위임 요청' }
+          : { border: 'border-sky-800/60', bg: 'bg-sky-950/30', text: 'text-sky-200', icon: <ArrowRight size={14} className="text-sky-400 animate-pulse" />, label: data.loop ? '위임 (Ralph Loop)' : '위임 중' };
   // 접힘 라벨: note 우선 → task
   const preview = data.note || data.task || '';
   return (
@@ -404,11 +454,17 @@ function DelegationCard({ data }: { data: DelegationData }) {
         {open && (
           <div className="pl-5 space-y-1 text-[11px]">
             {data.note && <div className="italic opacity-80">"{data.note}"</div>}
+            {data.reason && <div><span className="opacity-60">이유:</span> {data.reason}</div>}
             {data.task && <div><span className="opacity-60">작업:</span> {data.task}</div>}
             {data.session && <div><span className="opacity-60">세션:</span> <span className="font-mono opacity-80">{data.session}</span></div>}
             {data.summary && (
               <div className="mt-1 pt-1 border-t border-current/10 opacity-90 whitespace-pre-wrap break-words">
                 {data.summary}
+              </div>
+            )}
+            {data.kind === 'escalate' && (
+              <div className="mt-1 pt-1 border-t border-current/10 opacity-80 italic">
+                후속 지시를 보내면 Loop 가 재개됩니다.
               </div>
             )}
           </div>

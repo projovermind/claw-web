@@ -245,19 +245,17 @@ export function createChatRouter({
               }, 500);
             }
 
-            // Delegation report-back: if THIS session was a delegated task,
-            // report the result to the originating session.
+            // Delegation report-back: 위임 세션 완료 시 원본 기획자에게 보고 + 자동 재진입
             if (delegationTracker) {
               const del = delegationTracker.getByTarget(sessionId);
               if (del) {
-                const summary = (responseText ?? '').slice(0, 1000) || '(응답 없음)';
+                const summary = (responseText ?? '').slice(0, 2000) || '(응답 없음)';
                 const completed = delegationTracker.complete(sessionId, summary);
                 if (completed) {
-                  // Append result as a system message to the origin session
-                  const reportMsg = `✅ **위임 완료** — ${completed.targetAgentId}\n\n**작업**: ${completed.task}\n\n**결과 요약**:\n${summary}`;
-                  sessionsStore.appendMessage(completed.originSessionId, {
+                  // 1. 인라인 카드 (사용자 시각 기록용)
+                  await sessionsStore.appendMessage(completed.originSessionId, {
                     role: 'assistant',
-                    content: reportMsg
+                    content: `✅ **위임 완료** — ${completed.targetAgentId}\n\n**작업**: ${completed.task}\n\n**결과 요약**:\n${summary}`
                   });
                   eventBus.publish('delegation.completed', {
                     id: completed.id,
@@ -265,6 +263,35 @@ export function createChatRouter({
                     targetSessionId: completed.targetSessionId,
                     targetAgentId: completed.targetAgentId
                   });
+
+                  // 2. 기획자 자동 재진입 — 결과 검토 + 사용자 보고 + 다음 단계 제안
+                  //    (무한 루프 방지: 직전에 이미 트리거된 경우 스킵)
+                  try {
+                    const origin = sessionsStore.get(completed.originSessionId);
+                    const msgs = origin?.messages ?? [];
+                    const recentTrigger = msgs.slice(-4).some((m) =>
+                      m?.role === 'user' && (m.content || '').startsWith('[위임 결과 보고]')
+                    );
+                    if (!recentTrigger) {
+                      const trigger =
+                        `[위임 결과 보고]\n\n` +
+                        `**대상 에이전트**: ${completed.targetAgentId}\n` +
+                        `**작업**: ${completed.task}\n` +
+                        `**결과 요약**:\n${summary}\n\n` +
+                        `위 결과를 검토해서 사용자에게 핵심만 종합 보고해 주세요. ` +
+                        `그리고 남은 작업이 있다면 다음 단계를 제안하세요 ` +
+                        `(필요 시 추가 위임 JSON 을 포함해도 됩니다).`;
+                      await sessionsStore.appendMessage(completed.originSessionId, {
+                        role: 'user',
+                        content: trigger
+                      });
+                      sendRunnerMessage(completed.originSessionId, trigger);
+                    } else {
+                      logger.info({ originSessionId: completed.originSessionId }, 'delegation re-entry skipped (recent trigger)');
+                    }
+                  } catch (err) {
+                    logger.warn({ err: err.message }, 'delegation re-entry failed');
+                  }
                 }
               }
             }
@@ -531,6 +558,37 @@ export function createChatRouter({
       await sessionsStore.update(sessionId, {
         loop: { ...loop, currentIteration: nextIter, paused: true, escalateReason }
       });
+      // 세션에 인라인 에스컬레이션 카드 (토스트 외에 영구 기록)
+      await sessionsStore.appendMessage(sessionId, {
+        role: 'assistant',
+        content: `🚨 **Loop 에스컬레이션** (${nextIter}/${loop.maxIterations})\n\n**이유**: ${escalateReason}\n\n후속 지시를 보내주시면 Loop 가 재개됩니다.`
+      }).catch(() => {});
+      // 위임 세션에서 escalate 한 경우 원본 기획자에게도 알림 + 자동 재진입
+      if (delegationTracker) {
+        const del = delegationTracker.getByTarget(sessionId);
+        if (del) {
+          try {
+            const originId = del.originSessionId;
+            const origin = sessionsStore.get(originId);
+            const msgs = origin?.messages ?? [];
+            const recentTrigger = msgs.slice(-4).some((m) =>
+              m?.role === 'user' && (m.content || '').startsWith('[위임 에스컬레이션]')
+            );
+            if (!recentTrigger) {
+              const trigger =
+                `[위임 에스컬레이션]\n\n` +
+                `**대상**: ${del.targetAgentId}\n` +
+                `**작업**: ${del.task}\n` +
+                `**문제**: ${escalateReason}\n\n` +
+                `위임한 작업이 Ralph Loop 중 막혔습니다. 문제를 검토하고 사용자에게 상황을 설명한 뒤, 해결 방안 / 수정 지시 / 중단 중 선택지를 <choices> 로 제시해 주세요.`;
+              await sessionsStore.appendMessage(originId, { role: 'user', content: trigger });
+              sendRunnerMessage(originId, trigger);
+            }
+          } catch (err) {
+            logger.warn({ err: err.message }, 'escalation → origin planner trigger failed');
+          }
+        }
+      }
       eventBus.publish('session.loop.escalated', {
         sessionId,
         iteration: nextIter,
