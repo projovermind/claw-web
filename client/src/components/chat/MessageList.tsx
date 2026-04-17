@@ -2,8 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle } from 'lucide-react';
-import type { ChatMessage } from '../../lib/types';
+import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../lib/api';
+import type { ChatMessage, Session } from '../../lib/types';
 import ToolCallCard from './ToolCallCard';
 import { useT } from '../../lib/i18n';
 
@@ -155,6 +157,17 @@ export function extractChoices(text: string): { body: string; choices: ChoiceIte
 export default function MessageList({ messages, searchQuery, onChoice }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // 위임 카드에 대상 세션의 라이브 running 상태 반영용
+  const { data: allSessionsData } = useQuery<{ sessions: Session[] }>({
+    queryKey: ['sessions-all'],
+    queryFn: api.allSessions,
+    refetchInterval: 5000
+  });
+  const runningSessionIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of allSessionsData?.sessions ?? []) if (s.isRunning) set.add(s.id);
+    return set;
+  }, [allSessionsData]);
   // 첫 렌더(세션 진입) 시 instant 스크롤 → 위에서 아래로 훑는 애니메이션 방지.
   // 이후 메시지 추가는 smooth. parent 의 key={sessionId} 로 세션 전환 시 remount 가정.
   const isFirstRender = useRef(true);
@@ -199,11 +212,11 @@ export default function MessageList({ messages, searchQuery, onChoice }: Message
         // 이전 메시지가 [위임 결과 보고] / [위임 에스컬레이션] user 트리거면
         // 이 assistant 응답이 "위임 작업 완료" 또는 "에스컬레이션 대응" 단계
         const prev = i > 0 ? filtered[i - 1] : null;
-        const prevContent = prev?.content || '';
+        const prevContent = (prev?.content || '').trim();
         const isReportResponse = m.role === 'assistant' && prev?.role === 'user'
-          && prevContent.startsWith('[위임 결과 보고]');
+          && /^\[위임 결과 보고\]/.test(prevContent);
         const isEscalateResponse = m.role === 'assistant' && prev?.role === 'user'
-          && prevContent.startsWith('[위임 에스컬레이션]');
+          && /^\[위임 에스컬레이션\]/.test(prevContent);
         return (
         <MessageBubble
           key={i}
@@ -211,6 +224,7 @@ export default function MessageList({ messages, searchQuery, onChoice }: Message
           searchQuery={searchQuery}
           onChoice={i === lastAssistantIdx ? onChoice : undefined}
           delegationStage={isReportResponse ? 'final' : isEscalateResponse ? 'escalate-resolution' : undefined}
+          runningSessionIds={runningSessionIds}
         />
         );
       })}
@@ -246,19 +260,24 @@ function HighlightText({ text, query }: { text: string; query: string }) {
   );
 }
 
-function MessageBubble({ message, searchQuery, onChoice, delegationStage }: {
+function MessageBubble({ message, searchQuery, onChoice, delegationStage, runningSessionIds }: {
   message: ChatMessage;
   searchQuery?: string;
   onChoice?: (c: string) => void;
   /** 이전 메시지 컨텍스트 기반 위임 단계 배지 */
   delegationStage?: 'final' | 'escalate-resolution';
+  /** 현재 러닝 중인 세션 ID 집합 (위임 카드의 라이브 작업 중 표시) */
+  runningSessionIds?: Set<string>;
 }) {
   const t = useT();
   const isUser = message.role === 'user';
   const isQueued = isUser && (message as ChatMessage & { queued?: boolean }).queued;
   // 위임 메시지는 특수 카드로 렌더 (사이드바에서는 위임 세션 숨김 → 여기서 인라인 표시)
   const delegationMatch = !isUser && parseDelegationMessage(message.content);
-  if (delegationMatch) return <DelegationCard data={delegationMatch} />;
+  if (delegationMatch) {
+    const targetRunning = delegationMatch.session ? runningSessionIds?.has(delegationMatch.session) : false;
+    return <DelegationCard data={delegationMatch} targetRunning={!!targetRunning} />;
+  }
   // 시스템 트리거 user 메시지 ([위임 결과 보고] / [위임 에스컬레이션])
   // — 사용자가 쓴 게 아니라 서버가 planner 재진입시키려고 주입한 메시지
   if (isUser && /^\[(?:위임 결과 보고|위임 에스컬레이션)\]/.test(message.content)) {
@@ -479,7 +498,7 @@ function parseDelegationMessage(content: string): DelegationData | null {
 }
 
 /** 위임 카드 — MessageBubble 대체 렌더 */
-function DelegationCard({ data }: { data: DelegationData }) {
+function DelegationCard({ data, targetRunning = false }: { data: DelegationData; targetRunning?: boolean }) {
   const [open, setOpen] = useState(data.kind === 'fail' || data.kind === 'escalate');
   const palette = data.kind === 'done'
     ? { border: 'border-emerald-800/60', bg: 'bg-emerald-950/30', text: 'text-emerald-200', icon: <CheckCircle2 size={14} className="text-emerald-400" />, label: '위임 완료' }
@@ -489,7 +508,9 @@ function DelegationCard({ data }: { data: DelegationData }) {
         ? { border: 'border-amber-700/60', bg: 'bg-amber-950/30', text: 'text-amber-200', icon: <XCircle size={14} className="text-amber-400 animate-pulse" />, label: `Loop 에스컬레이션${data.iteration ? ` ${data.iteration}` : ''}` }
         : data.kind === 'request'
           ? { border: 'border-zinc-700', bg: 'bg-zinc-900/60', text: 'text-zinc-300', icon: <ArrowRight size={14} className="text-zinc-400" />, label: data.loop ? '위임 요청 (Loop)' : '위임 요청' }
-          : { border: 'border-sky-800/60', bg: 'bg-sky-950/30', text: 'text-sky-200', icon: <ArrowRight size={14} className="text-sky-400 animate-pulse" />, label: data.loop ? '위임 중 (Ralph Loop)' : '위임 중' };
+          : targetRunning
+            ? { border: 'border-amber-600/60', bg: 'bg-amber-950/20', text: 'text-amber-200', icon: <Loader2 size={14} className="text-amber-400 animate-spin" />, label: data.loop ? '작업 중 (Ralph Loop)' : '작업 중' }
+            : { border: 'border-sky-800/60', bg: 'bg-sky-950/30', text: 'text-sky-200', icon: <ArrowRight size={14} className="text-sky-400" />, label: data.loop ? '위임 중 (Ralph Loop)' : '위임 중' };
   // 접힘 라벨: note 우선 → task
   const preview = data.note || data.task || '';
   return (
