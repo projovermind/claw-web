@@ -10,7 +10,8 @@ import { executeTool, getToolsForAgent } from './tool-executor.js';
 // ─────────────────────────────────────────
 const BACKENDS = {
   zai: {
-    baseURL: 'https://api.z.ai/api/paas/v4/',
+    // discord bot v3.0.18 반영 — coding 전용 엔드포인트로 변경
+    baseURL: 'https://api.z.ai/api/coding/paas/v4/',
     envKey: 'ZAI_API_KEY',
     models: {
       default: 'glm-5.1',
