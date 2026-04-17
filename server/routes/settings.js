@@ -10,6 +10,14 @@ const featurePatchSchema = z.object({
       enabled: z.boolean().optional(),
       token: z.string().nullable().optional()
     })
+    .optional(),
+  appearance: z
+    .object({
+      appName: z.string().min(1).max(40).optional(),
+      theme: z.enum(['dark', 'light', 'system']).optional(),
+      userBubbleColor: z.string().max(40).optional(),
+      assistantBubbleColor: z.string().max(40).optional()
+    })
     .optional()
 }).strict();
 
@@ -33,6 +41,9 @@ export function createSettingsRouter({ webConfig, webConfigPath, eventBus }) {
       if (patch.auth) {
         if (typeof patch.auth.enabled === 'boolean') webConfig.auth.enabled = patch.auth.enabled;
         if (patch.auth.token !== undefined) webConfig.auth.token = patch.auth.token;
+      }
+      if (patch.appearance) {
+        webConfig.appearance = { ...(webConfig.appearance ?? {}), ...patch.appearance };
       }
       await fs.writeFile(webConfigPath, JSON.stringify(webConfig, null, 2));
       if (eventBus) eventBus.publish('settings.updated', {});

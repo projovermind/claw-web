@@ -69,7 +69,9 @@ export function startClaudeRun({
   if (agent.planMode) args.push('--permission-mode', 'plan');
   // Z.AI 등 외부 프록시는 effort/thinking 미지원 → ANTHROPIC_BASE_URL 있으면 스킵
   if (agent.thinkingEffort && agent.thinkingEffort !== 'auto' && !cleanEnv.ANTHROPIC_BASE_URL) {
-    args.push('--effort', agent.thinkingEffort);
+    // Claude.ai 구독자(Max 플랜)는 "max" 값을 거부. 'high' 로 자동 강등.
+    const effort = agent.thinkingEffort === 'max' ? 'high' : agent.thinkingEffort;
+    args.push('--effort', effort);
   }
   if (claudeSessionId) args.push('--resume', claudeSessionId);
   if (agent.allowedTools?.length) args.push('--allowedTools', ...agent.allowedTools);

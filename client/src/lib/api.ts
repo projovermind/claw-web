@@ -11,7 +11,7 @@ import type {
 } from './types';
 
 const BASE = '/api';
-const TOKEN_KEY = 'claw:auth-token';
+const TOKEN_KEY = 'hivemind:auth-token';
 
 export function getAuthToken(): string | null {
   try {
@@ -150,7 +150,12 @@ export const api = {
     }),
   stopLoop: (sessionId: string) => del<{ sessionId: string; loop: string }>(`/sessions/${sessionId}/loop`),
   settings: () => get<WebSettings>('/settings'),
-  patchSettings: (patch: { features?: Record<string, boolean>; auth?: { enabled?: boolean; token?: string | null } }) =>
+  getSettings: () => get<WebSettings>('/settings'),
+  patchSettings: (patch: {
+    features?: Record<string, boolean>;
+    auth?: { enabled?: boolean; token?: string | null };
+    appearance?: { appName?: string; theme?: 'dark' | 'light' | 'system'; userBubbleColor?: string; assistantBubbleColor?: string };
+  }) =>
     patch === undefined ? Promise.reject(new Error('patch is required')) : req<WebSettings>('/settings', { method: 'PATCH', body: JSON.stringify(patch) }),
   backends: () => get<BackendsState>('/backends'),
   createBackend: (data: {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { NavLink, useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard,
   Users,
@@ -16,6 +16,7 @@ import { useI18nStore, useT } from '../../lib/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { useChatStore } from '../../store/chat-store';
+import { DEFAULT_APPEARANCE } from '../../hooks/useAppearance';
 
 export default function Sidebar() {
   const t = useT();
@@ -24,6 +25,9 @@ export default function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const unread = useChatStore((s) => s.unread);
+  // appName — settings 에서 커스텀 가능 (App 최상위 useAppearance 가 react-query 캐시에 적재)
+  const settingsQ = useQuery({ queryKey: ['settings-appearance'], queryFn: api.getSettings, staleTime: 30_000 });
+  const appName = (settingsQ.data as { appearance?: { appName?: string } } | undefined)?.appearance?.appName ?? DEFAULT_APPEARANCE.appName;
   const currentSessionId = useChatStore((s) => s.currentSessionId);
   const isChatActive = location.pathname.startsWith('/chat');
   const { data: sessionsData } = useQuery({
@@ -94,7 +98,11 @@ export default function Sidebar() {
     <>
       <div className="px-5 py-4 border-b border-zinc-800">
         <div className="flex items-center gap-2">
-          <h1 className="text-lg font-semibold tracking-tight flex-1">Claw Web</h1>
+          <Link
+            to="/"
+            onClick={() => setMobileOpen(false)}
+            className="text-lg font-semibold tracking-tight flex-1 hover:text-sky-400 transition-colors"
+          >{appName}</Link>
           {/* Mobile close button — only visible when the drawer is open */}
           <button
             onClick={() => setMobileOpen(false)}
@@ -184,7 +192,7 @@ export default function Sidebar() {
         >
           <Menu size={18} />
         </button>
-        <div className="text-sm font-semibold tracking-tight">Claw Web</div>
+        <Link to="/" className="text-sm font-semibold tracking-tight hover:text-sky-400 transition-colors">{appName}</Link>
         <button
           onClick={openPalette}
           className="ml-auto p-2 rounded hover:bg-zinc-800 text-zinc-400"

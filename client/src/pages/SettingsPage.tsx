@@ -1,22 +1,24 @@
 import { useState } from 'react';
-import { Server, KeyRound, ToggleRight, Webhook, Plug, Clock } from 'lucide-react';
+import { Server, KeyRound, ToggleRight, Webhook, Plug, Clock, Palette } from 'lucide-react';
 import { BackendsTab } from '../components/settings/BackendsTab';
 import { AccessTab } from '../components/settings/AccessTab';
 import { FeaturesTab } from '../components/settings/FeaturesTab';
 import { HooksTab } from '../components/settings/HooksTab';
 import { McpServersTab } from '../components/settings/McpServersTab';
 import { SchedulesTab } from '../components/settings/SchedulesTab';
+import { AppearanceTab } from '../components/settings/AppearanceTab';
 
-type Tab = 'backends' | 'access' | 'features' | 'hooks' | 'mcp' | 'schedules';
+type Tab = 'appearance' | 'backends' | 'access' | 'features' | 'hooks' | 'mcp' | 'schedules';
 
 export default function SettingsPage() {
-  const [tab, setTab] = useState<Tab>('backends');
+  const [tab, setTab] = useState<Tab>('appearance');
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
       <h2 className="text-2xl font-semibold">Settings</h2>
 
       <div className="flex gap-1 border-b border-zinc-800 overflow-x-auto">
+        <TabButton label="외관" icon={<Palette size={14} />} active={tab === 'appearance'} onClick={() => setTab('appearance')} />
         <TabButton label="AI Backends" icon={<Server size={14} />} active={tab === 'backends'} onClick={() => setTab('backends')} />
         <TabButton label="Access & Tokens" icon={<KeyRound size={14} />} active={tab === 'access'} onClick={() => setTab('access')} />
         <TabButton label="Features" icon={<ToggleRight size={14} />} active={tab === 'features'} onClick={() => setTab('features')} />
@@ -26,6 +28,7 @@ export default function SettingsPage() {
       </div>
 
       <div className="pt-2">
+        {tab === 'appearance' && <AppearanceTab />}
         {tab === 'backends' && <BackendsTab />}
         {tab === 'access' && <AccessTab />}
         {tab === 'features' && <FeaturesTab />}

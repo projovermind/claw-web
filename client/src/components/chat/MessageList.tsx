@@ -210,15 +210,19 @@ function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessag
   const isUser = message.role === 'user';
   const isQueued = isUser && (message as ChatMessage & { queued?: boolean }).queued;
   const { body, choices } = useMemo(() => isUser ? { body: message.content, choices: [] } : extractChoices(message.content), [message.content, isUser]);
+  // 버블 색상 — CSS 변수(useAppearance 훅이 주입) 기반
+  const userBubbleStyle = isUser && !isQueued ? { background: 'var(--user-bubble, #3f3f46)' } : undefined;
+  const assistantBubbleStyle = !isUser ? { background: 'var(--assistant-bubble, #18181b)' } : undefined;
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[85vw] lg:max-w-[80%] rounded-lg px-4 py-3 text-sm break-words relative min-w-0 ${
+        style={userBubbleStyle ?? assistantBubbleStyle}
+        className={`max-w-[80%] rounded-lg px-4 py-3 text-sm break-words relative ${
           isUser
             ? isQueued
               ? 'bg-sky-900/40 border border-sky-700/50 text-zinc-100'
-              : 'bg-zinc-700/60 text-zinc-100'
-            : 'bg-zinc-900/60 border border-zinc-800 text-zinc-200'
+              : 'text-zinc-100'
+            : 'border border-zinc-800 text-zinc-200'
         }`}
       >
         {isQueued && (
