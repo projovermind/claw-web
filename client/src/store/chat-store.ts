@@ -35,6 +35,8 @@ interface ChatState {
   finishRun: (sessionId: string, error?: string | null) => void;
   markUnread: (sessionId: string) => void;
   markRead: (sessionId: string) => void;
+  /** 유효한 세션 ID Set 을 받아 그 밖의 모든 unread 제거 (orphan cleanup) */
+  purgeUnread: (validIds: Set<string>) => void;
 }
 
 const emptyRuntime = (): SessionRuntime => ({
@@ -105,6 +107,15 @@ export const useChatStore = create<ChatState>()(
         set((s) => {
           const next = { ...s.unread };
           delete next[sessionId];
+          return { unread: next };
+        }),
+      purgeUnread: (validIds) =>
+        set((s) => {
+          const keys = Object.keys(s.unread);
+          const orphans = keys.filter((k) => !validIds.has(k));
+          if (orphans.length === 0) return s;
+          const next = { ...s.unread };
+          for (const k of orphans) delete next[k];
           return { unread: next };
         })
     }),

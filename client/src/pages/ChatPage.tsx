@@ -85,8 +85,11 @@ export default function ChatPage() {
 
   const deleteSession = useMutation({
     mutationFn: (id: string) => api.deleteSession(id),
-    onSuccess: () => {
+    onSuccess: (_res, deletedId) => {
       qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
+      qc.invalidateQueries({ queryKey: ['sessions-all'] });
+      // 삭제된 세션이 unread 에 남아 유령점이 되는 문제 방지
+      markRead(deletedId);
       if (sessionQ.data?.id === currentSessionId) setCurrentSession(null);
     }
   });

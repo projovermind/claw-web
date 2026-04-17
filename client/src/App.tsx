@@ -9,6 +9,7 @@ import SkillsPage from './pages/SkillsPage';
 import SetupWizard from './pages/SetupWizard';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useGlobalFileDrop } from './hooks/useGlobalFileDrop';
+import { useUnreadGuard } from './hooks/useUnreadGuard';
 import GlobalDropOverlay from './components/layout/GlobalDropOverlay';
 import LoginDialog from './components/auth/LoginDialog';
 import CommandPalette from './components/palette/CommandPalette';
@@ -18,6 +19,7 @@ import ToastContainer from './components/layout/ToastContainer';
 export default function App() {
   useWebSocket();
   useGlobalFileDrop();
+  useUnreadGuard();
   return (
     <>
       <LoginDialog />

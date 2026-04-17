@@ -24,14 +24,27 @@ export default function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const unread = useChatStore((s) => s.unread);
+  const currentSessionId = useChatStore((s) => s.currentSessionId);
   const isChatActive = location.pathname.startsWith('/chat');
   const { data: sessionsData } = useQuery({
     queryKey: ['sessions-all'],
     queryFn: api.allSessions,
     refetchInterval: 5000
   });
-  // 채팅 탭에 있으면 nav 점 숨김 (이미 채팅 중)
-  const hasUnread = !isChatActive && Object.keys(unread).length > 0;
+  // 유효한 unread 만 카운트: (존재하는 세션) ∧ (현재 열린 세션 아님)
+  // 이 필터 없으면 삭제된 세션 / 열고 있는 세션의 유령 unread 로 파란점 상시 점등
+  const validUnreadCount = (() => {
+    if (isChatActive) return 0; // 채팅 탭에 있으면 숨김
+    const sessions = sessionsData?.sessions ?? [];
+    if (sessions.length === 0) return 0;
+    const valid = new Set(sessions.map((s) => s.id));
+    let n = 0;
+    for (const id of Object.keys(unread)) {
+      if (id !== currentSessionId && valid.has(id)) n++;
+    }
+    return n;
+  })();
+  const hasUnread = validUnreadCount > 0;
   const hasRunning = !isChatActive && (sessionsData?.sessions ?? []).some((s) => s.isRunning);
   const chatDotColor = hasUnread ? 'bg-sky-400' : hasRunning ? 'bg-amber-400' : null;
 

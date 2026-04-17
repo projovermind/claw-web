@@ -213,7 +213,7 @@ function MessageBubble({ message, searchQuery, onChoice }: { message: ChatMessag
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
-        className={`max-w-[80%] rounded-lg px-4 py-3 text-sm break-words relative ${
+        className={`max-w-[85vw] lg:max-w-[80%] rounded-lg px-4 py-3 text-sm break-words relative min-w-0 ${
           isUser
             ? isQueued
               ? 'bg-sky-900/40 border border-sky-700/50 text-zinc-100'
