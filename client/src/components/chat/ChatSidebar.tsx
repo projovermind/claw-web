@@ -75,16 +75,18 @@ export function ChatSidebar({
     const all = allSessionsData?.sessions ?? [];
     const byAgent: Record<string, { unread: boolean; running: boolean; isError?: boolean }> = {};
     for (const s of all) {
-      if (isHiddenDelegation(s)) continue;
       if (!byAgent[s.agentId]) byAgent[s.agentId] = { unread: false, running: false };
+      // running 체크: 위임 세션도 포함 (ovm_pipeline 등 서브 에이전트가 실행 중이면 반영)
+      if (s.isRunning || runtime[s.id]?.running) byAgent[s.agentId].running = true;
+      // unread/error 체크: 위임 세션 제외 (사용자가 직접 본 적 없는 세션)
+      if (isHiddenDelegation(s)) continue;
       if (unread[s.id] && s.id !== currentSessionId) {
         byAgent[s.agentId].unread = true;
         if (unread[s.id].isError) byAgent[s.agentId].isError = true;
       }
-      if (s.isRunning || runtime[s.id]?.running) byAgent[s.agentId].running = true;
     }
     return byAgent;
-  }, [allSessionsData, unread, currentSessionId]);
+  }, [allSessionsData, unread, currentSessionId, runtime]);
 
   // Orphan unread 정리: 세션 리스트에 없는 unread id 제거 (삭제된 세션이 남긴 파란점 제거)
   const markRead = useChatStore((s) => s.markRead);
