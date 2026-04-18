@@ -186,16 +186,23 @@ PY
 esac
 
 # ═══════════════════════════════════════════════════════
-# Step 5. 원격 접속 터널 선택 (대화형)
+# Step 5. 원격 접속 터널 선택 (대화형) — 3가지 옵션
 # ═══════════════════════════════════════════════════════
 TUNNEL_CHOICE=$(osascript 2>/dev/null <<'OSA'
 try
-  set dlg to display dialog "외부에서도 Claw Web 에 접속하도록 설정할까요?
+  set dlg to display dialog "외부에서 Claw Web 에 접속하도록 설정할까요?
 (핸드폰 / 카페 / 회사 등 다른 네트워크에서 접속)
 
-• Cloudflare — 무료, 가입 불필요, 자동 설정 (권장)
-• ngrok — 별도 가입 필요, 더 안정적인 URL 가능
-• 건너뛰기 — localhost 만 사용" buttons {"건너뛰기", "ngrok", "Cloudflare"} default button 3 with icon note with title "Claw Web — 원격 접속 (2/2)"
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🆓 빠른 URL — 무료, 가입 불필요, 자동 설정
+     단점: 재부팅하면 URL 바뀜, 대역폭 무제한
+
+🆓 ngrok — 무료, 가입 필요, URL 바뀜
+     단점: 월 1GB 제한 (Claude 사용엔 빠듯)
+
+⭐ 고정 URL — 도메인 필요 ($3~13/년), 영구 URL
+     장점: 'claw.내도메인.com' 영원히 고정
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" buttons {"건너뛰기", "ngrok", "빠른URL", "고정URL"} default button 3 with icon note with title "Claw Web — 원격 접속 (2/2)"
   return button returned of dlg
 on error
   return "건너뛰기"
@@ -206,22 +213,27 @@ echo "[postinstall] tunnel choice = $TUNNEL_CHOICE" >> "$LOG"
 
 TUNNEL_LABEL=""
 TUNNEL_URL=""
-case "$TUNNEL_CHOICE" in
-  "Cloudflare")
-    # cloudflared 설치
+
+# ── 공통: cloudflared 설치 헬퍼 ───────────────────────
+install_cloudflared() {
+  CF_BIN=$(command -v cloudflared 2>/dev/null || true)
+  if [ -z "$CF_BIN" ] && [ -n "$BREW_BIN" ]; then
+    notify "Cloudflare Tunnel 설치 중..."
+    as_user "$BREW_BIN install cloudflared"
     CF_BIN=$(command -v cloudflared 2>/dev/null || true)
-    if [ -z "$CF_BIN" ] && [ -n "$BREW_BIN" ]; then
-      notify "Cloudflare Tunnel 설치 중..."
-      as_user "$BREW_BIN install cloudflared"
-      CF_BIN=$(command -v cloudflared 2>/dev/null || true)
-    fi
-    if [ -z "$CF_BIN" ]; then
-      for p in /opt/homebrew/bin/cloudflared /usr/local/bin/cloudflared; do
-        [ -x "$p" ] && CF_BIN="$p" && break
-      done
-    fi
+  fi
+  if [ -z "$CF_BIN" ]; then
+    for p in /opt/homebrew/bin/cloudflared /usr/local/bin/cloudflared; do
+      [ -x "$p" ] && CF_BIN="$p" && break
+    done
+  fi
+}
+
+case "$TUNNEL_CHOICE" in
+  "빠른URL")
+    # ─── Cloudflare Quick Tunnel (무료, URL 매번 바뀜) ───
+    install_cloudflared
     if [ -n "$CF_BIN" ]; then
-      # LaunchAgent
       cat > "$PLIST_DIR/com.claw-web.tunnel.plist" <<TUNPLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -242,21 +254,34 @@ case "$TUNNEL_CHOICE" in
 </plist>
 TUNPLIST
       chown "$REAL_USER" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || true
-      # 기존 터널 제거 후 로드
       as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" >/dev/null 2>&1 || true
       as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'"
-      # URL 추출 대기 (최대 20초)
       for i in $(seq 1 20); do
         sleep 1
         TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' /tmp/claw-web-tunnel.log 2>/dev/null | head -1)
         [ -n "$TUNNEL_URL" ] && break
       done
-      TUNNEL_LABEL="Cloudflare"
-      echo "[postinstall] cloudflare tunnel URL: $TUNNEL_URL" >> "$LOG"
+      TUNNEL_LABEL="Cloudflare 빠른 URL"
+      echo "[postinstall] cloudflare quick tunnel URL: $TUNNEL_URL" >> "$LOG"
     fi
     ;;
+
   "ngrok")
-    NGROK_TOKEN=$(osascript 2>/dev/null <<'OSA'
+    # ─── ngrok Free (월 1GB 제한 경고 포함) ──────────────
+    osascript 2>/dev/null -e 'display dialog "⚠️ ngrok 무료 플랜 주의사항
+
+• 월 대역폭: 1GB (Claude Web 같은 상시 연결 앱엔 3~7일이면 소진)
+• 소진 시 ERR_NGROK_725 로 접속 차단
+• URL 도 재시작 시 바뀜
+
+대역폭을 많이 쓰실 거면 '빠른URL' 또는 '고정URL' 을 추천합니다.
+그래도 ngrok 으로 계속하시겠어요?" buttons {"취소","계속"} default button 2 with icon caution with title "Claw Web — ngrok 경고"' > /tmp/ngrok-warn.txt 2>/dev/null || true
+    NGROK_CONT=$(cat /tmp/ngrok-warn.txt 2>/dev/null)
+    rm -f /tmp/ngrok-warn.txt
+    if ! echo "$NGROK_CONT" | grep -q "계속"; then
+      echo "[postinstall] ngrok cancelled after warning" >> "$LOG"
+    else
+      NGROK_TOKEN=$(osascript 2>/dev/null <<'OSA'
 try
   set dlg to display dialog "ngrok authtoken 을 입력하세요.
 
@@ -271,16 +296,16 @@ on error
 end try
 OSA
 )
-    if [ -n "$NGROK_TOKEN" ] && [ "$NGROK_TOKEN" != "__SKIP__" ]; then
-      NGROK_BIN=$(command -v ngrok 2>/dev/null || true)
-      if [ -z "$NGROK_BIN" ] && [ -n "$BREW_BIN" ]; then
-        notify "ngrok 설치 중..."
-        as_user "$BREW_BIN install ngrok"
+      if [ -n "$NGROK_TOKEN" ] && [ "$NGROK_TOKEN" != "__SKIP__" ]; then
         NGROK_BIN=$(command -v ngrok 2>/dev/null || true)
-      fi
-      if [ -n "$NGROK_BIN" ]; then
-        as_user "\"$NGROK_BIN\" config add-authtoken \"$NGROK_TOKEN\""
-        cat > "$PLIST_DIR/com.claw-web.tunnel.plist" <<TUNPLIST
+        if [ -z "$NGROK_BIN" ] && [ -n "$BREW_BIN" ]; then
+          notify "ngrok 설치 중..."
+          as_user "$BREW_BIN install ngrok"
+          NGROK_BIN=$(command -v ngrok 2>/dev/null || true)
+        fi
+        if [ -n "$NGROK_BIN" ]; then
+          as_user "\"$NGROK_BIN\" config add-authtoken \"$NGROK_TOKEN\""
+          cat > "$PLIST_DIR/com.claw-web.tunnel.plist" <<TUNPLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -299,16 +324,177 @@ OSA
 </dict>
 </plist>
 TUNPLIST
-        chown "$REAL_USER" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || true
-        as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" >/dev/null 2>&1 || true
-        as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'"
-        # ngrok API 로 URL 조회
-        for i in $(seq 1 15); do
-          sleep 1
-          TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); t=d.get('tunnels',[]); print(t[0]['public_url'] if t else '')" 2>/dev/null)
-          [ -n "$TUNNEL_URL" ] && break
-        done
-        TUNNEL_LABEL="ngrok"
+          chown "$REAL_USER" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || true
+          as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" >/dev/null 2>&1 || true
+          as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'"
+          for i in $(seq 1 15); do
+            sleep 1
+            TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); t=d.get('tunnels',[]); print(t[0]['public_url'] if t else '')" 2>/dev/null)
+            [ -n "$TUNNEL_URL" ] && break
+          done
+          TUNNEL_LABEL="ngrok (무료 1GB/월)"
+        fi
+      fi
+    fi
+    ;;
+
+  "고정URL")
+    # ─── Cloudflare Named Tunnel (유료 도메인, 영구 URL) ───
+    install_cloudflared
+    if [ -z "$CF_BIN" ]; then
+      osascript -e 'display dialog "cloudflared 설치 실패. Homebrew 가 필요합니다." buttons {"확인"} with icon stop' 2>/dev/null || true
+    else
+      # Step 5a: 도메인 보유 안내 + Cloudflare 등록 상태 확인
+      DOMAIN_CHOICE=$(osascript 2>/dev/null <<'OSA'
+try
+  set dlg to display dialog "📌 고정 URL 설정 전 확인사항:
+
+1. 도메인을 이미 구매하셨나요? (예: mydomain.com)
+2. 그 도메인이 Cloudflare 계정에 등록되어 있나요?
+   (Cloudflare Registrar 에서 구매했거나,
+    다른 곳에서 샀다면 NS 를 Cloudflare 로 변경한 상태)
+
+둘 다 YES 여야 진행 가능합니다.
+
+처음이시면 Cloudflare Registrar 에서 구매가 제일 간단해요
+(.cc 같은 경우 연 $8 수준, 도매가 원가판매)
+
+도메인 준비가 안 되셨으면 [나중에] 를 누르시고,
+브라우저가 열리는 Cloudflare Registrar 페이지에서 구매 후
+다시 설치 관리자를 실행하세요." buttons {"나중에 (Registrar 열기)", "준비됨 (진행)"} default button 2 with icon note with title "Claw Web — 고정 URL 준비 확인"
+  return button returned of dlg
+on error
+  return "나중에 (Registrar 열기)"
+end try
+OSA
+)
+      if echo "$DOMAIN_CHOICE" | grep -q "나중에"; then
+        as_user "open 'https://dash.cloudflare.com/?to=/:account/domains/register'"
+        echo "[postinstall] named tunnel deferred (opened registrar)" >> "$LOG"
+      else
+        # Step 5b: 도메인 + 호스트명 입력
+        DOMAIN_INPUT=$(osascript 2>/dev/null <<'OSA'
+try
+  set dlg to display dialog "사용할 도메인의 전체 호스트명을 입력하세요.
+
+예시:
+  claw.subinggrae.cc
+  web.mydomain.com
+  app.example.io
+
+(서브도메인 + 루트 도메인 전부 포함)" default answer "claw." buttons {"취소","다음"} default button 2 with icon note with title "Claw Web — 호스트명 입력"
+  return text returned of dlg
+on error
+  return "__SKIP__"
+end try
+OSA
+)
+        if [ -z "$DOMAIN_INPUT" ] || [ "$DOMAIN_INPUT" = "__SKIP__" ] || [ "$DOMAIN_INPUT" = "claw." ]; then
+          echo "[postinstall] named tunnel: hostname input skipped" >> "$LOG"
+        else
+          HOSTNAME="$DOMAIN_INPUT"
+          echo "[postinstall] named tunnel hostname: $HOSTNAME" >> "$LOG"
+
+          # Step 5c: cert.pem 없으면 cloudflared login
+          CERT_PATH="$REAL_HOME/.cloudflared/cert.pem"
+          if [ ! -f "$CERT_PATH" ]; then
+            # 백그라운드로 login 실행 → 브라우저 자동 오픈
+            as_user "$CF_BIN tunnel login > /tmp/claw-cf-login.log 2>&1 &"
+            sleep 3
+            LOGIN_URL=$(grep -oE 'https://dash\.cloudflare\.com/argotunnel[^ ]*' /tmp/claw-cf-login.log 2>/dev/null | head -1)
+
+            osascript 2>/dev/null -e "display dialog \"Cloudflare 계정 인증이 필요합니다.
+
+방금 브라우저가 자동으로 열렸을 거예요.
+
+브라우저에서:
+1) Cloudflare 로그인 (도메인 구매한 계정)
+2) 사용할 도메인 체크박스 선택
+3) 파란색 '권한 부여' 버튼 클릭
+
+완료하신 후 [계속] 을 누르세요.
+(브라우저가 안 열렸으면 터미널의 URL 을 직접 여세요)\" buttons {\"취소\",\"계속\"} default button 2 with icon note with title \"Claw Web — Cloudflare 권한 부여 대기\"" > /tmp/cf-auth.txt || true
+            AUTH_RESULT=$(cat /tmp/cf-auth.txt 2>/dev/null)
+            rm -f /tmp/cf-auth.txt
+
+            # cert.pem 생성 대기 (최대 60초)
+            for i in $(seq 1 60); do
+              [ -f "$CERT_PATH" ] && break
+              sleep 1
+            done
+          fi
+
+          if [ ! -f "$CERT_PATH" ]; then
+            osascript -e 'display dialog "Cloudflare 인증 실패. 설치 후 Settings 에서 다시 시도하세요." buttons {"확인"} with icon caution' 2>/dev/null || true
+            echo "[postinstall] named tunnel: cert.pem not found after login" >> "$LOG"
+          else
+            # Step 5d: 터널 생성 (기존 있으면 재사용)
+            TUNNEL_NAME="claw-web"
+            TUNNEL_ID=$(as_user "$CF_BIN tunnel list --output json 2>/dev/null" | python3 -c "import sys,json
+try:
+  for t in json.load(sys.stdin):
+    if t.get('name')=='$TUNNEL_NAME': print(t['id']); break
+except: pass" 2>/dev/null)
+
+            if [ -z "$TUNNEL_ID" ]; then
+              CREATE_OUT=$(as_user "$CF_BIN tunnel create $TUNNEL_NAME" 2>&1)
+              TUNNEL_ID=$(echo "$CREATE_OUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
+              echo "[postinstall] tunnel created: $TUNNEL_ID" >> "$LOG"
+            else
+              echo "[postinstall] tunnel reused: $TUNNEL_ID" >> "$LOG"
+            fi
+
+            if [ -n "$TUNNEL_ID" ]; then
+              # Step 5e: DNS 라우트
+              as_user "$CF_BIN tunnel route dns $TUNNEL_NAME $HOSTNAME" >> "$LOG" 2>&1 || true
+
+              # Step 5f: config.yml 작성
+              CREDS_PATH="$REAL_HOME/.cloudflared/$TUNNEL_ID.json"
+              cat > "$REAL_HOME/.cloudflared/config.yml" <<CFGYML
+tunnel: $TUNNEL_ID
+credentials-file: $CREDS_PATH
+
+ingress:
+  - hostname: $HOSTNAME
+    service: http://localhost:3838
+  - service: http_status:404
+CFGYML
+              chown "$REAL_USER" "$REAL_HOME/.cloudflared/config.yml" 2>/dev/null || true
+
+              # Step 5g: LaunchAgent (tunnel run)
+              cat > "$PLIST_DIR/com.claw-web.tunnel.plist" <<TUNPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.claw-web.tunnel</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$CF_BIN</string>
+    <string>tunnel</string>
+    <string>--no-autoupdate</string>
+    <string>run</string>
+    <string>$TUNNEL_NAME</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/claw-web-tunnel.log</string>
+  <key>StandardErrorPath</key><string>/tmp/claw-web-tunnel.log</string>
+</dict>
+</plist>
+TUNPLIST
+              chown "$REAL_USER" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || true
+              as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" >/dev/null 2>&1 || true
+              as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'"
+
+              TUNNEL_URL="https://$HOSTNAME"
+              TUNNEL_LABEL="Cloudflare 고정 URL"
+              echo "[postinstall] named tunnel active: $TUNNEL_URL" >> "$LOG"
+            else
+              osascript -e 'display dialog "터널 생성 실패. Settings 에서 재시도 가능합니다." buttons {"확인"} with icon caution' 2>/dev/null || true
+            fi
+          fi
+        fi
       fi
     fi
     ;;

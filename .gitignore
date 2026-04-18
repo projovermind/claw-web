@@ -17,6 +17,7 @@ hooks.json
 schedules.json
 agents-config.json
 web-config.json
+push-subscriptions.json
 client/.tsbuildinfo/
 client/tsconfig.node.tsbuildinfo
 client/tsconfig.tsbuildinfo
