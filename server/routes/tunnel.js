@@ -2,6 +2,11 @@ import { Router } from 'express';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { spawn } from 'node:child_process';
+
+// Module-level process tracker
+let tunnelProc = null;
+let tunnelState = { running: false, type: null, url: null, pid: null };
 
 /**
  * Exposes the current Cloudflare quick-tunnel URL captured by the cloudflared
@@ -37,6 +42,73 @@ export function createTunnelRouter() {
     } catch (err) {
       next(err);
     }
+  });
+
+  // POST /start
+  router.post('/start', (req, res) => {
+    if (tunnelState.running) {
+      return res.status(409).json({ error: 'Tunnel already running', state: tunnelState });
+    }
+
+    const { type, domain } = req.body ?? {};
+    if (type !== 'ngrok' && type !== 'cloudflared') {
+      return res.status(400).json({ error: 'type must be "ngrok" or "cloudflared"' });
+    }
+
+    let cmd, args;
+    if (type === 'ngrok') {
+      cmd = 'ngrok';
+      args = domain ? ['http', '3838', `--url=${domain}`] : ['http', '3838'];
+    } else {
+      cmd = 'cloudflared';
+      args = ['tunnel', '--url', 'http://localhost:3838'];
+    }
+
+    tunnelState = { running: true, type, url: null, pid: null };
+
+    const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    tunnelProc = proc;
+    tunnelState.pid = proc.pid;
+
+    const parseUrl = (data) => {
+      const text = data.toString();
+      // ngrok: look for https://*.ngrok.io or custom domain
+      const ngrokMatch = text.match(/https?:\/\/[a-zA-Z0-9\-\.]+\.ngrok(?:\.io|[-\w]*)?[^\s]*/);
+      // cloudflared: look for trycloudflare.com or custom domain
+      const cfMatch = text.match(/https?:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com[^\s]*/);
+      // generic fallback
+      const genericMatch = text.match(/https?:\/\/[a-zA-Z0-9\-\.]+\.[a-z]{2,}[^\s]*/);
+      const found = ngrokMatch?.[0] ?? cfMatch?.[0] ?? genericMatch?.[0];
+      if (found && !tunnelState.url) {
+        tunnelState.url = found.trim();
+      }
+    };
+
+    proc.stdout.on('data', parseUrl);
+    proc.stderr.on('data', parseUrl);
+
+    proc.on('exit', () => {
+      tunnelProc = null;
+      tunnelState = { running: false, type: null, url: null, pid: null };
+    });
+
+    res.json({ ok: true, state: tunnelState });
+  });
+
+  // POST /stop
+  router.post('/stop', (req, res) => {
+    if (!tunnelState.running || !tunnelProc) {
+      return res.status(409).json({ error: 'No tunnel running' });
+    }
+    tunnelProc.kill();
+    tunnelProc = null;
+    tunnelState = { running: false, type: null, url: null, pid: null };
+    res.json({ ok: true });
+  });
+
+  // GET /status
+  router.get('/status', (req, res) => {
+    res.json(tunnelState);
   });
 
   return router;

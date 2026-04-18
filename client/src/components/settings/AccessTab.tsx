@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Globe, Copy, RefreshCw, Check, AlertTriangle, Link } from 'lucide-react';
+import { Globe, Copy, RefreshCw, Check, AlertTriangle, Wifi } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 
@@ -64,39 +64,47 @@ function TunnelUrlCard() {
   );
 }
 
-const DOMAIN_TABS = ['ngrok', 'Cloudflare Tunnel', '리버스프록시'] as const;
-type DomainTab = typeof DOMAIN_TABS[number];
+type TunnelType = 'ngrok' | 'cloudflare';
 
-const DOMAIN_COMMANDS: Record<DomainTab, string> = {
-  ngrok: 'ngrok http 3838 --url=YOUR_DOMAIN',
-  'Cloudflare Tunnel': 'cloudflared tunnel --url http://localhost:3838',
-  '리버스프록시': `server {
-  listen 80;
-  server_name your.domain.com;
+interface TunnelStatus {
+  running: boolean;
+  type?: TunnelType;
+  url?: string;
+}
 
-  location / {
-    proxy_pass http://localhost:3838;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-  }
-}`
-};
-
-const DOMAIN_HINTS: Record<DomainTab, string> = {
-  ngrok: 'YOUR_DOMAIN을 실제 ngrok 정적 도메인으로 교체하세요. ngrok 대시보드(dashboard.ngrok.com)에서 도메인을 등록할 수 있습니다.',
-  'Cloudflare Tunnel': 'Cloudflare Zero Trust 터널을 사용하면 별도 포트 개방 없이 안전하게 외부 접속할 수 있습니다. cloudflared 설치 후 실행하세요.',
-  '리버스프록시': 'nginx 설정 파일(/etc/nginx/sites-available/your-site)에 추가하고 sudo nginx -s reload로 적용하세요.'
-};
-
-function DomainGuideCard() {
-  const [activeTab, setActiveTab] = useState<DomainTab>('ngrok');
+function DomainConnectCard() {
+  const qc = useQueryClient();
+  const [type, setType] = useState<TunnelType>('ngrok');
+  const [domain, setDomain] = useState('');
   const [copied, setCopied] = useState(false);
 
+  const { data: status } = useQuery<TunnelStatus>({
+    queryKey: ['tunnel-connect-status'],
+    queryFn: () => fetch('/api/tunnel/status').then(r => r.json()),
+    refetchInterval: 5000,
+  });
+
+  const startMutation = useMutation({
+    mutationFn: () => fetch('/api/tunnel/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, ...(type === 'ngrok' && domain ? { domain } : {}) }),
+    }).then(r => r.json()),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tunnel-connect-status'] }),
+  });
+
+  const stopMutation = useMutation({
+    mutationFn: () => fetch('/api/tunnel/stop', { method: 'POST' }).then(r => r.json()),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tunnel-connect-status'] }),
+  });
+
+  const running = status?.running ?? false;
+  const url = status?.url;
+
   const copy = async () => {
+    if (!url) return;
     try {
-      await navigator.clipboard.writeText(DOMAIN_COMMANDS[activeTab]);
+      await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch { /* ignore */ }
@@ -105,39 +113,67 @@ function DomainGuideCard() {
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <Link size={14} className="text-blue-400" />
+        <Wifi size={14} className="text-blue-400" />
         <div className="text-sm font-semibold text-zinc-300">도메인 연결</div>
+        <div className="ml-auto flex items-center gap-1.5">
+          <div className={`w-2 h-2 rounded-full ${running ? 'bg-emerald-400' : 'bg-zinc-600'}`} />
+          <span className="text-xs text-zinc-500">{running ? '연결됨' : '꺼짐'}</span>
+        </div>
       </div>
-      <div className="flex gap-1 border-b border-zinc-800 pb-0">
-        {DOMAIN_TABS.map((tab) => (
+
+      <div className="flex gap-1">
+        {(['ngrok', 'cloudflare'] as TunnelType[]).map((t) => (
           <button
-            key={tab}
-            onClick={() => { setActiveTab(tab); setCopied(false); }}
-            className={`px-3 py-1.5 text-xs rounded-t transition-colors ${
-              activeTab === tab
-                ? 'bg-zinc-800 text-zinc-200'
-                : 'text-zinc-500 hover:text-zinc-300'
+            key={t}
+            disabled={running}
+            onClick={() => setType(t)}
+            className={`px-3 py-1.5 text-xs rounded transition-colors disabled:opacity-50 ${
+              type === t ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300'
             }`}
           >
-            {tab}
+            {t === 'ngrok' ? 'ngrok' : 'Cloudflare'}
           </button>
         ))}
       </div>
-      <div className="relative">
-        <pre className="text-xs font-mono bg-zinc-950 border border-zinc-800 rounded px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed text-zinc-300">
-          {DOMAIN_COMMANDS[activeTab]}
-        </pre>
-        <button
-          onClick={copy}
-          className="absolute top-2 right-2 rounded bg-zinc-800 hover:bg-zinc-700 px-2 py-1 text-xs flex items-center gap-1"
-        >
-          {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
-          {copied ? '복사됨' : '복사'}
-        </button>
-      </div>
-      <p className="text-[11px] text-zinc-500 leading-snug">
-        {DOMAIN_HINTS[activeTab]}
-      </p>
+
+      {type === 'ngrok' && (
+        <input
+          disabled={running}
+          value={domain}
+          onChange={(e) => setDomain(e.target.value)}
+          placeholder="your-domain.ngrok-free.app"
+          className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono disabled:opacity-50"
+        />
+      )}
+
+      {running && url && (
+        <div className="flex gap-2">
+          <code className="flex-1 text-xs font-mono bg-zinc-950 border border-zinc-800 rounded px-3 py-2 truncate select-all">
+            {url}
+          </code>
+          <button
+            onClick={copy}
+            className="rounded bg-zinc-800 hover:bg-zinc-700 px-3 text-xs flex items-center gap-1.5 shrink-0"
+          >
+            {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+            {copied ? '복사됨' : '복사'}
+          </button>
+        </div>
+      )}
+
+      <button
+        onClick={() => running ? stopMutation.mutate() : startMutation.mutate()}
+        disabled={startMutation.isPending || stopMutation.isPending}
+        className={`rounded px-4 py-2 text-sm disabled:opacity-50 ${
+          running
+            ? 'bg-red-900/50 hover:bg-red-900 text-red-200'
+            : 'bg-emerald-700 hover:bg-emerald-600 text-white'
+        }`}
+      >
+        {startMutation.isPending || stopMutation.isPending
+          ? '처리 중...'
+          : running ? '연결 해제' : '연결'}
+      </button>
     </div>
   );
 }
@@ -158,7 +194,7 @@ export function AccessTab() {
   return (
     <div className="space-y-5 max-w-2xl">
       <TunnelUrlCard />
-      <DomainGuideCard />
+      <DomainConnectCard />
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
         <div className="text-sm font-semibold text-zinc-300">{t('access.authTitle')}</div>
         <p className="text-[11px] text-zinc-500">{t('access.authHint')}</p>
