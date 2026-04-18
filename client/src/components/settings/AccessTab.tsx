@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Globe, Copy, RefreshCw, Check, AlertTriangle } from 'lucide-react';
+import { Globe, Copy, RefreshCw, Check, AlertTriangle, Link } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 
@@ -64,6 +64,84 @@ function TunnelUrlCard() {
   );
 }
 
+const DOMAIN_TABS = ['ngrok', 'Cloudflare Tunnel', '리버스프록시'] as const;
+type DomainTab = typeof DOMAIN_TABS[number];
+
+const DOMAIN_COMMANDS: Record<DomainTab, string> = {
+  ngrok: 'ngrok http 3838 --url=YOUR_DOMAIN',
+  'Cloudflare Tunnel': 'cloudflared tunnel --url http://localhost:3838',
+  '리버스프록시': `server {
+  listen 80;
+  server_name your.domain.com;
+
+  location / {
+    proxy_pass http://localhost:3838;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+  }
+}`
+};
+
+const DOMAIN_HINTS: Record<DomainTab, string> = {
+  ngrok: 'YOUR_DOMAIN을 실제 ngrok 정적 도메인으로 교체하세요. ngrok 대시보드(dashboard.ngrok.com)에서 도메인을 등록할 수 있습니다.',
+  'Cloudflare Tunnel': 'Cloudflare Zero Trust 터널을 사용하면 별도 포트 개방 없이 안전하게 외부 접속할 수 있습니다. cloudflared 설치 후 실행하세요.',
+  '리버스프록시': 'nginx 설정 파일(/etc/nginx/sites-available/your-site)에 추가하고 sudo nginx -s reload로 적용하세요.'
+};
+
+function DomainGuideCard() {
+  const [activeTab, setActiveTab] = useState<DomainTab>('ngrok');
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(DOMAIN_COMMANDS[activeTab]);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Link size={14} className="text-blue-400" />
+        <div className="text-sm font-semibold text-zinc-300">도메인 연결</div>
+      </div>
+      <div className="flex gap-1 border-b border-zinc-800 pb-0">
+        {DOMAIN_TABS.map((tab) => (
+          <button
+            key={tab}
+            onClick={() => { setActiveTab(tab); setCopied(false); }}
+            className={`px-3 py-1.5 text-xs rounded-t transition-colors ${
+              activeTab === tab
+                ? 'bg-zinc-800 text-zinc-200'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+      <div className="relative">
+        <pre className="text-xs font-mono bg-zinc-950 border border-zinc-800 rounded px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed text-zinc-300">
+          {DOMAIN_COMMANDS[activeTab]}
+        </pre>
+        <button
+          onClick={copy}
+          className="absolute top-2 right-2 rounded bg-zinc-800 hover:bg-zinc-700 px-2 py-1 text-xs flex items-center gap-1"
+        >
+          {copied ? <Check size={11} className="text-emerald-400" /> : <Copy size={11} />}
+          {copied ? '복사됨' : '복사'}
+        </button>
+      </div>
+      <p className="text-[11px] text-zinc-500 leading-snug">
+        {DOMAIN_HINTS[activeTab]}
+      </p>
+    </div>
+  );
+}
+
 export function AccessTab() {
   const qc = useQueryClient();
   const t = useT();
@@ -80,6 +158,7 @@ export function AccessTab() {
   return (
     <div className="space-y-5 max-w-2xl">
       <TunnelUrlCard />
+      <DomainGuideCard />
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
         <div className="text-sm font-semibold text-zinc-300">{t('access.authTitle')}</div>
         <p className="text-[11px] text-zinc-500">{t('access.authHint')}</p>

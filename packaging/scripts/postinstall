@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# postinstall — 의존성 설치, 빌드, LaunchAgent 등록, 서버 시작, 포트 테스트
+set -euo pipefail
+
+INSTALL_DIR="/usr/local/share/claw-web"
+LOG="/tmp/claw-web-install.log"
+
+log() { echo "$1" | tee -a "$LOG"; }
+
+log "=== Claw Web postinstall $(date) ==="
+
+# ── 실제 사용자 탐지 (pkg는 root로 실행됨) ──────────────────
+REAL_USER=$(stat -f "%Su" /dev/console 2>/dev/null || echo "${SUDO_USER:-$USER}")
+REAL_HOME=$(dscl . -read "/Users/$REAL_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}' || eval echo "~$REAL_USER")
+REAL_UID=$(id -u "$REAL_USER")
+PLIST_DIR="$REAL_HOME/Library/LaunchAgents"
+
+log "→ 사용자: $REAL_USER ($REAL_UID), 홈: $REAL_HOME"
+
+# ── 소유권 이전 ─────────────────────────────────────────────
+chown -R "$REAL_USER" "$INSTALL_DIR"
+log "✓ 소유권 이전: $INSTALL_DIR → $REAL_USER"
+
+# ── Node 경로 탐지 ──────────────────────────────────────────
+NODE_BIN=""
+for p in \
+  "/opt/homebrew/bin/node" \
+  "/usr/local/bin/node" \
+  "$REAL_HOME/.nvm/versions/node/$(ls "$REAL_HOME/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)/bin/node"; do
+  if [ -x "$p" ]; then NODE_BIN="$p"; break; fi
+done
+if [ -z "$NODE_BIN" ]; then
+  NODE_BIN=$(sudo -u "$REAL_USER" bash -lc 'command -v node' 2>/dev/null || command -v node || echo "node")
+fi
+log "→ Node: $NODE_BIN"
+
+# ── npm install ─────────────────────────────────────────────
+log "→ npm install (서버)..."
+sudo -u "$REAL_USER" bash -c "cd '$INSTALL_DIR' && npm install --loglevel=error" >> "$LOG" 2>&1
+log "→ npm install (클라이언트)..."
+sudo -u "$REAL_USER" bash -c "cd '$INSTALL_DIR' && npm --prefix client install --loglevel=error" >> "$LOG" 2>&1
+log "✓ 의존성 설치 완료"
+
+# ── 클라이언트 빌드 ─────────────────────────────────────────
+log "→ 클라이언트 빌드..."
+sudo -u "$REAL_USER" bash -c "cd '$INSTALL_DIR' && npm run build" >> "$LOG" 2>&1
+log "✓ 빌드 완료"
+
+# ── 기본 설정 파일 생성 (없을 때만) ────────────────────────
+if [ ! -f "$INSTALL_DIR/web-config.json" ]; then
+  cat > "$INSTALL_DIR/web-config.json" << EOFCFG
+{
+  "port": 3838,
+  "features": {
+    "dashboard": true,
+    "agentsPage": true,
+    "chat": true,
+    "activityFeed": true
+  },
+  "auth": { "enabled": false, "token": null },
+  "allowedRoots": ["$REAL_HOME/"]
+}
+EOFCFG
+  chown "$REAL_USER" "$INSTALL_DIR/web-config.json"
+  log "✓ web-config.json 생성"
+fi
+
+if [ ! -f "$INSTALL_DIR/secrets.json" ]; then
+  echo '{"version":1,"backends":{}}' > "$INSTALL_DIR/secrets.json"
+  chmod 600 "$INSTALL_DIR/secrets.json"
+  chown "$REAL_USER" "$INSTALL_DIR/secrets.json"
+  log "✓ secrets.json 생성"
+fi
+
+# ── LaunchAgent 등록 ────────────────────────────────────────
+mkdir -p "$PLIST_DIR"
+cat > "$PLIST_DIR/com.claw-web.server.plist" << EOFPLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claw-web.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$NODE_BIN</string>
+        <string>$INSTALL_DIR/server/index.js</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>$INSTALL_DIR</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/claw-web.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/claw-web.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+EOFPLIST
+chown "$REAL_USER" "$PLIST_DIR/com.claw-web.server.plist"
+log "✓ LaunchAgent 등록: $PLIST_DIR/com.claw-web.server.plist"
+
+# ── LaunchAgent 시작 (bootstrap) ────────────────────────────
+launchctl bootout "gui/$REAL_UID/com.claw-web.server" 2>/dev/null || true
+if launchctl bootstrap "gui/$REAL_UID" "$PLIST_DIR/com.claw-web.server.plist" 2>/dev/null; then
+  log "✓ LaunchAgent bootstrap 성공"
+else
+  launchctl load "$PLIST_DIR/com.claw-web.server.plist" 2>/dev/null || true
+  log "✓ LaunchAgent load (legacy)"
+fi
+
+# ── 즉시 서버 직접 시작 (LaunchAgent 대기 안 하고) ──────────
+OLD_PID=$(lsof -ti :3838 -sTCP:LISTEN 2>/dev/null || true)
+if [ -n "$OLD_PID" ]; then
+  kill "$OLD_PID" 2>/dev/null || true
+  sleep 1
+  log "→ 기존 프로세스 종료 (PID $OLD_PID)"
+fi
+
+sudo -u "$REAL_USER" bash -c \
+  "NODE_ENV=production nohup '$NODE_BIN' '$INSTALL_DIR/server/index.js' >> /tmp/claw-web.log 2>&1 &"
+SERVER_PID=$(lsof -ti :3838 2>/dev/null | head -1 || echo "?")
+log "→ 서버 시작 (PID $SERVER_PID)"
+
+# ── 포트 테스트 (최대 15초) ─────────────────────────────────
+log "→ 포트 3838 응답 테스트..."
+PASSED=0
+for i in $(seq 1 15); do
+  sleep 1
+  STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3838/api/health 2>/dev/null || echo "000")
+  if [ "$STATUS" = "200" ] || [ "$STATUS" = "401" ]; then
+    log "✓ 테스트 통과 — HTTP $STATUS (${i}초)"
+    PASSED=1
+    break
+  fi
+done
+
+if [ "$PASSED" -eq 0 ]; then
+  log "⚠ 테스트 실패 — 서버가 15초 내 응답하지 않음"
+  log "  로그 확인: tail -f /tmp/claw-web.log"
+  # 설치 자체를 실패시키지는 않음 (exit 0)
+fi
+
+log ""
+log "=== 설치 완료 ==="
+log "   접속: http://localhost:3838"
+log "   로그: tail -f /tmp/claw-web.log"
+log ""
+exit 0

@@ -311,6 +311,8 @@ else
     <string>/tmp/claw-web.log</string>
     <key>EnvironmentVariables</key>
     <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
         <key>PATH</key>
         <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
     </dict>
@@ -351,15 +353,73 @@ EOFPLIST
     fi
 
     # Load agents
-    launchctl load "$PLIST_DIR/com.claw-web.server.plist" 2>/dev/null || true
+    # macOS Ventura+ 에서는 bootstrap 사용 (load는 deprecated)
+    LAUNCHCTL_UID=$(id -u)
+    # 기존 서비스가 이미 등록돼 있으면 먼저 제거
+    launchctl bootout "gui/$LAUNCHCTL_UID/com.claw-web.server" 2>/dev/null || true
+    launchctl bootstrap "gui/$LAUNCHCTL_UID" "$PLIST_DIR/com.claw-web.server.plist" && ok "서버 서비스 등록됨" || {
+      # fallback: 구 방식
+      launchctl load "$PLIST_DIR/com.claw-web.server.plist" 2>/dev/null || true
+      ok "서버 서비스 등록됨 (legacy)"
+    }
     if [ -n "$NGROK_DOMAIN" ]; then
-      launchctl load "$PLIST_DIR/com.claw-web.ngrok.plist" 2>/dev/null || true
+      launchctl bootout "gui/$LAUNCHCTL_UID/com.claw-web.ngrok" 2>/dev/null || true
+      launchctl bootstrap "gui/$LAUNCHCTL_UID" "$PLIST_DIR/com.claw-web.ngrok.plist" 2>/dev/null || \
+        launchctl load "$PLIST_DIR/com.claw-web.ngrok.plist" 2>/dev/null || true
+      ok "ngrok 서비스 등록됨"
     fi
-    ok "서비스 시작됨"
+    # 서비스 시작 확인 (최대 5초 대기)
+    echo -ne "  서버 시작 대기 중"
+    for i in 1 2 3 4 5; do
+      sleep 1
+      if lsof -i :3838 -sTCP:LISTEN &>/dev/null; then
+        echo ""
+        ok "서버 시작 확인 (port 3838 열림)"
+        break
+      fi
+      echo -n "."
+      if [ "$i" -eq 5 ]; then
+        echo ""
+        warn "서버가 5초 내 시작되지 않음. 로그 확인: tail -f /tmp/claw-web.log"
+      fi
+    done
   else
     ok "자동 시작 건너뜀. 수동 실행: cd $INSTALL_DIR && npm start"
   fi
 fi
+
+# ─── Start server now ─────────────────────────
+# LaunchAgent는 부팅 자동시작용. 지금 당장 포트를 열기 위해 직접 실행.
+
+echo ""
+echo -e "${CYAN}[!]${NC} ${BOLD}서버 즉시 시작${NC}"
+echo -e "${DIM}────────────────────────────────${NC}"
+
+# 기존에 3838 포트를 점유 중인 프로세스 종료
+OLD_PID=$(lsof -ti :3838 -sTCP:LISTEN 2>/dev/null || true)
+if [ -n "$OLD_PID" ]; then
+  kill "$OLD_PID" 2>/dev/null || true
+  sleep 1
+  ok "기존 서버 프로세스 종료 (PID $OLD_PID)"
+fi
+
+cd "$INSTALL_DIR"
+NODE_ENV=production nohup node server/index.js > /tmp/claw-web.log 2>&1 &
+SERVER_PID=$!
+echo -ne "  포트 열림 대기 중"
+for i in 1 2 3 4 5 6 7 8 9 10; do
+  sleep 1
+  if lsof -i :3838 -sTCP:LISTEN &>/dev/null; then
+    echo ""
+    ok "서버 시작 완료! (PID $SERVER_PID, port 3838)"
+    break
+  fi
+  echo -n "."
+  if [ "$i" -eq 10 ]; then
+    echo ""
+    warn "서버 시작 실패. 로그 확인: tail -f /tmp/claw-web.log"
+  fi
+done
 
 # ─── Done ─────────────────────────────────────
 
@@ -376,7 +436,7 @@ if [ -n "$AUTH_TOKEN" ]; then
   echo -e "  ${BOLD}인증 토큰:${NC}  $AUTH_TOKEN"
 fi
 echo ""
-echo -e "  ${DIM}서버 로그:  tail -f /tmp/claw-web.log${NC}"
-echo -e "  ${DIM}서버 중지:  launchctl unload ~/Library/LaunchAgents/com.claw-web.server.plist${NC}"
-echo -e "  ${DIM}수동 실행:  cd $INSTALL_DIR && npm start${NC}"
+echo -e "  ${DIM}서버 로그:   tail -f /tmp/claw-web.log${NC}"
+echo -e "  ${DIM}서버 재시작: kill \$(lsof -ti :3838) && NODE_ENV=production nohup node $INSTALL_DIR/server/index.js > /tmp/claw-web.log 2>&1 &${NC}"
+echo -e "  ${DIM}서버 중지:   launchctl bootout gui/\$(id -u)/com.claw-web.server 2>/dev/null; kill \$(lsof -ti :3838) 2>/dev/null${NC}"
 echo ""

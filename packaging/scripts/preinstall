@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# preinstall — Node.js 20+ 확인
+set -euo pipefail
+
+if ! command -v node &>/dev/null; then
+  osascript -e 'display alert "Node.js가 필요합니다" message "https://nodejs.org 에서 Node.js 20 LTS를 설치한 후 다시 실행해주세요." as critical' 2>/dev/null || true
+  echo "ERROR: Node.js not found" >&2
+  exit 1
+fi
+
+NODE_MAJOR=$(node -v | sed 's/v//' | cut -d. -f1)
+if [ "$NODE_MAJOR" -lt 20 ]; then
+  osascript -e "display alert \"Node.js 20+ 필요\" message \"현재 버전: $(node -v)\nnodejs.org 에서 업데이트 후 다시 설치해주세요.\" as critical" 2>/dev/null || true
+  echo "ERROR: Node.js 20+ required (got $(node -v))" >&2
+  exit 1
+fi
+
+if ! command -v npm &>/dev/null; then
+  echo "ERROR: npm not found" >&2
+  exit 1
+fi
+
+echo "✓ Node.js $(node -v), npm $(npm -v)"
+exit 0
