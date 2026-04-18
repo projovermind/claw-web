@@ -330,9 +330,10 @@ export function createChatRouter({
                         `**대상 에이전트**: ${completed.targetAgentId}\n` +
                         `**작업**: ${completed.task}\n` +
                         `**결과 요약**:\n${summary}\n\n` +
-                        `위 결과를 검토해서 사용자에게 핵심만 종합 보고해 주세요. ` +
-                        `그리고 남은 작업이 있다면 다음 단계를 제안하세요 ` +
-                        `(필요 시 추가 위임 JSON 을 포함해도 됩니다).`;
+                        `위 결과를 바탕으로 계획을 계속 진행하세요. ` +
+                        `다음 위임할 작업이 있으면 즉시 위임 JSON을 출력하세요. ` +
+                        `사용자에게 확인받거나 choices 태그로 질문하지 말고 자동으로 계속 진행하세요. ` +
+                        `모든 작업이 완료됐을 때만 최종 결과를 사용자에게 보고하세요.`;
                       await sessionsStore.appendMessage(completed.originSessionId, {
                         role: 'user',
                         content: trigger
