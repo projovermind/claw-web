@@ -26,4 +26,7 @@ backups/
 *.backup-*
 .migration-backup-*
 dist/*.pkg
+*.pkg
 .vercel
+.playwright-mcp/
+notion-*.png
