@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
-    <title>Claw Web v1.0.5</title>
+    <title>Claw Web v{{VERSION}}</title>
     <organization>com.claw-web</organization>
     <domains enable_localSystem="true"/>
 
@@ -31,7 +31,7 @@
 
     <pkg-ref
         id="com.claw-web.pkg"
-        version="1.0.5"
+        version="{{VERSION}}"
         onConclusion="none">
         claw-web-core.pkg
     </pkg-ref>

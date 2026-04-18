@@ -78,9 +78,16 @@ echo "   Core: $(du -sh "$BUILD_DIR/claw-web-core.pkg" | cut -f1)"
 # ── 5. productbuild → 최종 .pkg ───────────────────────────
 echo "→ [4/4] Building installer package (productbuild)..."
 
+# {{VERSION}} placeholder 치환본 생성 (pkg/ 원본은 git clean 유지)
+PKG_TMP="$BUILD_DIR/pkg-tmp"
+mkdir -p "$PKG_TMP/resources"
+cp pkg/resources/* "$PKG_TMP/resources/"
+sed "s/{{VERSION}}/$VERSION/g" pkg/distribution.xml > "$PKG_TMP/distribution.xml"
+sed -i '' "s/{{VERSION}}/$VERSION/g" "$PKG_TMP/resources/welcome.html"
+
 productbuild \
-    --distribution pkg/distribution.xml \
-    --resources pkg/resources \
+    --distribution "$PKG_TMP/distribution.xml" \
+    --resources "$PKG_TMP/resources" \
     --package-path "$BUILD_DIR" \
     "$OUTPUT_DIR/Claw-Web-${VERSION}.pkg"
 
