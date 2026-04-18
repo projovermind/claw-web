@@ -25,8 +25,8 @@ interface ChatState {
   currentAgentId: string | null;
   currentSessionId: string | null;
   runtime: Record<string, SessionRuntime>;
-  /** 세션별 안 읽은 메시지 플래그 + 마지막 업데이트 시각 (정렬용) */
-  unread: Record<string, { at: number }>;
+  /** 세션별 안 읽은 메시지 플래그 + 마지막 업데이트 시각 (정렬용) + 에러 여부 */
+  unread: Record<string, { at: number; isError?: boolean }>;
   setCurrentAgent: (id: string | null) => void;
   setCurrentSession: (id: string | null) => void;
   startRun: (sessionId: string) => void;
@@ -92,8 +92,8 @@ export const useChatStore = create<ChatState>()(
           // 채팅 완료 시 현재 열려있는 세션이 아니면 unread 표시
           const isActive = s.currentSessionId === sessionId;
           const nextUnread = { ...s.unread };
-          if (!isActive && !error) {
-            nextUnread[sessionId] = { at: Date.now() };
+          if (!isActive) {
+            nextUnread[sessionId] = { at: Date.now(), isError: !!error };
           }
           return {
             runtime: {

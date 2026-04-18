@@ -72,12 +72,14 @@ export function ChatSidebar({
   // 현재 열린 세션은 unread에서 제외 (markRead race 방어)
   const agentStatus = useMemo(() => {
     const all = allSessionsData?.sessions ?? [];
-    const byAgent: Record<string, { unread: boolean; running: boolean }> = {};
+    const byAgent: Record<string, { unread: boolean; running: boolean; isError?: boolean }> = {};
     for (const s of all) {
-      // 위임 세션은 agent 단위 상태점 계산에서 제외 (planner 세션에 이미 표시됨)
       if (isHiddenDelegation(s)) continue;
       if (!byAgent[s.agentId]) byAgent[s.agentId] = { unread: false, running: false };
-      if (unread[s.id] && s.id !== currentSessionId) byAgent[s.agentId].unread = true;
+      if (unread[s.id] && s.id !== currentSessionId) {
+        byAgent[s.agentId].unread = true;
+        if (unread[s.id].isError) byAgent[s.agentId].isError = true;
+      }
       if (s.isRunning) byAgent[s.agentId].running = true;
     }
     return byAgent;
@@ -94,7 +96,7 @@ export function ChatSidebar({
   }, [allSessionsData, unread, markRead]);
 
   const projectStatus = useMemo(() => {
-    const byProject: Record<string, { unread: boolean; running: boolean }> = {};
+    const byProject: Record<string, { unread: boolean; running: boolean; isError?: boolean }> = {};
     for (const a of agents) {
       if (!a.projectId) continue;
       const s = agentStatus[a.id];
@@ -102,14 +104,15 @@ export function ChatSidebar({
       if (!byProject[a.projectId]) byProject[a.projectId] = { unread: false, running: false };
       if (s.unread) byProject[a.projectId].unread = true;
       if (s.running) byProject[a.projectId].running = true;
+      if (s.isError) byProject[a.projectId].isError = true;
     }
     return byProject;
   }, [agentStatus, agents]);
 
   // 상태 점 컴포넌트
-  const StatusDot = ({ unread, running }: { unread: boolean; running: boolean }) => {
+  const StatusDot = ({ unread, running, isError }: { unread: boolean; running: boolean; isError?: boolean }) => {
     if (!unread && !running) return null;
-    const color = unread ? 'bg-sky-400' : 'bg-amber-400';
+    const color = unread ? (isError ? 'bg-red-400' : 'bg-sky-400') : 'bg-amber-400';
     return <span className={`w-1.5 h-1.5 rounded-full ${color} animate-pulse shrink-0`} />;
   };
   const [selectMode, setSelectMode] = useState(false);
@@ -316,7 +319,7 @@ export function ChatSidebar({
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold truncate flex items-center gap-1.5">
                           {a.name}
-                          <StatusDot unread={st.unread} running={st.running} />
+                          <StatusDot unread={st.unread} running={st.running} isError={st.isError} />
                         </div>
                         <div className="text-[11px] text-zinc-500 font-mono flex items-center gap-1.5">
                           <span>{a.id}</span>
@@ -350,7 +353,7 @@ export function ChatSidebar({
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold truncate flex items-center gap-1.5">
                     {p.name}
-                    <StatusDot unread={pst.unread} running={pst.running} />
+                    <StatusDot unread={pst.unread} running={pst.running} isError={pst.isError} />
                   </div>
                   <div className="text-[11px] text-zinc-500 truncate flex items-center gap-1.5">
                     <span>→ {lead?.name ?? lead?.id ?? t('chat.picker.noLead')}</span>
@@ -464,7 +467,7 @@ export function ChatSidebar({
                   </span>
                 )}
                 {!selectMode && isUnread && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0 animate-pulse" title={t('chat.session.unread')} />
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 animate-pulse ${unread[s.id]?.isError ? 'bg-red-400' : 'bg-sky-400'}`} title={t('chat.session.unread')} />
                 )}
                 {!selectMode && !isUnread && s.isRunning && (
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title={t('chat.session.running')} />
@@ -552,7 +555,7 @@ export function ChatSidebar({
                   className="w-full text-left rounded px-2 py-1.5 mb-0.5 text-[11px] flex items-center gap-1.5 hover:bg-zinc-900 text-zinc-400"
                   title={`${agent?.name ?? s.agentId} — ${s.title}`}
                 >
-                  {isUnreadRecent && <span className="w-1.5 h-1.5 rounded-full bg-sky-400 shrink-0 animate-pulse" />}
+                  {isUnreadRecent && <span className={`w-1.5 h-1.5 rounded-full shrink-0 animate-pulse ${unread[s.id]?.isError ? 'bg-red-400' : 'bg-sky-400'}`} />}
                   {!isUnreadRecent && s.isRunning && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" />}
                   <span className="shrink-0">{agent?.avatar ?? '🤖'}</span>
                   <span className="flex-1 truncate">{s.title}</span>
