@@ -82,7 +82,7 @@ export default function DelegationStatusBar() {
   if (delegations.length === 0) return null;
 
   return (
-    <div className="fixed top-2 left-1/2 -translate-x-1/2 z-50 flex flex-wrap gap-2 max-w-[90vw] justify-center pointer-events-none">
+    <div className="absolute top-3 right-3 z-20 flex flex-wrap gap-2 justify-end max-w-[60%] pointer-events-none">
       {delegations.map((entry) => (
         <DelegationItem key={entry.id} entry={entry} />
       ))}

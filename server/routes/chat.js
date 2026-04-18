@@ -370,6 +370,8 @@ export function createChatRouter({
    */
   function extractDelegateJson(text) {
     // 코드 블록 안에 있을 수도 있음
+    const results = [];
+    const seen = new Set(); // agent+task 중복 방지
     const candidates = [];
     // 1) ```json ... ``` 코드 블록
     const codeBlocks = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)];
@@ -402,24 +404,26 @@ export function createChatRouter({
         if (end !== -1) {
           try {
             const obj = JSON.parse(src.slice(start, end + 1));
-            if (obj?.delegate?.agent && obj?.delegate?.task) return obj;
+            if (obj?.delegate?.agent && obj?.delegate?.task) {
+              const key = `${obj.delegate.agent}::${obj.delegate.task}`;
+              if (!seen.has(key)) { seen.add(key); results.push(obj); }
+            }
           } catch { /* ignore, try next */ }
         }
         idx = src.indexOf('"delegate"', idx + 1);
       }
     }
-    return null;
+    return results;
   }
 
   async function handleDelegation(originSessionId, responseText) {
     if (!delegationTracker || !responseText) return;
     const parsed = extractDelegateJson(responseText);
-    if (!parsed) return;
-    return executeDelegation(
-      originSessionId,
-      parsed.delegate.agent,
-      parsed.delegate.task,
-      JSON.stringify(parsed)
+    if (!parsed.length) return;
+    await Promise.all(
+      parsed.map((p) =>
+        executeDelegation(originSessionId, p.delegate.agent, p.delegate.task, JSON.stringify(p))
+      )
     );
   }
 
@@ -496,7 +500,8 @@ export function createChatRouter({
       // Create a new session for the target agent
       const targetSession = await sessionsStore.create({
         agentId: targetAgentId,
-        title: `[위임] ${task.slice(0, 40)}`
+        title: `[위임] ${task.slice(0, 40)}`,
+        isDelegation: true
       });
       eventBus.publish('session.created', { session: targetSession });
 

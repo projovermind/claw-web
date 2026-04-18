@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
 import { agentPatchSchema, splitPatch } from '../schemas/agent.js';
 import { autoAssignAgent, autoAssignAll, detectRole } from '../lib/auto-assigner.js';
+import { pushUndo } from '../lib/undo-store.js';
 
 const createSchema = z.object({
   id: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i, 'id must be alphanumeric / - / _'),
@@ -90,6 +91,21 @@ export function createAgentsRouter({ configStore, metadataStore, projectsStore, 
       }
 
       const { configPatch, metaPatch } = splitPatch(parsed);
+
+      // Undo 스냅샷: 변경될 필드의 이전 값만 저장
+      const currentConfig = configStore.getAgent(id);
+      const currentMeta = metadataStore?.getAgent(id) ?? {};
+      const configBefore = {};
+      const metaBefore = {};
+      for (const k of Object.keys(configPatch)) {
+        if (currentConfig[k] !== undefined) configBefore[k] = currentConfig[k];
+      }
+      for (const k of Object.keys(metaPatch)) {
+        if (currentMeta[k] !== undefined) metaBefore[k] = currentMeta[k];
+      }
+      if (Object.keys(configBefore).length > 0 || Object.keys(metaBefore).length > 0) {
+        pushUndo({ agentId: id, configBefore, metaBefore, configPatch, metaPatch });
+      }
 
       // Auto-sync workingDir when projectId changes and projectsStore is available
       if (metaPatch.projectId !== undefined && projectsStore) {

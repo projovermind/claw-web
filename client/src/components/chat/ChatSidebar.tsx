@@ -153,7 +153,7 @@ export function ChatSidebar({
       agents.filter((a) => a.projectId === project.id).map((a) => a.id)
     );
     const projectSessions = (allSessionsData?.sessions ?? [])
-      .filter((s: Session) => projectAgentIds.has(s.agentId))
+      .filter((s: Session) => projectAgentIds.has(s.agentId) && !s.isDelegation)
       .sort((a: Session, b: Session) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
 
     const lastSession = projectSessions[0];

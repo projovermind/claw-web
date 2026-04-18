@@ -46,7 +46,7 @@ export async function createSessionsStore(filePath) {
     get: (id) => cache.sessions?.[id] ?? null,
     onChange: (cb) => emitter.on('change', cb),
 
-    async create({ agentId, title }) {
+    async create({ agentId, title, ...extra }) {
       const id = newId();
       const now = new Date().toISOString();
       const session = {
@@ -56,7 +56,8 @@ export async function createSessionsStore(filePath) {
         createdAt: now,
         updatedAt: now,
         claudeSessionId: null,
-        messages: []
+        messages: [],
+        ...(extra ?? {})
       };
       await writeWithLock((current) => {
         current.sessions = { ...(current.sessions ?? {}), [id]: session };

@@ -16,6 +16,7 @@ import TodoWidget from '../components/chat/TodoWidget';
 import { ChatSidebar } from '../components/chat/ChatSidebar';
 import { SessionTitleEditor } from '../components/chat/SessionTitleEditor';
 import { FrameworkActions } from '../components/chat/FrameworkActions';
+import DelegationStatusBar from '../components/layout/DelegationStatusBar';
 
 export default function ChatPage() {
   const t = useT();
@@ -195,7 +196,7 @@ export default function ChatPage() {
       (agentsQ.data ?? []).filter((a) => a.projectId === project.id).map((a) => a.id)
     );
     const projectSessions = (projectSelectAllSessionsQ.data?.sessions ?? [])
-      .filter((s) => projectAgentIds.has(s.agentId))
+      .filter((s) => projectAgentIds.has(s.agentId) && !s.isDelegation)
       .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
 
     const lastSession = projectSessions[0];
@@ -377,6 +378,8 @@ export default function ChatPage() {
             )}
 
             {/* Messages */}
+            <div className="relative flex-1 min-h-0 flex flex-col">
+            <DelegationStatusBar />
             <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-3 lg:px-6">
               {currentSession && (
                 <MessageList
@@ -394,6 +397,7 @@ export default function ChatPage() {
                 onChoice={(c) => sendMessage.mutate({ message: c, paths: [] })}
               />
             </div>
+            </div>{/* end messages relative wrapper */}
 
             {/* Framework action buttons */}
             <FrameworkActions

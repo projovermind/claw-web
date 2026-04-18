@@ -58,6 +58,7 @@ export interface Session {
   isRunning?: boolean;
   pinned?: boolean;
   loop?: LoopConfig | null;
+  isDelegation?: boolean;
 }
 
 export interface GoalCard {

@@ -45,6 +45,7 @@ import { createWorktreeRouter } from './routes/worktree.js';
 import { createSchedulesRouter } from './routes/schedules.js';
 import { createLspRouter } from './routes/lsp.js';
 import { createTerraformRouter } from './routes/terraform.js';
+import { createUndoRouter } from './routes/undo.js';
 import { createHooksStore } from './lib/hooks-store.js';
 import { createScheduler } from './lib/scheduler.js';
 import { createDelegationTracker } from './lib/delegation-tracker.js';
@@ -285,6 +286,7 @@ async function main() {
   app.use('/api/schedules', createSchedulesRouter({ scheduler, eventBus }));
   app.use('/api/lsp', createLspRouter({ projectsStore }));
   app.use('/api/terraform', createTerraformRouter({ projectsStore, configStore, metadataStore, eventBus }));
+  app.use('/api/undo', createUndoRouter({ configStore, metadataStore, eventBus }));
 
   const distPath = path.join(REPO_ROOT, 'client', 'dist');
   app.use(express.static(distPath));

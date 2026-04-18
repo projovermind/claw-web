@@ -1,6 +1,5 @@
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
-import DelegationStatusBar from './DelegationStatusBar';
 
 export default function AppShell() {
   return (
@@ -10,7 +9,6 @@ export default function AppShell() {
       <main className="flex-1 overflow-hidden flex flex-col pt-12 lg:pt-0">
         <Outlet />
       </main>
-      <DelegationStatusBar />
     </div>
   );
 }

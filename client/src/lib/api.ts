@@ -282,6 +282,8 @@ export const api = {
   lspHover: (file: string, line: number, character: number, projectId: string) =>
     post<{ content: string; line: number }>('/lsp/hover', { file, line, character, projectId }),
 
+  undoAction: () => req<{ description: string }>('/undo', { method: 'POST', body: JSON.stringify({}) }),
+
   uploadFile: async (file: File): Promise<{
     id: string;
     filename: string;
