@@ -37,6 +37,8 @@ interface ChatState {
   markRead: (sessionId: string) => void;
   /** 유효한 세션 ID Set 을 받아 그 밖의 모든 unread 제거 (orphan cleanup) */
   purgeUnread: (validIds: Set<string>) => void;
+  /** 모든 unread 제거 (채팅 페이지 진입 시 사용) */
+  clearAllUnread: () => void;
 }
 
 const emptyRuntime = (): SessionRuntime => ({
@@ -117,7 +119,8 @@ export const useChatStore = create<ChatState>()(
           const next = { ...s.unread };
           for (const k of orphans) delete next[k];
           return { unread: next };
-        })
+        }),
+      clearAllUnread: () => set({ unread: {} })
     }),
     {
       name: 'claw-chat',

@@ -25,6 +25,7 @@ import { logger } from './logger.js';
 export function createDelegationTracker() {
   const active = new Map();  // targetSessionId → entry
   const byOrigin = new Map(); // originSessionId → [entry, ...]
+  const activeByAgent = new Map(); // agentId → count of active delegations
 
   let idCounter = 0;
 
@@ -49,6 +50,7 @@ export function createDelegationTracker() {
       active.set(targetSessionId, entry);
       if (!byOrigin.has(originSessionId)) byOrigin.set(originSessionId, []);
       byOrigin.get(originSessionId).push(entry);
+      activeByAgent.set(targetAgentId, (activeByAgent.get(targetAgentId) ?? 0) + 1);
       logger.info({ id, originSessionId, targetSessionId, targetAgentId }, 'delegation: created');
       return entry;
     },
@@ -71,6 +73,8 @@ export function createDelegationTracker() {
       entry.completedAt = new Date().toISOString();
       entry.result = result;
       active.delete(targetSessionId);
+      const prev = activeByAgent.get(entry.targetAgentId) ?? 1;
+      activeByAgent.set(entry.targetAgentId, Math.max(0, prev - 1));
       logger.info({ id: entry.id, targetAgentId: entry.targetAgentId }, 'delegation: completed');
       return entry;
     },
@@ -85,8 +89,17 @@ export function createDelegationTracker() {
       entry.completedAt = new Date().toISOString();
       entry.result = `Error: ${error}`;
       active.delete(targetSessionId);
+      const prev = activeByAgent.get(entry.targetAgentId) ?? 1;
+      activeByAgent.set(entry.targetAgentId, Math.max(0, prev - 1));
       logger.warn({ id: entry.id, error }, 'delegation: failed');
       return entry;
+    },
+
+    /**
+     * Returns true if the given agentId has at least one active delegation running.
+     */
+    isAgentBusy(agentId) {
+      return (activeByAgent.get(agentId) ?? 0) > 0;
     },
 
     /**

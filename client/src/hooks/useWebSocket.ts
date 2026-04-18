@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useWsStore } from '../store/ws-store';
 import { useChatStore } from '../store/chat-store';
 import { useToastStore } from '../store/toast-store';
+import { useDelegationStore } from '../store/delegation-store';
 import { getAuthToken } from '../lib/api';
 import { useT } from '../lib/i18n';
 import { playDing, playWarn } from '../lib/sound';
@@ -144,10 +145,18 @@ export function useWebSocket() {
           if (topic === 'delegation.started') {
             const agent = (msg.targetAgentId as string) ?? '?';
             useToastStore.getState().add('info', tRef.current('ws.delegateStart', { agent }));
+            useDelegationStore.getState().add({
+              id: msg.id as string,
+              originSessionId: msg.originSessionId as string,
+              targetSessionId: msg.targetSessionId as string,
+              targetAgentId: msg.targetAgentId as string,
+              task: (msg.task as string) ?? ''
+            });
           }
           if (topic === 'delegation.completed') {
             const agent = (msg.targetAgentId as string) ?? '?';
             useToastStore.getState().add('success', tRef.current('ws.delegateDone', { agent }));
+            useDelegationStore.getState().complete(msg.id as string);
           }
 
           // Generic query invalidation for non-chat events

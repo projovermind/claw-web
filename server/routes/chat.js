@@ -31,6 +31,11 @@ export function createChatRouter({
   // 현재 응답 끝날 때 합쳐서 다음 턴으로 자동 전송
   const messageQueue = new Map();
 
+  // ── 에이전트별 위임 큐 ──
+  // agentId → [{originSessionId, targetAgentId, task, rawText}, ...]
+  // 같은 agentId로 위임이 중복으로 들어오면 큐에 쌓고 현재 위임 완료 시 자동 실행
+  const agentQueue = new Map();
+
   function enqueueMessage(sessionId, message) {
     if (!messageQueue.has(sessionId)) messageQueue.set(sessionId, []);
     messageQueue.get(sessionId).push(message);
@@ -252,6 +257,9 @@ export function createChatRouter({
                 const summary = (responseText ?? '').slice(0, 2000) || '(응답 없음)';
                 const completed = delegationTracker.complete(sessionId, summary);
                 if (completed) {
+                  // 다음 대기 위임 실행 (큐 있으면)
+                  dequeueNextAgent(completed.targetAgentId);
+
                   // 1. 인라인 카드 (사용자 시각 기록용)
                   await sessionsStore.appendMessage(completed.originSessionId, {
                     role: 'assistant',
@@ -300,7 +308,10 @@ export function createChatRouter({
             // Also fail the delegation if this was a delegated session
             if (delegationTracker) {
               const del = delegationTracker.getByTarget(sessionId);
-              if (del) delegationTracker.fail(sessionId, err.message);
+              if (del) {
+                const failed = delegationTracker.fail(sessionId, err.message);
+                if (failed) dequeueNextAgent(failed.targetAgentId);
+              }
             }
           }
         },
@@ -318,7 +329,10 @@ export function createChatRouter({
           }
           if (delegationTracker) {
             const del = delegationTracker.getByTarget(sessionId);
-            if (del) delegationTracker.fail(sessionId, err.message);
+            if (del) {
+              const failed = delegationTracker.fail(sessionId, err.message);
+              if (failed) dequeueNextAgent(failed.targetAgentId);
+            }
           }
         },
         onExit({ code } = {}) {
@@ -434,6 +448,21 @@ export function createChatRouter({
     return null;
   }
 
+  /**
+   * Dequeue and execute the next pending delegation for the given agentId.
+   * Called after a delegation completes or fails.
+   */
+  function dequeueNextAgent(agentId) {
+    const queue = agentQueue.get(agentId);
+    if (!queue || queue.length === 0) return;
+    const next = queue.shift();
+    if (queue.length === 0) agentQueue.delete(agentId);
+    logger.info({ agentId, remaining: agentQueue.get(agentId)?.length ?? 0 }, 'delegation: dequeuing next task');
+    setTimeout(() => {
+      executeDelegation(next.originSessionId, next.targetAgentId, next.task, next.rawText);
+    }, 500);
+  }
+
   async function executeDelegation(originSessionId, targetAgentIdRaw, task, rawText) {
     try {
       // Verify target agent exists (with ID normalization)
@@ -443,6 +472,20 @@ export function createChatRouter({
         await sessionsStore.appendMessage(originSessionId, {
           role: 'assistant',
           content: `⚠️ 위임 실패 — 에이전트 "${targetAgentIdRaw}"를 찾을 수 없습니다.`
+        });
+        return;
+      }
+
+      // 동일 에이전트에 이미 실행 중인 위임이 있으면 큐에 추가
+      if (delegationTracker && delegationTracker.isAgentBusy(targetAgentId)) {
+        if (!agentQueue.has(targetAgentId)) agentQueue.set(targetAgentId, []);
+        const queue = agentQueue.get(targetAgentId);
+        queue.push({ originSessionId, targetAgentId, task, rawText });
+        const pos = queue.length;
+        logger.info({ targetAgentId, queueLength: pos }, 'delegation: queued (agent busy)');
+        await sessionsStore.appendMessage(originSessionId, {
+          role: 'assistant',
+          content: `⏳ **위임 대기** — \`${targetAgentId}\`가 다른 작업을 처리 중입니다. 대기열 ${pos}번째에 추가됐습니다.\n\n**작업**: ${task}`
         });
         return;
       }
