@@ -532,7 +532,7 @@ function DelegationCard({ data, targetRunning = false }: { data: DelegationData;
           ? { border: 'border-zinc-700', bg: 'bg-zinc-900/60', text: 'text-zinc-300', icon: <ArrowRight size={14} className="text-zinc-400" />, label: data.loop ? '위임 요청 (Loop)' : '위임 요청' }
           : targetRunning
             ? { border: 'border-amber-600/60', bg: 'bg-amber-950/20', text: 'text-amber-200', icon: <Loader2 size={14} className="text-amber-400 animate-spin" />, label: data.loop ? '작업 중 (Ralph Loop)' : '작업 중' }
-            : { border: 'border-sky-800/60', bg: 'bg-sky-950/30', text: 'text-sky-200', icon: <ArrowRight size={14} className="text-sky-400" />, label: data.loop ? '위임 중 (Ralph Loop)' : '위임 중' };
+            : { border: 'border-amber-700/50', bg: 'bg-amber-950/20', text: 'text-amber-200', icon: <ArrowRight size={14} className="text-amber-400" />, label: data.loop ? '위임 중 (Ralph Loop)' : '위임 중' };
   // 접힘 라벨: note 우선 → task
   const preview = data.note || data.task || '';
   return (
