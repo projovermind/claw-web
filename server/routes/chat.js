@@ -194,7 +194,7 @@ export function createChatRouter({
       const isLead = meta.tier === 'project';
       const leadPrefix = isLead
         ? `당신은 이 프로젝트의 리드 에이전트입니다. 작업 시작/완료/진행 상황을 반드시 대시보드에 기록하세요. 목표는 시작 시 todo로 추가하고, 완료 시 done으로 갱신하세요. 위젯/메모도 적극 활용하세요.\n`
-        : `작업 완료/진행 시 프로젝트 대시보드를 업데이트할 수 있습니다.\n`;
+        : `작업 완료 시 반드시 프로젝트 대시보드를 업데이트하세요. 작업 시작 시 goal을 todo로 추가하고, 완료 시 done으로 갱신하세요.\n`;
       agent.dashboardHint = `\n<dashboard-api>\n${leadPrefix}- 목표 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/goals -H "Content-Type: application/json" -d '{"title":"목표","status":"todo"}'\n- 목표 완료: curl -s -X PATCH http://localhost:3838/api/projects/${meta.projectId}/goals/GOAL_ID -H "Content-Type: application/json" -d '{"status":"done"}'\n- 위젯 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/widgets -H "Content-Type: application/json" -d '{"type":"link","title":"제목","value":"URL"}'\n- 메모 수정: curl -s -X PUT http://localhost:3838/api/projects/${meta.projectId}/notes -H "Content-Type: application/json" -d '{"notes":"내용"}'\n</dashboard-api>`;
     }
 
