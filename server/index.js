@@ -51,6 +51,7 @@ import { createScheduler } from './lib/scheduler.js';
 import { createDelegationTracker } from './lib/delegation-tracker.js';
 import { createPushStore } from './lib/push-store.js';
 import { createPushRouter } from './routes/push.js';
+import { createSessionAnalyzer } from './lib/session-analyzer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -222,6 +223,7 @@ async function main() {
     eventBus
   });
   const activityLog = createActivityLog({ filePath: ACTIVITY_PATH, eventBus });
+  createSessionAnalyzer({ eventBus, sessionsStore, configStore });
   const healthCheck = createHealthCheck({ botPidFile: webConfig.botPidFile });
 
   // Auto-backup critical JSON files
