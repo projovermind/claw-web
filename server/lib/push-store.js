@@ -58,6 +58,13 @@ export function createPushStore({ webConfig, webConfigPath }) {
 
   loadSubs();
 
+  // ── Runner ref — 활성 세션 있으면 알림 억제 ─────────────────
+  let runnerRef = null;
+  function setRunnerRef(r) { runnerRef = r; }
+  function isRunnerActive() {
+    try { return runnerRef && runnerRef.activeIds().length > 0; } catch { return false; }
+  }
+
   // ── lastDesktopActivity ──────────────────────────────────────
   let lastDesktopActivity = null;
 
@@ -87,8 +94,12 @@ export function createPushStore({ webConfig, webConfigPath }) {
   }
 
   // ── Send push ────────────────────────────────────────────────
-  async function sendPushToAll(title, body, { skipIdleCheck = false } = {}) {
+  async function sendPushToAll(title, body, { skipIdleCheck = false, skipRunnerCheck = false } = {}) {
     if (webConfig.push?.enabled === false) return { skipped: 'disabled' };
+    if (!skipRunnerCheck && isRunnerActive()) {
+      logger.debug('push-store: runner active — skipping push');
+      return { skipped: 'runner_active' };
+    }
     if (!skipIdleCheck && isDesktopActive()) {
       logger.debug('push-store: desktop active — skipping push');
       return { skipped: 'desktop_active' };
@@ -129,6 +140,7 @@ export function createPushStore({ webConfig, webConfigPath }) {
     addSubscription,
     removeSubscription,
     touchActivity,
+    setRunnerRef,
     sendPushToAll
   };
 }

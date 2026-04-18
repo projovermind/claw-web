@@ -839,23 +839,59 @@ export function createChatRouter({
   });
 
   /**
-   * 서버 재시작 시 중단된 세션을 자동 재개 — 마지막 user 메시지를 runner 에 재제출.
-   * index.js 의 시작 단계에서 pending-resume.json 기반으로 호출.
+   * 서버 재시작 시 중단된 세션을 자동 재개.
+   *
+   * 두 가지 경로:
+   * (1) Claude CLI 세션 ID 가 있으면 --resume 으로 회복 (가장 완전한 컨텍스트 보존)
+   * (2) 세션 ID 가 없으면 (응답 1회도 완료 못 함) 지난 대화 히스토리를 텍스트 블록으로
+   *     user 메시지 앞에 prepend 해 컨텍스트 유실 최소화
    */
   async function resumeInterruptedSession(sessionId) {
     const session = sessionsStore.get(sessionId);
     if (!session) return false;
     const msgs = Array.isArray(session.messages) ? session.messages : [];
     // 마지막 user 메시지 찾기 (응답 중단 알림 직전의 user 입력)
-    const lastUser = [...msgs].reverse().find((m) => m?.role === 'user');
+    const lastUserIdx = [...msgs].reverse().findIndex((m) => m?.role === 'user');
+    if (lastUserIdx < 0) return false;
+    const absoluteIdx = msgs.length - 1 - lastUserIdx;
+    const lastUser = msgs[absoluteIdx];
     if (!lastUser?.content) return false;
-    logger.info({ sessionId }, 'resuming interrupted session from last user message');
-    // 재개 안내 메시지 append → 사용자가 UI 에서 인지
+
+    const hasClaudeId = !!(session.claudeSessionId || session.claude_session_id);
+    const priorMsgs = msgs.slice(0, absoluteIdx).filter((m) =>
+      (m?.role === 'user' || m?.role === 'assistant') &&
+      typeof m?.content === 'string' &&
+      !m.content.startsWith('▶') && !m.content.startsWith('⚠️')
+    );
+
+    logger.info(
+      { sessionId, hasClaudeId, priorCount: priorMsgs.length },
+      'resuming interrupted session'
+    );
+
     await sessionsStore.appendMessage(sessionId, {
       role: 'assistant',
-      content: '▶ **재시작 후 작업 이어가기** — 마지막 메시지로 다시 시도합니다.'
+      content: hasClaudeId
+        ? '▶ **재시작 후 작업 이어가기** — 이전 세션을 복원합니다.'
+        : '▶ **재시작 후 작업 이어가기** — 이전 세션 ID 가 없어 대화 컨텍스트를 재주입합니다.'
     }).catch(() => {});
-    sendRunnerMessage(sessionId, lastUser.content);
+
+    // claudeSessionId 없으면 직전 대화 히스토리를 메시지 본문 앞에 prepend
+    let content = lastUser.content;
+    if (!hasClaudeId && priorMsgs.length > 0) {
+      const TAIL = 12; // 직전 12턴만 — 토큰 폭주 방지
+      const slice = priorMsgs.slice(-TAIL);
+      const contextBlock = slice
+        .map((m) => {
+          const who = m.role === 'user' ? '사용자' : '어시스턴트';
+          const text = String(m.content).slice(0, 1500); // 긴 메시지는 잘라냄
+          return `[${who}]\n${text}`;
+        })
+        .join('\n\n');
+      content = `<이전-대화-컨텍스트>\n${contextBlock}\n</이전-대화-컨텍스트>\n\n위 대화에 이어서 다음 메시지에 답하세요:\n\n${lastUser.content}`;
+    }
+
+    sendRunnerMessage(sessionId, content);
     return true;
   }
 
