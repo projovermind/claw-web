@@ -5,39 +5,101 @@ LOG="/tmp/claw-web-install.log"
 echo "[preinstall] $(date)" >> "$LOG"
 
 # ═══════════════════════════════════════════════
-# 1. 인증번호 입력 (공란 거부)
+# 1. 인증번호 입력 + Google Sheets A열 대조
 # ═══════════════════════════════════════════════
-# Google Sheets A열에 등록된 인증번호 중 하나를 입력해야 설치 진행.
-# 시트가 "웹에 게시 (CSV)" 되면 실제 값 대조 가능. 현재는 공란만 거부.
+# 공개된 CSV URL 에서 A열 값들 fetch → 입력값이 포함되는지 확인.
+# 네트워크 실패 시에는 공란만 거부하는 fallback 모드로 전환.
 
-LICENSE=$(osascript 2>/dev/null <<'OSA'
+LICENSE_CSV_URL="https://docs.google.com/spreadsheets/d/e/2PACX-1vQMglOPUJkiMKJ7e7T8CbyA9vMoN8YjWTDfmZFKAQ3VEkM5zPhyu5pKyoKpKyv494rBuDiXG-ozmBCE/pub?gid=0&single=true&output=csv"
+
+# 1-1) 시트 fetch (10초 타임아웃)
+VALID_CODES=""
+FETCH_OK=0
+if VALID_CODES=$(curl -sL --max-time 10 "$LICENSE_CSV_URL" 2>/dev/null); then
+  # CSV 의 각 줄에서 첫 칼럼만 추출, 공백/CR 제거, 빈 라인 제외
+  VALID_CODES=$(echo "$VALID_CODES" \
+    | awk -F',' '{print $1}' \
+    | tr -d '\r' \
+    | awk '{gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0); if ($0 != "") print}')
+  if [ -n "$VALID_CODES" ]; then
+    FETCH_OK=1
+    CODE_COUNT=$(echo "$VALID_CODES" | wc -l | tr -d ' ')
+    echo "[preinstall] license sheet fetched: $CODE_COUNT codes" >> "$LOG"
+  fi
+fi
+
+if [ "$FETCH_OK" != "1" ]; then
+  echo "[preinstall] license sheet fetch failed — fallback to empty-only rejection" >> "$LOG"
+fi
+
+# 1-2) 인증번호 입력 다이얼로그 (재시도 3회)
+MAX_ATTEMPTS=3
+ATTEMPT=1
+LICENSE_OK=0
+
+while [ "$ATTEMPT" -le "$MAX_ATTEMPTS" ] && [ "$LICENSE_OK" = "0" ]; do
+  if [ "$FETCH_OK" = "1" ]; then
+    PROMPT_MSG="Claw Web 설치 인증번호를 입력하세요.
+
+시트에 등록된 인증번호 중 하나를 입력해주세요.
+시도 $ATTEMPT/$MAX_ATTEMPTS"
+  else
+    PROMPT_MSG="Claw Web 설치 인증번호를 입력하세요.
+(오프라인 — 공란만 거부됩니다)
+
+시도 $ATTEMPT/$MAX_ATTEMPTS"
+  fi
+
+  LICENSE=$(osascript 2>/dev/null <<OSA
 try
-  set dlg to display dialog "Claw Web 설치 인증번호를 입력하세요.
-
-Google Sheets A열의 인증번호 중 하나를 입력해주세요.
-(공란은 허용되지 않습니다)" default answer "" with title "Claw Web — 인증번호 확인" buttons {"취소", "설치 계속"} default button 2 with icon note
+  set dlg to display dialog "$PROMPT_MSG" default answer "" with title "Claw Web — 인증번호 확인" buttons {"취소", "설치 계속"} default button 2 with icon note
   return text returned of dlg
 on error
-  return ""
+  return "__CANCELLED__"
 end try
 OSA
 )
 
-# trim whitespace
-LICENSE_TRIM=$(echo "$LICENSE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  if [ "$LICENSE" = "__CANCELLED__" ]; then
+    osascript -e 'display dialog "설치가 취소되었습니다." buttons {"확인"} default button 1 with icon stop with title "Claw Web"' 2>/dev/null || true
+    echo "[preinstall] FAILED: user cancelled" >> "$LOG"
+    exit 1
+  fi
 
-if [ -z "$LICENSE_TRIM" ]; then
-  osascript -e 'display dialog "인증번호가 비어있거나 취소되었습니다.
-설치를 중단합니다." buttons {"확인"} default button 1 with icon stop with title "Claw Web — 설치 취소"' 2>/dev/null || true
-  echo "[preinstall] FAILED: empty/cancelled license" >> "$LOG"
+  # trim
+  LICENSE_TRIM=$(echo "$LICENSE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+  if [ -z "$LICENSE_TRIM" ]; then
+    osascript -e 'display dialog "인증번호를 비울 수 없습니다." buttons {"다시 입력"} default button 1 with icon stop with title "Claw Web"' 2>/dev/null || true
+    ATTEMPT=$((ATTEMPT + 1))
+    continue
+  fi
+
+  if [ "$FETCH_OK" = "1" ]; then
+    # 시트 A열 중 하나와 정확히 일치하는지 체크 (case-sensitive)
+    if echo "$VALID_CODES" | grep -Fxq "$LICENSE_TRIM"; then
+      LICENSE_OK=1
+    else
+      osascript -e "display dialog \"입력한 인증번호가 시트에 없습니다.\n다시 입력해주세요.\" buttons {\"다시 입력\"} default button 1 with icon stop with title \"Claw Web\"" 2>/dev/null || true
+      ATTEMPT=$((ATTEMPT + 1))
+    fi
+  else
+    # 오프라인 fallback: 공란만 아니면 통과
+    LICENSE_OK=1
+  fi
+done
+
+if [ "$LICENSE_OK" != "1" ]; then
+  osascript -e "display dialog \"인증번호 확인에 $MAX_ATTEMPTS 회 실패했습니다.\n설치를 중단합니다.\" buttons {\"확인\"} default button 1 with icon stop with title \"Claw Web\"" 2>/dev/null || true
+  echo "[preinstall] FAILED: license mismatch after $MAX_ATTEMPTS attempts" >> "$LOG"
   exit 1
 fi
 
-# 인증번호 기록 (향후 서버 검증 시 참조용)
+# 통과한 인증번호 기록
 mkdir -p /var/db 2>/dev/null || true
 echo "$LICENSE_TRIM" > /var/db/claw-web-license.txt 2>/dev/null || true
 chmod 644 /var/db/claw-web-license.txt 2>/dev/null || true
-echo "[preinstall] license recorded (${#LICENSE_TRIM} chars)" >> "$LOG"
+echo "[preinstall] license OK (fetched=$FETCH_OK, len=${#LICENSE_TRIM})" >> "$LOG"
 
 # ═══════════════════════════════════════════════
 # 2. Node.js 확인
