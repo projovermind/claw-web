@@ -1,6 +1,12 @@
 #!/bin/bash
 # Claw Web — preinstall: 인증번호 확인 + Node.js 체크
 set -e
+
+# 한글 깨짐 방지
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+export LANGUAGE=en_US.UTF-8
+
 LOG="/tmp/claw-web-install.log"
 echo "[preinstall] $(date)" >> "$LOG"
 
@@ -105,15 +111,88 @@ echo "[preinstall] license OK (fetched=$FETCH_OK, len=${#LICENSE_TRIM})" >> "$LO
 # 2. Node.js 확인
 # ═══════════════════════════════════════════════
 NODE_PATH=""
-for p in /usr/local/bin/node /opt/homebrew/bin/node; do
+
+# 일반 경로 탐색
+for p in \
+  /usr/local/bin/node \
+  /opt/homebrew/bin/node \
+  /opt/homebrew/opt/node/bin/node \
+  /opt/homebrew/opt/node@22/bin/node \
+  /opt/homebrew/opt/node@20/bin/node \
+  /usr/local/opt/node@22/bin/node \
+  /usr/local/opt/node@20/bin/node; do
   if [ -x "$p" ]; then NODE_PATH="$p"; break; fi
 done
 
+# nvm 경로 탐색 (설치된 가장 최신 버전)
 if [ -z "$NODE_PATH" ]; then
-  osascript -e 'display dialog "Node.js가 설치되어 있지 않습니다.
-https://nodejs.org 에서 먼저 설치해주세요." buttons {"확인"} default button 1 with icon stop with title "Claw Web"' 2>/dev/null || true
-  echo "[preinstall] FAILED: Node.js not found" >> "$LOG"
-  exit 1
+  REAL_USER_NVM=$(stat -f '%Su' /dev/console 2>/dev/null || echo "${SUDO_USER:-}")
+  NVM_DIR_CANDIDATES="/Users/$REAL_USER_NVM/.nvm /root/.nvm"
+  for nvm_dir in $NVM_DIR_CANDIDATES; do
+    if [ -d "$nvm_dir/versions/node" ]; then
+      NVM_NODE=$(ls -1 "$nvm_dir/versions/node" 2>/dev/null | sort -V | tail -1)
+      if [ -n "$NVM_NODE" ] && [ -x "$nvm_dir/versions/node/$NVM_NODE/bin/node" ]; then
+        NODE_PATH="$nvm_dir/versions/node/$NVM_NODE/bin/node"
+        break
+      fi
+    fi
+  done
+fi
+
+# volta 경로 탐색
+if [ -z "$NODE_PATH" ]; then
+  REAL_USER_VOLTA=$(stat -f '%Su' /dev/console 2>/dev/null || echo "${SUDO_USER:-}")
+  VOLTA_NODE="/Users/$REAL_USER_VOLTA/.volta/bin/node"
+  if [ -x "$VOLTA_NODE" ]; then
+    NODE_PATH="$VOLTA_NODE"
+  fi
+fi
+
+if [ -z "$NODE_PATH" ]; then
+  # Homebrew 있으면 자동 설치 제안
+  BREW_PATH=""
+  for bp in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    if [ -x "$bp" ]; then BREW_PATH="$bp"; break; fi
+  done
+
+  if [ -n "$BREW_PATH" ]; then
+    AUTO_INSTALL=$(osascript 2>/dev/null <<OSA
+try
+  set dlg to display dialog "Node.js가 설치되어 있지 않습니다.
+Homebrew로 자동 설치할까요?" buttons {"취소", "자동 설치"} default button 2 with icon note with title "Claw Web — Node.js 필요"
+  return button returned of dlg
+on error
+  return "취소"
+end try
+OSA
+)
+    if [ "$AUTO_INSTALL" = "자동 설치" ]; then
+      REAL_USER_PRE=$(stat -f '%Su' /dev/console 2>/dev/null || echo "$SUDO_USER")
+      echo "[preinstall] brewing node@22 as $REAL_USER_PRE..." >> "$LOG"
+      su "$REAL_USER_PRE" -c "/opt/homebrew/bin/brew install node@22" 2>> "$LOG" || \
+        su "$REAL_USER_PRE" -c "/usr/local/bin/brew install node@22" 2>> "$LOG" || true
+      # 설치 후 재확인
+      for p in /opt/homebrew/bin/node /usr/local/bin/node /opt/homebrew/opt/node@22/bin/node; do
+        if [ -x "$p" ]; then NODE_PATH="$p"; break; fi
+      done
+      if [ -z "$NODE_PATH" ]; then
+        osascript -e 'display dialog "Node.js 자동 설치에 실패했습니다.\nhttps://nodejs.org 에서 수동으로 설치 후 다시 실행해주세요." buttons {"확인"} default button 1 with icon stop with title "Claw Web"' 2>/dev/null || true
+        echo "[preinstall] FAILED: brew install node@22 failed" >> "$LOG"
+        exit 1
+      fi
+    else
+      echo "[preinstall] FAILED: user cancelled Node.js auto-install" >> "$LOG"
+      exit 1
+    fi
+  else
+    # Homebrew 없음 → nodejs.org 열기
+    osascript -e 'display dialog "Node.js가 설치되어 있지 않습니다.
+지금 nodejs.org 다운로드 페이지를 열겠습니다.
+설치 후 다시 실행해주세요." buttons {"확인"} default button 1 with icon stop with title "Claw Web — Node.js 필요"' 2>/dev/null || true
+    open "https://nodejs.org/ko/download" 2>/dev/null || true
+    echo "[preinstall] FAILED: Node.js not found, opened nodejs.org" >> "$LOG"
+    exit 1
+  fi
 fi
 
 NODE_VER=$($NODE_PATH -v | sed 's/v//' | cut -d. -f1)

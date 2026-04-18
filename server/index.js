@@ -64,6 +64,19 @@ const PROCESS_TRACKER_PATH = path.join(REPO_ROOT, 'logs', 'running-processes.jso
 
 async function main() {
   const webConfig = loadWebConfig(WEB_CONFIG_PATH);
+
+  // ── 자가 보정: REPO_ROOT 가 allowedRoots 에 없으면 자동 추가 ──
+  // 폴더 이름 변경 (hivemind-web → claw-web 등) 에 대응하기 위함.
+  // web-config.json 을 직접 수정하진 않고 메모리에서만 보정.
+  if (!Array.isArray(webConfig.allowedRoots)) webConfig.allowedRoots = [];
+  const hasRepoRoot = webConfig.allowedRoots.some((p) => {
+    try { return path.resolve(p) === path.resolve(REPO_ROOT); } catch { return false; }
+  });
+  if (!hasRepoRoot) {
+    webConfig.allowedRoots.push(REPO_ROOT + '/');
+    logger.info({ repoRoot: REPO_ROOT }, 'auto-added REPO_ROOT to allowedRoots');
+  }
+
   const configStore = await createConfigStore(webConfig.configPath);
   const metadataStore = await createMetadataStore(METADATA_PATH);
   const projectsStore = await createProjectsStore(PROJECTS_PATH);

@@ -2,8 +2,14 @@
 # Claw Web — postinstall: npm install + LaunchAgent + 사용자 설정
 set -e
 
+# 한글 깨짐 방지
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+export LANGUAGE=en_US.UTF-8
+
 INSTALL_DIR="/usr/local/lib/claw-web"
 LOG="/tmp/claw-web-install.log"
+TOTAL_STEPS=6
 
 echo "[postinstall] $(date)" >> "$LOG"
 
@@ -15,22 +21,29 @@ NPM_BIN=$(command -v npm 2>/dev/null || echo "/usr/local/bin/npm")
 
 echo "[postinstall] node=$NODE_BIN npm=$NPM_BIN" >> "$LOG"
 
+# ── 알림 헬퍼 ────────────────────────────────────────────
+notify() {
+  local step="$1"
+  local msg="$2"
+  osascript -e "display notification \"[${step}/${TOTAL_STEPS}] ${msg}\" with title \"Claw Web 설치 중...\"" 2>/dev/null || true
+  echo "[postinstall] STEP ${step}/${TOTAL_STEPS}: ${msg}" >> "$LOG"
+}
+
 # ── 1. npm install ────────────────────────────────────────
-# 서버: production deps만 (devDeps 불필요)
-echo "[postinstall] npm install (server)..." >> "$LOG"
+notify "1" "서버 의존성 설치 중..."
 cd "$INSTALL_DIR"
 "$NPM_BIN" install --omit=dev --loglevel=error 2>> "$LOG" || \
 "$NPM_BIN" install --production --loglevel=error 2>> "$LOG" || true
 
-# 클라이언트: devDeps 포함 (vite, typescript, tailwind 빌드에 필요)
+notify "2" "클라이언트 의존성 설치 중..."
 echo "[postinstall] npm install (client — with devDeps for build)..." >> "$LOG"
 "$NPM_BIN" --prefix client install --loglevel=error 2>> "$LOG" || true
 
 # ── 2. 클라이언트 빌드 ───────────────────────────────────
+notify "3" "클라이언트 빌드 중... (1~2분 소요)"
 echo "[postinstall] building client..." >> "$LOG"
 "$NPM_BIN" run build 2>> "$LOG" || true
 
-# 빌드 후 client devDeps 정리 (용량 절약)
 echo "[postinstall] cleaning client devDeps..." >> "$LOG"
 "$NPM_BIN" --prefix client prune --omit=dev --loglevel=error 2>> "$LOG" || true
 
@@ -42,6 +55,23 @@ if [ -z "$REAL_HOME" ] || [ "$REAL_HOME" = "~" ]; then
 fi
 
 echo "[postinstall] real user=$REAL_USER home=$REAL_HOME" >> "$LOG"
+
+# ── Claude CLI 확인 + 자동 설치 ──────────────────────────
+CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
+if [ -z "$CLAUDE_BIN" ]; then
+  notify "4" "Claude CLI 설치 중..."
+  echo "[postinstall] Claude CLI not found — installing..." >> "$LOG"
+  su "$REAL_USER" -c "\"$NPM_BIN\" install -g @anthropic-ai/claude-code" 2>> "$LOG" || true
+  CLAUDE_BIN=$(su "$REAL_USER" -c "command -v claude 2>/dev/null" 2>/dev/null || true)
+  if [ -n "$CLAUDE_BIN" ]; then
+    echo "[postinstall] Claude CLI installed: $CLAUDE_BIN" >> "$LOG"
+  else
+    echo "[postinstall] Claude CLI install failed (non-fatal)" >> "$LOG"
+  fi
+else
+  notify "4" "Claude CLI 확인 완료"
+  echo "[postinstall] Claude CLI found: $CLAUDE_BIN" >> "$LOG"
+fi
 
 # ── 4. 사용자 데이터 디렉토리 ─────────────────────────────
 USER_DATA="$REAL_HOME/.claw-web"
@@ -110,6 +140,7 @@ ln -sf "$USER_DATA/agents-config.json" "$INSTALL_DIR/agents-config.json" 2>/dev/
 
 echo "[postinstall] data dir ready: $USER_DATA" >> "$LOG"
 
+notify "5" "자동 시작 등록 중..."
 # ── 5. LaunchAgent 등록 ──────────────────────────────────
 PLIST_DIR="$REAL_HOME/Library/LaunchAgents"
 mkdir -p "$PLIST_DIR"
@@ -157,6 +188,7 @@ fi
 
 # ── 7. 브라우저 열기 ──────────────────────────────────────
 sleep 2
+notify "6" "설치 완료! Claw Web을 시작합니다."
 su "$REAL_USER" -c "open http://localhost:3838" 2>/dev/null || true
 
 echo "[postinstall] COMPLETE" >> "$LOG"

@@ -24,7 +24,11 @@ const CLAUDE_BIN = findClaudeBin();
 const MODEL_ID_MAP = {
   opus: 'claude-opus-4-7',
   sonnet: 'claude-sonnet-4-6',
-  haiku: 'claude-sonnet-4-6' // haiku banned → sonnet fallback
+  haiku: 'claude-sonnet-4-6', // haiku banned → sonnet fallback
+  // GLM 계열 — 그대로 통과
+  'glm-5.1': 'glm-5.1',
+  'glm-4-5': 'glm-4-5',
+  'glm-4': 'glm-4',
 };
 
 export function startClaudeRun({
@@ -57,7 +61,8 @@ export function startClaudeRun({
   // ── 모델 결정 (봇 bot.js 라인 2391-2410 동일) ──
   // 항상 MODEL_ID_MAP으로 변환 — Z.AI anthropic 프록시도 claude-sonnet-4-6을 받음
   const rawModel = (agent.model ?? 'opus').toLowerCase();
-  const model = MODEL_ID_MAP[rawModel] ?? agent.model ?? 'claude-opus-4-6';
+  // glm- 으로 시작하는 모델은 원본 그대로 통과 (맵 등록 유무 무관)
+  const model = MODEL_ID_MAP[rawModel] ?? (rawModel.startsWith('glm-') ? agent.model : null) ?? agent.model ?? 'claude-opus-4-6';
 
   // ⚠️ 핵심: --model 플래그만으로는 -p 모드에서 무시될 수 있음
   // ANTHROPIC_MODEL 환경변수로도 동시에 세팅 (봇 bot.js 라인 2408-2410)
