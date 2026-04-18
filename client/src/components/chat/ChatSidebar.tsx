@@ -52,6 +52,7 @@ export function ChatSidebar({
   const qc = useQueryClient();
   const t = useT();
   const unread = useChatStore((s) => s.unread);
+  const runtime = useChatStore((s) => s.runtime);
   const { data: backendsState } = useQuery({ queryKey: ['backends'], queryFn: api.backends });
   const { data: allSessionsData } = useQuery({
     queryKey: ['sessions-all'],
@@ -80,7 +81,7 @@ export function ChatSidebar({
         byAgent[s.agentId].unread = true;
         if (unread[s.id].isError) byAgent[s.agentId].isError = true;
       }
-      if (s.isRunning) byAgent[s.agentId].running = true;
+      if (s.isRunning || runtime[s.id]?.running) byAgent[s.agentId].running = true;
     }
     return byAgent;
   }, [allSessionsData, unread, currentSessionId]);
@@ -247,7 +248,15 @@ export function ChatSidebar({
             style={{ background: contextColor }}
           />
           <div className="flex-1 min-w-0 text-left">
-            <div className="font-semibold truncate">{contextLabel}</div>
+            <div className="font-semibold truncate flex items-center gap-1.5">
+              {contextLabel}
+              {currentProject && projectStatus[currentProject.id]?.running && (
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+              )}
+              {!currentProject && currentAgentId && agentStatus[currentAgentId]?.running && (
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+              )}
+            </div>
             {contextSubLabel && (
               <div className="text-[11px] text-zinc-500 truncate">
                 → {contextSubLabel}
@@ -469,7 +478,7 @@ export function ChatSidebar({
                 {!selectMode && isUnread && (
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 animate-pulse ${unread[s.id]?.isError ? 'bg-red-400' : 'bg-sky-400'}`} title={t('chat.session.unread')} />
                 )}
-                {!selectMode && !isUnread && s.isRunning && (
+                {!selectMode && !isUnread && (s.isRunning || runtime[s.id]?.running) && (
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title={t('chat.session.running')} />
                 )}
                 {!selectMode && s.pinned && (
@@ -556,7 +565,7 @@ export function ChatSidebar({
                   title={`${agent?.name ?? s.agentId} — ${s.title}`}
                 >
                   {isUnreadRecent && <span className={`w-1.5 h-1.5 rounded-full shrink-0 animate-pulse ${unread[s.id]?.isError ? 'bg-red-400' : 'bg-sky-400'}`} />}
-                  {!isUnreadRecent && s.isRunning && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" />}
+                  {!isUnreadRecent && (s.isRunning || runtime[s.id]?.running) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" />}
                   <span className="shrink-0">{agent?.avatar ?? '🤖'}</span>
                   <span className="flex-1 truncate">{s.title}</span>
                   <span className="text-zinc-600 text-[10px] shrink-0 truncate max-w-[60px]">
