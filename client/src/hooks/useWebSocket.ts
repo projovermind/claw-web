@@ -94,11 +94,15 @@ export function useWebSocket() {
           }
           if (topic === 'chat.done') {
             const sid = msg.sessionId as string;
-            queryClient
-              .invalidateQueries({ queryKey: ['session', sid] })
-              .finally(() => {
-                useChatStore.getState().finishRun(sid, null);
-              });
+            // refetchQueries 로 실제 데이터가 돌아올 때까지 기다린 후 streaming 클리어
+            // → 최종 메시지가 MessageList에 반영된 뒤 StreamingMessage가 사라짐 (공백 없음)
+            const timeout = new Promise<void>(resolve => setTimeout(resolve, 4000));
+            Promise.race([
+              queryClient.refetchQueries({ queryKey: ['session', sid] }),
+              timeout
+            ]).finally(() => {
+              useChatStore.getState().finishRun(sid, null);
+            });
             queryClient.invalidateQueries({ queryKey: ['sessions'] });
             // 띠링 알림음 — settings 캐시에서 enabled/volume 읽음
             try {

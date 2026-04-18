@@ -20,7 +20,8 @@ export default function StreamingMessage({ text, toolCalls, running, error, onCh
   const [toolsOpen, setToolsOpen] = useState(false);
   const { body, choices } = useMemo(() => extractChoices(text), [text]);
 
-  if (!running && !error) return null;
+  // running=false 이어도 text/toolCalls 가 남아있으면 최종 메시지 로드 전까지 계속 표시
+  if (!running && !error && !text && toolCalls.length === 0) return null;
 
   return (
     <div className="flex justify-start">
