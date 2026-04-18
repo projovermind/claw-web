@@ -29,7 +29,7 @@ export function createPushStore({ webConfig, webConfigPath }) {
   }
 
   webpush.setVapidDetails(
-    'mailto:admin@localhost',
+    'mailto:admin@claw-web.app',
     webConfig.vapidPublicKey,
     webConfig.vapidPrivateKey
   );
@@ -87,26 +87,30 @@ export function createPushStore({ webConfig, webConfigPath }) {
   }
 
   // ── Send push ────────────────────────────────────────────────
-  async function sendPushToAll(title, body) {
-    if (webConfig.push?.enabled === false) return; // 명시적 false 일 때만 비활성
-    if (isDesktopActive()) {
+  async function sendPushToAll(title, body, { skipIdleCheck = false } = {}) {
+    if (webConfig.push?.enabled === false) return { skipped: 'disabled' };
+    if (!skipIdleCheck && isDesktopActive()) {
       logger.debug('push-store: desktop active — skipping push');
-      return;
+      return { skipped: 'desktop_active' };
     }
-    if (subscriptions.length === 0) return;
+    if (subscriptions.length === 0) return { skipped: 'no_subscriptions' };
 
     const payload = JSON.stringify({ title, body });
     const expired = [];
+    const results = [];
 
     await Promise.allSettled(
       subscriptions.map(async (sub) => {
         try {
           await webpush.sendNotification(sub, payload);
+          results.push({ endpoint: sub.endpoint.slice(0, 40), ok: true });
         } catch (err) {
           if (err.statusCode === 410 || err.statusCode === 404) {
             expired.push(sub.endpoint);
+            results.push({ endpoint: sub.endpoint.slice(0, 40), ok: false, reason: 'expired' });
           } else {
             logger.warn({ err, endpoint: sub.endpoint }, 'push-store: send failed');
+            results.push({ endpoint: sub.endpoint.slice(0, 40), ok: false, status: err.statusCode, reason: err.body || err.message });
           }
         }
       })
@@ -117,6 +121,7 @@ export function createPushStore({ webConfig, webConfigPath }) {
       await saveSubs();
       logger.info({ removed: expired.length }, 'push-store: removed expired subscriptions');
     }
+    return { results };
   }
 
   return {

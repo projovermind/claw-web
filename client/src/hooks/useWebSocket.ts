@@ -77,7 +77,10 @@ export function useWebSocket() {
 
           // Chat events → dispatch into chat store (DO NOT invalidate agents/sessions queries mid-stream)
           if (topic === 'chat.started') {
-            useChatStore.getState().startRun(msg.sessionId as string);
+            const sid = msg.sessionId as string;
+            // Invalidate session so other clients see the user message immediately
+            queryClient.invalidateQueries({ queryKey: ['session', sid] });
+            useChatStore.getState().startRun(sid);
             return;
           }
           if (topic === 'chat.chunk') {

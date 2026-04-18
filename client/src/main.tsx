@@ -6,6 +6,10 @@ import App from './App';
 import './index.css';
 import 'highlight.js/styles/github-dark.css';
 
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(console.error);
+}
+
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } }
 });

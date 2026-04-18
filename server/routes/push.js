@@ -52,5 +52,17 @@ export function createPushRouter({ pushStore }) {
     res.json({ ok: true });
   });
 
+  // POST /api/push/test — 테스트 알림 전송
+  router.post('/test', async (req, res, next) => {
+    try {
+      const title = req.body?.title || 'Claw Web';
+      const body = req.body?.body || 'Test notification';
+      const result = await pushStore.sendPushToAll(title, body, { skipIdleCheck: true });
+      res.json({ ok: true, ...result });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   return router;
 }

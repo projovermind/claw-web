@@ -48,45 +48,67 @@ function ToolCallsCollapsed({ toolCalls, ts }: { toolCalls: { name: string; inpu
 export function ChoicesList({ choices, onChoice }: { choices: ChoiceItem[]; onChoice: (c: string) => void }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [custom, setCustom] = useState('');
+  const [selected, setSelected] = useState<string | null>(null);
   const t = useT();
+
+  const handleChoice = (text: string) => {
+    setSelected(text);
+    setCustomOpen(false);
+    onChoice(text);
+  };
 
   const submitCustom = () => {
     const v = custom.trim();
     if (!v) return;
-    onChoice(v);
+    handleChoice(v);
     setCustom('');
-    setCustomOpen(false);
   };
 
   return (
     <div className="mt-3 flex flex-col gap-1.5">
-      {choices.map((c, i) => (
-        <button
-          key={i}
-          onClick={() => onChoice(c.text)}
-          className={`text-left px-3 py-2 rounded border text-xs transition-colors relative ${
-            c.recommended
-              ? 'border-amber-500/60 bg-amber-900/20 hover:border-amber-400 hover:bg-amber-900/30 text-amber-50 shadow-[0_0_12px_rgba(251,191,36,0.2)]'
-              : 'border-zinc-700 bg-zinc-800/40 hover:border-emerald-600 hover:bg-emerald-900/20 text-zinc-200'
-          }`}
-        >
-          <span className={`font-mono mr-2 ${c.recommended ? 'text-amber-300' : 'text-emerald-400'}`}>
-            {c.recommended ? '⭐' : `${i + 1}.`}
-          </span>
-          <span className="markdown-body inline-block" style={{ display: 'inline' }}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]}
-              components={{ p: ({children}) => <span>{children}</span> }}>
-              {c.text}
-            </ReactMarkdown>
-          </span>
-          {c.recommended && (
-            <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-amber-500 text-zinc-900 text-[10px] font-bold">
-              {t('chat.choices.recommended')}
+      {choices.map((c, i) => {
+        const isSelected = selected === c.text;
+        const isDisabled = selected !== null && !isSelected;
+        return (
+          <button
+            key={i}
+            onClick={() => !selected && handleChoice(c.text)}
+            disabled={isDisabled}
+            className={`text-left px-3 py-2 rounded border text-xs transition-colors relative ${
+              isSelected
+                ? c.recommended
+                  ? 'border-amber-400 bg-amber-900/40 text-amber-50 shadow-[0_0_16px_rgba(251,191,36,0.3)] ring-1 ring-amber-500/50'
+                  : 'border-emerald-500 bg-emerald-900/30 text-zinc-100 ring-1 ring-emerald-500/50'
+                : isDisabled
+                  ? 'border-zinc-800 bg-zinc-900/20 text-zinc-600 cursor-not-allowed opacity-40'
+                  : c.recommended
+                    ? 'border-amber-500/60 bg-amber-900/20 hover:border-amber-400 hover:bg-amber-900/30 text-amber-50 shadow-[0_0_12px_rgba(251,191,36,0.2)] cursor-pointer'
+                    : 'border-zinc-700 bg-zinc-800/40 hover:border-emerald-600 hover:bg-emerald-900/20 text-zinc-200 cursor-pointer'
+            }`}
+          >
+            <span className={`font-mono mr-2 ${isSelected ? (c.recommended ? 'text-amber-300' : 'text-emerald-400') : isDisabled ? 'text-zinc-600' : c.recommended ? 'text-amber-300' : 'text-emerald-400'}`}>
+              {isSelected ? '✓' : c.recommended ? '⭐' : `${i + 1}.`}
             </span>
-          )}
-        </button>
-      ))}
-      {customOpen ? (
+            <span className="markdown-body inline-block" style={{ display: 'inline' }}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}
+                components={{ p: ({children}) => <span>{children}</span> }}>
+                {c.text}
+              </ReactMarkdown>
+            </span>
+            {c.recommended && !isSelected && (
+              <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-amber-500 text-zinc-900 text-[10px] font-bold">
+                {t('chat.choices.recommended')}
+              </span>
+            )}
+            {isSelected && (
+              <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-emerald-500 text-zinc-900 text-[10px] font-bold">
+                선택됨
+              </span>
+            )}
+          </button>
+        );
+      })}
+      {selected === null && (customOpen ? (
         <div className="flex gap-1">
           <input
             value={custom}
@@ -113,7 +135,7 @@ export function ChoicesList({ choices, onChoice }: { choices: ChoiceItem[]; onCh
           <span className="text-sky-400 font-mono mr-2">✎</span>
           {t('chat.choices.custom')}
         </button>
-      )}
+      ))}
     </div>
   );
 }

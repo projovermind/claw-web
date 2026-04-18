@@ -27,6 +27,7 @@ export default function ChatPage() {
   const setCurrentAgent = useChatStore((s) => s.setCurrentAgent);
   const setCurrentSession = useChatStore((s) => s.setCurrentSession);
   const runtime = useChatStore((s) => (currentSessionId ? s.runtime[currentSessionId] : undefined));
+  const finishRun = useChatStore((s) => s.finishRun);
 
   useEffect(() => {
     const agentParam = searchParams.get('agent');
@@ -48,7 +49,8 @@ export default function ChatPage() {
   const sessionQ = useQuery({
     queryKey: ['session', currentSessionId],
     queryFn: () => api.session(currentSessionId!),
-    enabled: !!currentSessionId
+    enabled: !!currentSessionId,
+    refetchInterval: runtime?.running ? 5000 : false
   });
 
   useEffect(() => {
@@ -151,6 +153,21 @@ export default function ChatPage() {
   const toolCalls = runtime?.toolCalls ?? [];
   const todos = runtime?.todos ?? [];
   const error = runtime?.error ?? null;
+
+  // WS chat.done 이벤트 유실 시 서버 폴링으로 스피너 자동 해제
+  useEffect(() => {
+    if (!running || !currentSessionId || !sessionQ.data) return;
+    if (sessionQ.data.isRunning) return;
+    const timer = setTimeout(() => {
+      const state = useChatStore.getState();
+      const stillRunning = state.runtime[currentSessionId]?.running;
+      const serverDone = !sessionQ.data?.isRunning;
+      if (stillRunning && serverDone) {
+        finishRun(currentSessionId, null);
+      }
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [running, currentSessionId, sessionQ.data, sessionQ.data?.isRunning, finishRun]);
 
   // Auto-scroll: fires on new messages, streaming text, and running state change.
   // Uses requestAnimationFrame so the DOM has painted the new content first.
@@ -382,6 +399,7 @@ export default function ChatPage() {
             <div className="relative flex-1 min-h-0 flex flex-col">
             <DelegationStatusBar />
             <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-3 lg:px-6">
+              <div className="min-h-full flex flex-col justify-end">
               {currentSession && (
                 <MessageList
                   key={currentSession.id}
@@ -397,6 +415,7 @@ export default function ChatPage() {
                 error={error}
                 onChoice={(c) => sendMessage.mutate({ message: c, paths: [] })}
               />
+              </div>
             </div>
             </div>{/* end messages relative wrapper */}
 

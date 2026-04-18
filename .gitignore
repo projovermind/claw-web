@@ -25,3 +25,4 @@ backups/
 *.backup-*
 .migration-backup-*
 dist/*.pkg
+.vercel

@@ -32,6 +32,33 @@ export function createChatRouter({
   // 현재 응답 끝날 때 합쳐서 다음 턴으로 자동 전송
   const messageQueue = new Map();
 
+  // ── 자가 복구: 세션별 재시도 카운터 ──
+  // sessionId → { count: number, lastError: string }
+  const retryCounters = new Map();
+  const MAX_AUTO_RETRIES = 3;
+
+  /**
+   * 에러 메시지를 분류해 자동 재시도 전략을 반환.
+   * @returns {{ canRetry: boolean, delay: number, label: string }}
+   */
+  function classifyError(errMsg = '') {
+    const msg = errMsg.toLowerCase();
+    if (msg.includes('rate limit') || msg.includes('429')) {
+      return { canRetry: true, delay: 60000, label: 'rate_limit' };
+    }
+    if (msg.includes('overloaded') || msg.includes('529') || msg.includes('503')) {
+      return { canRetry: true, delay: 30000, label: 'overloaded' };
+    }
+    if (msg.includes('econnreset') || msg.includes('econnrefused') || msg.includes('timeout') || msg.includes('network')) {
+      return { canRetry: true, delay: 3000, label: 'network' };
+    }
+    if (msg.includes('context') && (msg.includes('long') || msg.includes('length') || msg.includes('exceed'))) {
+      return { canRetry: true, delay: 1000, label: 'context_length' };
+    }
+    // 사용자 abort, 권한 오류 등은 재시도 안 함
+    return { canRetry: false, delay: 0, label: 'unrecoverable' };
+  }
+
   // ── 에이전트별 위임 큐 ──
   // agentId → [{originSessionId, targetAgentId, task, rawText}, ...]
   // 같은 agentId로 위임이 중복으로 들어오면 큐에 쌓고 현재 위임 완료 시 자동 실행
@@ -164,7 +191,11 @@ export function createChatRouter({
     // 대시보드 API 안내: 프로젝트 소속 에이전트에게 대시보드 조작 방법 주입
     const meta = metadataStore?.getAgent(session.agentId);
     if (meta?.projectId) {
-      agent.dashboardHint = `\n<dashboard-api>\n작업 완료/진행 시 프로젝트 대시보드를 업데이트할 수 있습니다.\n- 목표 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/goals -H "Content-Type: application/json" -d '{"title":"목표","status":"todo"}'\n- 목표 완료: curl -s -X PATCH http://localhost:3838/api/projects/${meta.projectId}/goals/GOAL_ID -H "Content-Type: application/json" -d '{"status":"done"}'\n- 위젯 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/widgets -H "Content-Type: application/json" -d '{"type":"link","title":"제목","value":"URL"}'\n- 메모 수정: curl -s -X PUT http://localhost:3838/api/projects/${meta.projectId}/notes -H "Content-Type: application/json" -d '{"notes":"내용"}'\n</dashboard-api>`;
+      const isLead = meta.tier === 'project';
+      const leadPrefix = isLead
+        ? `당신은 이 프로젝트의 리드 에이전트입니다. 작업 시작/완료/진행 상황을 반드시 대시보드에 기록하세요. 목표는 시작 시 todo로 추가하고, 완료 시 done으로 갱신하세요. 위젯/메모도 적극 활용하세요.\n`
+        : `작업 완료/진행 시 프로젝트 대시보드를 업데이트할 수 있습니다.\n`;
+      agent.dashboardHint = `\n<dashboard-api>\n${leadPrefix}- 목표 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/goals -H "Content-Type: application/json" -d '{"title":"목표","status":"todo"}'\n- 목표 완료: curl -s -X PATCH http://localhost:3838/api/projects/${meta.projectId}/goals/GOAL_ID -H "Content-Type: application/json" -d '{"status":"done"}'\n- 위젯 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/widgets -H "Content-Type: application/json" -d '{"type":"link","title":"제목","value":"URL"}'\n- 메모 수정: curl -s -X PUT http://localhost:3838/api/projects/${meta.projectId}/notes -H "Content-Type: application/json" -d '{"notes":"내용"}'\n</dashboard-api>`;
     }
 
     // 선택지 버튼 UI 힌트: 여러 옵션 중 하나 고르게 할 때 <choices> 태그 사용
@@ -214,6 +245,8 @@ export function createChatRouter({
           eventBus.publish('chat.tool', { sessionId, tool });
         },
         async onResult(result) {
+          // 성공 시 재시도 카운터 초기화
+          retryCounters.delete(sessionId);
           try {
             await sessionsStore.appendMessage(sessionId, {
               role: 'assistant',
@@ -327,13 +360,45 @@ export function createChatRouter({
           }
         },
         onError(err) {
+          const { canRetry, delay, label } = classifyError(err.message);
+          const counter = retryCounters.get(sessionId) ?? { count: 0, lastError: '' };
+
+          if (canRetry && counter.count < MAX_AUTO_RETRIES) {
+            // 자동 재시도
+            const attempt = counter.count + 1;
+            retryCounters.set(sessionId, { count: attempt, lastError: err.message });
+            logger.warn({ sessionId, label, attempt, delay }, 'chat: auto-recovery scheduled');
+            sessionsStore.appendMessage(sessionId, {
+              role: 'assistant',
+              content: `🔄 **자동 복구 중** (${attempt}/${MAX_AUTO_RETRIES}) — \`${label}\` 오류 감지. ${delay >= 1000 ? `${delay / 1000}초 후 재시도합니다...` : '즉시 재시도합니다...'}`
+            }).catch(() => {});
+            eventBus.publish('chat.error', { sessionId, error: `[auto-retry ${attempt}/${MAX_AUTO_RETRIES}] ${err.message}` });
+            // claudeSessionId 클리어 → 재시도는 새 세션으로
+            sessionsStore.update(sessionId, { claudeSessionId: null }).catch(() => {});
+            setTimeout(() => {
+              try {
+                const s = sessionsStore.get(sessionId);
+                if (!s) return;
+                // 마지막 유저 메시지로 재시도
+                const lastUser = [...(s.messages ?? [])].reverse().find((m) => m.role === 'user');
+                if (lastUser?.content) {
+                  sendRunnerMessage(sessionId, lastUser.content);
+                }
+              } catch (retryErr) {
+                logger.error({ retryErr, sessionId }, 'chat: auto-retry failed');
+              }
+            }, delay);
+            return;
+          }
+
+          // 재시도 한계 초과 or 복구 불가 오류
+          retryCounters.delete(sessionId);
           eventBus.publish('chat.error', { sessionId, error: err.message });
-          // 재발 방지: 에러 시 세션에 에러 메시지 append (사용자가 UI 열면 바로 인지)
           sessionsStore.appendMessage(sessionId, {
             role: 'assistant',
-            content: `⚠️ **응답 중단됨** — ${err.message}\n\n메시지를 다시 보내주세요.`
+            content: `⚠️ **응답 중단됨** — ${err.message}${counter.count >= MAX_AUTO_RETRIES ? `\n\n자동 복구를 ${MAX_AUTO_RETRIES}회 시도했지만 해결되지 않았습니다.` : '\n\n메시지를 다시 보내주세요.'}`
           }).catch(() => {});
-          // 세션 손상 자동 복구: 에러 시 claudeSessionId 클리어 → 다음 시도는 새 세션
+          // 세션 손상 자동 복구: 에러 시 claudeSessionId 클리어
           if (session.claudeSessionId) {
             logger.warn({ sessionId, err: err.message }, 'chat: clearing claudeSessionId on error (auto-recovery)');
             sessionsStore.update(sessionId, { claudeSessionId: null }).catch(() => {});
@@ -348,14 +413,35 @@ export function createChatRouter({
         },
         onExit({ code } = {}) {
           eventBus.publish('chat.exit', { sessionId, code });
-          // 비정상 종료 + 응답이 없었던 경우 방어막:
-          // accumText 가 비어있고 code !== 0 이면 onError 에서 이미 처리됐을 것이지만,
-          // code === 0 인데도 응답이 없을 수도 있어서 (CLI 가 조용히 실패) 한 번 더 체크.
+          // 비정상 종료 + 응답이 없었던 경우:
+          // silent crash (code 0인데 응답 없음) → 1회 자동 재시도
           if ((code === 0 || code === null) && !accumText.trim()) {
-            sessionsStore.appendMessage(sessionId, {
-              role: 'assistant',
-              content: '⚠️ **응답이 비어있습니다** — runner 가 응답 없이 종료. 다시 시도해 주세요.'
-            }).catch(() => {});
+            const counter = retryCounters.get(sessionId) ?? { count: 0, lastError: '' };
+            if (counter.count < MAX_AUTO_RETRIES) {
+              const attempt = counter.count + 1;
+              retryCounters.set(sessionId, { count: attempt, lastError: 'silent_exit' });
+              logger.warn({ sessionId, attempt }, 'chat: silent exit detected, auto-retry');
+              sessionsStore.appendMessage(sessionId, {
+                role: 'assistant',
+                content: `🔄 **자동 복구 중** (${attempt}/${MAX_AUTO_RETRIES}) — 응답 없이 종료 감지. 재시도합니다...`
+              }).catch(() => {});
+              sessionsStore.update(sessionId, { claudeSessionId: null }).catch(() => {});
+              setTimeout(() => {
+                try {
+                  const s = sessionsStore.get(sessionId);
+                  const lastUser = [...(s?.messages ?? [])].reverse().find((m) => m.role === 'user');
+                  if (lastUser?.content) sendRunnerMessage(sessionId, lastUser.content);
+                } catch (retryErr) {
+                  logger.error({ retryErr, sessionId }, 'chat: silent-exit retry failed');
+                }
+              }, 2000);
+            } else {
+              retryCounters.delete(sessionId);
+              sessionsStore.appendMessage(sessionId, {
+                role: 'assistant',
+                content: `⚠️ **응답이 비어있습니다** — runner 가 응답 없이 종료됐고, 자동 복구에도 실패했습니다. 다시 시도해 주세요.`
+              }).catch(() => {});
+            }
           }
         }
       }

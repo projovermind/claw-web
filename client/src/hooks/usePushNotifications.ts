@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { api } from '../lib/api';
 
 export type PushPermission = 'default' | 'granted' | 'denied';
@@ -16,6 +16,15 @@ export function usePushNotifications() {
   );
   const [subscribed, setSubscribed] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    navigator.serviceWorker.ready.then((reg) => {
+      reg.pushManager.getSubscription().then((sub) => {
+        setSubscribed(!!sub);
+      });
+    });
+  }, []);
   const [error, setError] = useState<string | null>(null);
 
   const subscribe = useCallback(async () => {
