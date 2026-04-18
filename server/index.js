@@ -218,41 +218,71 @@ async function main() {
     logger.warn({ err: err.message }, 'resume file read failed');
   }
 
-  const shutdown = async (sig) => {
+  let shuttingDown = false;
+  const shutdown = (sig) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info({ sig }, 'shutting down');
-    scheduler.stop();
-    autoBackup.stop();
-    wsHub.close();
-    server.close();
-    // 재발 방지 + 자동 이어가기:
-    // 진행 중이던 세션을 pending-resume.json 에 저장 → 다음 기동 시 자동 재제출
-    const activeIds = runner.activeIds();
-    if (activeIds.length > 0) {
-      logger.warn({ sessions: activeIds }, 'aborting active sessions due to shutdown');
-      try {
-        await fs.mkdir(path.dirname(resumeFile), { recursive: true }).catch(() => {});
-        await fs.writeFile(resumeFile, JSON.stringify(activeIds), 'utf8');
-      } catch (err) {
-        logger.warn({ err: err.message }, 'failed to persist resume queue');
-      }
-      for (const id of activeIds) {
-        try {
-          await sessionsStore.appendMessage(id, {
+
+    // ───────────────────────────────────────────────────────
+    // Phase 1: 가장 중요한 작업 — pending-resume 저장 (SYNC)
+    // launchctl kickstart -k 는 SIGTERM 후 3-5초 만에 SIGKILL 날림.
+    // async write 는 중간에 죽어 파일 안 생길 수 있음 → sync 로.
+    // ───────────────────────────────────────────────────────
+    try {
+      const activeIds = runner.activeIds();
+      if (activeIds.length > 0) {
+        fssync.mkdirSync(path.dirname(resumeFile), { recursive: true });
+        fssync.writeFileSync(resumeFile, JSON.stringify(activeIds), 'utf8');
+        logger.warn({ count: activeIds.length, sessions: activeIds }, 'pending-resume persisted (sync)');
+        // 세션에 알림 메시지 + runner abort (async 지만 await 안 해도 append 큐에 들어감)
+        for (const id of activeIds) {
+          sessionsStore.appendMessage(id, {
             role: 'assistant',
             content: '⚠️ **서버 재시작됨** — 다음 기동 시 자동으로 작업을 이어갑니다.'
-          });
-        } catch { /* abort 는 계속 */ }
-        runner.abort(id);
+          }).catch(() => {});
+          runner.abort(id);
+        }
       }
+    } catch (err) {
+      logger.warn({ err: err.message }, 'failed to persist resume queue');
     }
-    await configStore.close();
-    await metadataStore.close();
-    await projectsStore.close();
-    await sessionsStore.close();
-    await backendsStore.close();
-    await skillsStore.close();
-    await activityLog.close();
-    process.exit(0);
+
+    // ───────────────────────────────────────────────────────
+    // Phase 2: 나머지 cleanup — 2초 타임아웃, 초과 시 강제 exit
+    // server.close() 는 WebSocket keep-alive 때문에 영원히 block 될 수 있음 → timeout
+    // ───────────────────────────────────────────────────────
+    const forceExit = setTimeout(() => {
+      logger.warn('graceful shutdown timeout — forcing exit');
+      process.exit(0);
+    }, 2000);
+
+    (async () => {
+      try {
+        scheduler.stop();
+        autoBackup.stop();
+        try { wsHub.close(); } catch { /* ignore */ }
+        // server.close 는 callback-based — WebSocket 연결 있으면 안 끝남 → closeAllConnections 로 강제
+        try {
+          if (typeof server.closeAllConnections === 'function') server.closeAllConnections();
+          server.close();
+        } catch { /* ignore */ }
+        await Promise.allSettled([
+          configStore.close(),
+          metadataStore.close(),
+          projectsStore.close(),
+          sessionsStore.close(),
+          backendsStore.close(),
+          skillsStore.close(),
+          activityLog.close()
+        ]);
+      } catch (err) {
+        logger.warn({ err: err.message }, 'cleanup error');
+      } finally {
+        clearTimeout(forceExit);
+        process.exit(0);
+      }
+    })();
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
