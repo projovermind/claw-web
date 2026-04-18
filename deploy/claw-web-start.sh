@@ -22,8 +22,8 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 # 5) $HOME/{claw-web,hivemind-web}
 CANDIDATES=(
   "${CLAW_WEB_ROOT:-}"
-  "/Volumes/Core/hivemind-web"
   "/Volumes/Core/claw-web"
+  "/Volumes/Core/hivemind-web"
   "/Volumes/Core/Claw-Web"
   "/usr/local/lib/claw-web"
   "$HOME/claw-web"

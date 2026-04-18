@@ -11,8 +11,17 @@ logs/
 sessions.json
 web-metadata.json
 secrets.json
+projects.json
+backends.json
+hooks.json
+schedules.json
+agents-config.json
+web-config.json
 client/.tsbuildinfo/
 client/tsconfig.node.tsbuildinfo
 client/tsconfig.tsbuildinfo
 uploads/
+backups/
 *.backup-*
+.migration-backup-*
+dist/*.pkg

@@ -1,1 +1,21 @@
-{"version":1,"skills":{}}
+{
+  "version": 1,
+  "skills": {
+    "skill_feewBR_NpFYU": {
+      "id": "skill_feewBR_NpFYU",
+      "name": "코딩 공통 룰",
+      "description": "병렬처리, 에러격리, 코드수정 원칙 — 모든 코딩 에이전트에 적용",
+      "content": "# 코딩 공통 룰\n# 코딩/개발 작업 시작 시 읽기 (프로젝트 무관)\n\n## 1. 병렬처리 우선\n- I/O 작업(API 호출, 파일 읽기, DB 쿼리) → 무조건 asyncio.gather 먼저 검토\n- 순차 처리는 **의존성이 있을 때만** 허용\n- `concurrent.futures.ThreadPoolExecutor` — CPU bound 아닌 작업에 활용\n\n```python\n# ✅ 올바른 방식\nresults = await asyncio.gather(\n    fetch_macro(),\n    fetch_equity(),\n    fetch_crypto(),\n    return_exceptions=True\n)\n\n# ❌ 틀린 방식\nr1 = await fetch_macro()\nr2 = await fetch_equity()\nr3 = await fetch_crypto()\n```\n\n## 2. 작업 분할 (에러 격리)\n- 하나의 큰 함수보다 **단계별 분리** → 어디서 에러났는지 즉시 파악\n- 각 단계 완료 후 결과 파일/로그 검증\n- 다음 단계는 이전 단계 결과 확인 후 진행\n- 에러 발생 시 해당 단계만 재실행\n\n```\nStep 1 → 결과 확인 → Step 2 → 결과 확인 → Step 3\n                ↓ 에러 시 Step 1만 재실행\n```\n\n## 3. 에러 처리\n- 새 기능 추가 시 반드시 `try/except`로 격리 (기존 코드 영향 차단)\n- return_exceptions=True (asyncio.gather) → 부분 실패 허용\n- 에러 로그: 어떤 단계, 어떤 입력, 어떤 출력인지 명확히\n\n## 4. 코드 수정 원칙\n- **Edit 우선** (외과적 수정), Write는 신규 파일만\n- 백업: `cp target.py target.py.backup.$(date +%Y-%m-%d)`\n- 수정 후 문법 검증: `python -c \"import ast; ast.parse(open('f').read())\"`\n- 기존 함수 건드리지 않음 — 새 기능은 신규 함수/파일로\n\n## 5. 코딩 작업 위임\n- 규모 무관하게 `sessions_spawn(agentId=\"dev\")` 위임\n- 메인 세션에서 직접 구현 금지 (컨텍스트 오염)\n- 위임 시 태스크 명세 명확하게: 파일 경로, 수정 범위, 기대 결과 포함\n",
+      "createdAt": "2026-04-16T01:43:36.958Z",
+      "updatedAt": "2026-04-16T01:43:36.958Z"
+    },
+    "skill_lfwTiwcNS4IZ": {
+      "id": "skill_lfwTiwcNS4IZ",
+      "name": "컨텍스트 관리",
+      "description": "세션 간 맥락 전달 — _context.md 자동 읽기/쓰기로 토큰 절감",
+      "content": "# 컨텍스트 관리 (Context Management)\n\n## 규칙\n1. **세션 시작 시**: 프로젝트 루트에 `_context.md` 파일이 있으면 반드시 먼저 Read하세요. 이전 세션의 맥락입니다.\n\n2. **작업 중 주기적으로**: 중요한 결정, 완료된 작업, 발견한 이슈를 `_context.md`에 Write로 업데이트하세요.\n\n3. **세션 종료 전**: 반드시 현재까지의 작업 내용을 `_context.md`에 요약해서 저장하세요.\n\n## _context.md 형식\n```markdown\n# 컨텍스트 요약\n최종 업데이트: [날짜시간]\n\n## 현재 상태\n- [프로젝트/기능의 현재 진행 상태]\n\n## 완료된 작업\n- [이번 세션에서 완료한 것]\n\n## 진행 중인 작업\n- [아직 안 끝난 것]\n\n## 주요 결정사항\n- [아키텍처, 기술 선택 등 중요한 결정]\n\n## 다음 할 일\n- [다음 세션에서 이어갈 것]\n\n## 주의사항\n- [알아야 할 제약, 버그, 임시 해결책]\n```\n\n## 효과\n- 새 세션이 이전 세션의 전체 대화를 로드할 필요 없음 → **토큰 90%+ 절감**\n- `--resume` 없이도 맥락 유지 가능\n- 여러 에이전트가 같은 `_context.md`를 읽으면 팀 공유 컨텍스트 역할",
+      "createdAt": "2026-04-16T07:04:46.595Z",
+      "updatedAt": "2026-04-16T07:04:46.595Z"
+    }
+  }
+}

@@ -51,6 +51,114 @@ import { createDelegationTracker } from './lib/delegation-tracker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
+
+// ═══════════════════════════════════════════════════════
+// Auto-migration — 폴더 이름이 바뀌거나 신규 폴더로 이전했을 때,
+// REPO_ROOT 에 실데이터가 없으면 인접 후보 폴더에서 자동 import.
+// 한 번만 동작 (migration marker 생성).
+// ═══════════════════════════════════════════════════════
+(function autoMigrate() {
+  const marker = path.join(REPO_ROOT, '.migration-done');
+  if (fssync.existsSync(marker)) return;
+
+  // "실데이터 있음" 판정: sessions.json 에 세션 1개 이상, 또는 web-metadata 에 agent 1개 이상
+  const hasRealData = () => {
+    try {
+      const s = path.join(REPO_ROOT, 'sessions.json');
+      if (fssync.existsSync(s)) {
+        const obj = JSON.parse(fssync.readFileSync(s, 'utf8'));
+        if (Object.keys(obj?.sessions || {}).length > 0) return true;
+      }
+      const m = path.join(REPO_ROOT, 'web-metadata.json');
+      if (fssync.existsSync(m)) {
+        const obj = JSON.parse(fssync.readFileSync(m, 'utf8'));
+        if (Object.keys(obj?.agents || {}).length > 0) return true;
+      }
+    } catch { /* ignore */ }
+    return false;
+  };
+
+  if (hasRealData()) return; // 이미 데이터 있으면 스킵
+
+  // 후보 경로에서 실데이터 있는 곳 찾기
+  const candidates = [
+    process.env.CLAW_WEB_MIGRATE_FROM,
+    '/Volumes/Core/hivemind-web',
+    '/Volumes/Core/claw-web',
+    '/Volumes/Core/Claw-Web',
+    path.join(process.env.HOME || '', 'hivemind-web'),
+    path.join(process.env.HOME || '', 'claw-web')
+  ].filter(Boolean).filter((p) => p !== REPO_ROOT);
+
+  let source = null;
+  for (const c of candidates) {
+    try {
+      const s = path.join(c, 'sessions.json');
+      if (!fssync.existsSync(s)) continue;
+      const obj = JSON.parse(fssync.readFileSync(s, 'utf8'));
+      if (Object.keys(obj?.sessions || {}).length > 0) {
+        source = c; break;
+      }
+    } catch { /* ignore */ }
+  }
+
+  if (!source) {
+    // migration 할 게 없음 (신규 설치) — marker 만 찍어두고 이후엔 체크 스킵
+    try { fssync.writeFileSync(marker, new Date().toISOString()); } catch { /* ignore */ }
+    return;
+  }
+
+  logger.warn({ source, dest: REPO_ROOT }, 'auto-migration: copying real data from sibling folder');
+
+  const FILES = [
+    'sessions.json', 'web-metadata.json', 'web-config.json', 'secrets.json',
+    'projects.json', 'skills.json', 'backends.json', 'hooks.json', 'schedules.json',
+    'agents-config.json'
+  ];
+  const DIRS = ['logs', 'uploads', 'backups'];
+  for (const f of FILES) {
+    const src = path.join(source, f);
+    const dst = path.join(REPO_ROOT, f);
+    try {
+      if (fssync.existsSync(src) && !fssync.existsSync(dst)) {
+        fssync.copyFileSync(src, dst);
+      }
+      // dst 있고 비어있으면 덮어쓰기
+      else if (fssync.existsSync(src) && fssync.existsSync(dst)) {
+        const srcSize = fssync.statSync(src).size;
+        const dstSize = fssync.statSync(dst).size;
+        if (srcSize > dstSize * 2) { // src 가 최소 2배 크면 빈 템플릿으로 간주
+          fssync.copyFileSync(src, dst);
+        }
+      }
+    } catch (err) {
+      logger.warn({ f, err: err.message }, 'auto-migration file failed');
+    }
+  }
+  for (const d of DIRS) {
+    const src = path.join(source, d);
+    const dst = path.join(REPO_ROOT, d);
+    if (!fssync.existsSync(src)) continue;
+    try {
+      if (!fssync.existsSync(dst)) fssync.mkdirSync(dst, { recursive: true });
+      // shallow copy — 깊은 복사는 미지원, 사용자에게 안내
+      for (const name of fssync.readdirSync(src)) {
+        const sp = path.join(src, name);
+        const dp = path.join(dst, name);
+        try {
+          if (!fssync.existsSync(dp) && fssync.statSync(sp).isFile()) {
+            fssync.copyFileSync(sp, dp);
+          }
+        } catch { /* ignore */ }
+      }
+    } catch (err) {
+      logger.warn({ d, err: err.message }, 'auto-migration dir failed');
+    }
+  }
+  try { fssync.writeFileSync(marker, new Date().toISOString()); } catch { /* ignore */ }
+  logger.info({ source, dest: REPO_ROOT }, 'auto-migration complete — .migration-done marker created');
+})();
+
 const WEB_CONFIG_PATH = path.join(REPO_ROOT, 'web-config.json');
 const METADATA_PATH = path.join(REPO_ROOT, 'web-metadata.json');
 const PROJECTS_PATH = path.join(REPO_ROOT, 'projects.json');
