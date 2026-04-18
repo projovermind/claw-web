@@ -190,8 +190,11 @@ export default function ChatPage() {
     staleTime: 5_000
   });
 
-  // Project selection — 해당 프로젝트 에이전트 중 가장 최근 업데이트된 세션 자동 선택
+  // Project selection — lead(tier:'project') 세션 우선, 없으면 최근 세션 폴백
   const selectProject = (project: Project) => {
+    const lead = (agentsQ.data ?? []).find(
+      (a) => a.projectId === project.id && a.tier === 'project'
+    );
     const projectAgentIds = new Set(
       (agentsQ.data ?? []).filter((a) => a.projectId === project.id).map((a) => a.id)
     );
@@ -199,17 +202,15 @@ export default function ChatPage() {
       .filter((s) => projectAgentIds.has(s.agentId) && !s.isDelegation)
       .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
 
-    const lastSession = projectSessions[0];
+    // lead 세션 우선, 없으면 가장 최근 세션
+    const leadSession = lead ? projectSessions.find((s) => s.agentId === lead.id) : undefined;
+    const lastSession = leadSession ?? projectSessions[0];
+
     if (lastSession) {
-      // 마지막 세션이 있으면 그 세션의 agent + session 모두 설정
       setCurrentAgent(lastSession.agentId);
       setCurrentSession(lastSession.id);
       return;
     }
-    // 세션이 없으면 lead(project tier) → addon 순으로 에이전트만 선택
-    const lead = (agentsQ.data ?? []).find(
-      (a) => a.projectId === project.id && a.tier === 'project'
-    );
     const target = lead ?? (agentsQ.data ?? []).find((a) => a.projectId === project.id);
     if (target) setCurrentAgent(target.id);
     setCurrentSession(null);

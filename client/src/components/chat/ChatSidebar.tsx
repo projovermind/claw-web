@@ -147,8 +147,9 @@ export function ChatSidebar({
     [agents]
   );
 
-  // Select a project → 가장 최근 세션 자동 선택 (없으면 lead agent 만)
+  // Select a project → lead 에이전트(tier:'project') 세션 우선, 없으면 최근 세션 폴백
   const selectProject = (project: Project) => {
+    const lead = agents.find((a) => a.projectId === project.id && a.tier === 'project');
     const projectAgentIds = new Set(
       agents.filter((a) => a.projectId === project.id).map((a) => a.id)
     );
@@ -156,14 +157,14 @@ export function ChatSidebar({
       .filter((s: Session) => projectAgentIds.has(s.agentId) && !s.isDelegation)
       .sort((a: Session, b: Session) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
 
-    const lastSession = projectSessions[0];
+    // lead 세션 우선, 없으면 가장 최근 세션
+    const leadSession = lead ? projectSessions.find((s) => s.agentId === lead.id) : undefined;
+    const lastSession = leadSession ?? projectSessions[0];
+
     if (lastSession) {
       setCurrentAgent(lastSession.agentId);
       setCurrentSession(lastSession.id);
     } else {
-      const lead = agents.find(
-        (a) => a.projectId === project.id && a.tier === 'project'
-      );
       if (lead) {
         setCurrentAgent(lead.id);
       } else {
