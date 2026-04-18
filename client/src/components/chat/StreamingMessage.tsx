@@ -25,7 +25,7 @@ export default function StreamingMessage({ text, toolCalls, running, error, onCh
 
   return (
     <div className="flex justify-start">
-      <div className="max-w-[85%] rounded-lg px-4 py-3 text-sm break-words bg-zinc-900/60 border border-zinc-800 text-zinc-200 space-y-2">
+      <div className="max-w-[95%] lg:max-w-[85%] rounded-lg px-4 py-3 text-sm break-words bg-zinc-900/60 border border-zinc-800 text-zinc-200 space-y-2">
         {/* Activity indicator */}
         {running && (
           <div className="flex items-center gap-2 pb-2 border-b border-zinc-800/60 text-[11px] text-zinc-500 uppercase tracking-wider">

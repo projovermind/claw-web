@@ -315,7 +315,7 @@ function MessageBubble({ message, searchQuery, onChoice, delegationStage, runnin
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
         style={userBubbleStyle ?? assistantBubbleStyle}
-        className={`max-w-[80%] rounded-lg px-4 py-3 text-sm break-words relative ${
+        className={`max-w-[95%] lg:max-w-[80%] rounded-lg px-4 py-3 text-sm break-words relative ${
           isUser
             ? isQueued
               ? 'bg-sky-900/40 border border-sky-700/50 text-zinc-100'
@@ -390,7 +390,7 @@ function SystemTriggerCard({ content }: { content: string }) {
     : { border: 'border-zinc-700', bg: 'bg-zinc-900/40', text: 'text-zinc-400' };
   return (
     <div className="flex justify-center">
-      <div className={`max-w-[85%] rounded-lg border border-dashed ${color.border} ${color.bg} px-3 py-2 text-[11px] ${color.text} w-full`}>
+      <div className={`w-full max-w-[95%] lg:max-w-[85%] rounded-lg border border-dashed ${color.border} ${color.bg} px-3 py-2 text-[11px] ${color.text}`}>
         <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-2 text-left">
           {open ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
           <span className="opacity-80">{label}</span>
@@ -541,7 +541,7 @@ function DelegationCard({ data, targetRunning = false }: { data: DelegationData;
   const preview = data.note || data.task || '';
   return (
     <div className="flex justify-start">
-      <div className={`max-w-[85%] rounded-lg border ${palette.border} ${palette.bg} px-3 py-2 text-xs ${palette.text} space-y-1.5 w-full`}>
+      <div className={`w-full max-w-[95%] lg:max-w-[85%] rounded-lg border ${palette.border} ${palette.bg} px-3 py-2 text-xs ${palette.text} space-y-1.5`}>
         <button onClick={() => setOpen(v => !v)} className="w-full flex items-center gap-2 text-left">
           {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
           {palette.icon}
