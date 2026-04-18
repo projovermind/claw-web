@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import fssync from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 import { loadWebConfig } from './lib/web-config.js';
 import { createConfigStore } from './lib/config-store.js';
 import { createMetadataStore } from './lib/metadata-store.js';
@@ -33,6 +34,8 @@ import { createSkillsRouter } from './routes/skills.js';
 import { createActivityRouter } from './routes/activity.js';
 import { createFsBrowserRouter } from './routes/fs-browser.js';
 import { createTunnelRouter } from './routes/tunnel.js';
+import { createAdminRouter } from './routes/admin.js';
+import { createDomainRouter } from './routes/domain.js';
 import { attachWsHub } from './ws/hub.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { createAuthMiddleware } from './middleware/auth.js';
@@ -216,6 +219,7 @@ async function main() {
   const runner = createRunner({ processTracker });
   const delegationTracker = createDelegationTracker();
   const pushStore = createPushStore({ webConfig, webConfigPath: WEB_CONFIG_PATH });
+  pushStore.setRunnerRef(runner); // 작업 중 알림 억제
   const eventBus = createEventBus();
   const hooksStore = await createHooksStore(path.join(REPO_ROOT, 'hooks.json'));
   const scheduler = createScheduler({
@@ -283,6 +287,8 @@ async function main() {
   app.use('/api/activity', createActivityRouter({ activityLog }));
   app.use('/api/fs', createFsBrowserRouter({ webConfig }));
   app.use('/api/tunnel', createTunnelRouter());
+  app.use('/api/admin', createAdminRouter({ runner }));
+  app.use('/api/domain', createDomainRouter({ secretsStore }));
   app.use('/api/settings', createSettingsRouter({ webConfig, webConfigPath: WEB_CONFIG_PATH, eventBus }));
   app.use('/api/push', createPushRouter({ pushStore }));
   app.use('/api/stats', createStatsRouter({ sessionsStore, configStore }));
@@ -306,6 +312,56 @@ async function main() {
 
   const server = http.createServer(app);
   const wsHub = attachWsHub(server, { eventBus, webConfig });
+
+  // ── 포트 점유 고아 프로세스 자가 청소 ──
+  // launchctl 관리 밖에 떠도는 이전 server/index.js 인스턴스가 포트를 잡고 있으면
+  // launchd KeepAlive 가 10초마다 crash-loop 를 돈다. listen 전에 자진 정리.
+  try {
+    const selfPid = process.pid;
+    const occupied = execFileSync('lsof', ['-nP', '-i', `:${webConfig.port}`, '-sTCP:LISTEN', '-t'],
+      { encoding: 'utf8', timeout: 5000 }).trim().split('\n').filter(Boolean).map(Number);
+    for (const pid of occupied) {
+      if (pid === selfPid) continue;
+      try {
+        const cmd = execFileSync('ps', ['-p', String(pid), '-o', 'command='],
+          { encoding: 'utf8', timeout: 3000 }).trim();
+        if (cmd.includes('server/index.js')) {
+          logger.warn({ pid, port: webConfig.port, cmd: cmd.slice(0, 80) },
+            'killing orphaned claw-web server occupying our port');
+          try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ }
+          // 2초 후 SIGKILL
+          setTimeout(() => { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }, 2000);
+        }
+      } catch { /* process lookup failed */ }
+    }
+    // 정리 시도한 경우 listen 전 대기 (커널이 TIME_WAIT 풀도록)
+    if (occupied.length > 0) {
+      // Sync 대기로 안전하게 확보
+      const waitUntil = Date.now() + 3000;
+      while (Date.now() < waitUntil) {
+        try {
+          const still = execFileSync('lsof', ['-nP', '-i', `:${webConfig.port}`, '-sTCP:LISTEN', '-t'],
+            { encoding: 'utf8', timeout: 2000 }).trim();
+          if (!still || still.split('\n').every((p) => Number(p) === selfPid)) break;
+        } catch { break; }
+      }
+    }
+  } catch { /* lsof not installed or no match */ }
+
+  // ── listen 에러 처리 ──
+  // EADDRINUSE: 고아 프로세스가 포트를 점유 중이면 launchd ThrottleInterval 에
+  // 걸려 10초마다 crash-loop 이 반복됨. 한 번 로그 남기고 명시적으로 exit(2)
+  // 해 launchd 가 adaptive throttle 로 처리하도록 유도.
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      logger.fatal({ port: webConfig.port, err: err.message },
+        'port already in use — is another server/index.js running? check `lsof -i :' + webConfig.port + '`');
+    } else {
+      logger.fatal({ err: err.message, code: err.code }, 'server listen error');
+    }
+    // ThrottleInterval 을 타도록 빠르게 exit — KeepAlive 가 재시도
+    setTimeout(() => process.exit(2), 500);
+  });
 
   server.listen(webConfig.port, () => {
     logger.info({ port: webConfig.port }, 'hivemind-web server listening');
@@ -403,6 +459,33 @@ async function main() {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // ── 크래시 방지 + 활성 세션 보존 ──
+  // 핸들러가 없으면 기본 동작은 silent crash — pending-resume 못 쓰고 그대로 exit.
+  // 로그 남기고 pending-resume sync-write 강제 실행 후 exit(1) → launchd KeepAlive 로 재기동.
+  function emergencyShutdown(reason, err) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.fatal({ reason, err: err?.message, stack: err?.stack }, 'emergency shutdown');
+    try {
+      const activeIds = runner.activeIds();
+      if (activeIds.length > 0) {
+        fssync.mkdirSync(path.dirname(resumeFile), { recursive: true });
+        fssync.writeFileSync(resumeFile, JSON.stringify(activeIds), 'utf8');
+        logger.warn({ count: activeIds.length, sessions: activeIds },
+          'emergency: pending-resume persisted (sync)');
+      }
+    } catch (persistErr) {
+      logger.error({ err: persistErr.message }, 'emergency: failed to persist resume queue');
+    }
+    // 1초 내 강제 종료 — launchd 가 재시작
+    setTimeout(() => process.exit(1), 1000);
+  }
+  process.on('uncaughtException', (err) => emergencyShutdown('uncaughtException', err));
+  process.on('unhandledRejection', (reason) => {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    emergencyShutdown('unhandledRejection', err);
+  });
 }
 
 main().catch((err) => {

@@ -4,6 +4,7 @@
  */
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 import { logger } from '../lib/logger.js';
 
 // Claude CLI 경로 (봇과 동일한 탐지 로직)
@@ -19,6 +20,33 @@ function findClaudeBin() {
   return 'claude';
 }
 const CLAUDE_BIN = findClaudeBin();
+
+// Claude CLI 세션 파일 위치 — ~/.claude/projects/-cwd-encoded/SESSION_ID.jsonl
+// resume 대상 세션이 존재하는지 pre-check 해 crash/idle timeout 을 막는다.
+function findClaudeSessionFile(workingDir, sessionId) {
+  if (!sessionId) return null;
+  const projectsRoot = path.join(process.env.HOME || '', '.claude', 'projects');
+  if (!fs.existsSync(projectsRoot)) return null;
+
+  // 1) cwd 기반 정확 경로 (/ → - 치환)
+  if (workingDir) {
+    const encoded = workingDir.replace(/\//g, '-');
+    // 앞에 `-` 없으면 붙이고, 끝의 `-` 제거
+    const dirName = (encoded.startsWith('-') ? encoded : '-' + encoded).replace(/-+$/, '');
+    const exact = path.join(projectsRoot, dirName, `${sessionId}.jsonl`);
+    if (fs.existsSync(exact)) return exact;
+  }
+
+  // 2) fallback: 모든 projects/ 하위에서 ID 매치
+  try {
+    for (const projDir of fs.readdirSync(projectsRoot)) {
+      const candidate = path.join(projectsRoot, projDir, `${sessionId}.jsonl`);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  } catch { /* ignore */ }
+
+  return null;
+}
 
 // 봇과 동일한 MODEL_ID_MAP
 const MODEL_ID_MAP = {
@@ -78,7 +106,23 @@ export function startClaudeRun({
     const effort = agent.thinkingEffort === 'max' ? 'high' : agent.thinkingEffort;
     args.push('--effort', effort);
   }
-  if (claudeSessionId) args.push('--resume', claudeSessionId);
+  // ── Resume pre-check ──
+  // Claude CLI 는 --resume 에 존재하지 않는 세션을 넘기면 버전에 따라
+  //   (a) stderr 에러 + exit, (b) 새 세션으로 silent fallback, (c) 무한 대기
+  // 어느 경우든 이어가기 UX가 깨지므로 파일 존재 여부를 먼저 확인.
+  let effectiveResumeId = claudeSessionId || null;
+  let resumeSessionFile = null;
+  if (effectiveResumeId) {
+    resumeSessionFile = findClaudeSessionFile(agent.workingDir, effectiveResumeId);
+    if (!resumeSessionFile) {
+      logger.warn(
+        { agent: agent.id, sessionId: effectiveResumeId, cwd: agent.workingDir },
+        'runner: claude session file not found — resume disabled, starting fresh (context lost)'
+      );
+      effectiveResumeId = null;
+    }
+  }
+  if (effectiveResumeId) args.push('--resume', effectiveResumeId);
   if (agent.allowedTools?.length) args.push('--allowedTools', ...agent.allowedTools);
 
   // 전역 자동 차단:
@@ -132,7 +176,14 @@ export function startClaudeRun({
   }
 
   logger.info(
-    { agent: agent.id, model, cwd, resume: !!claudeSessionId },
+    {
+      agent: agent.id,
+      model,
+      cwd,
+      resume: !!effectiveResumeId,
+      resumeRequested: !!claudeSessionId,
+      resumeFile: resumeSessionFile ? path.basename(resumeSessionFile) : null
+    },
     'runner: spawn claude'
   );
 
@@ -225,6 +276,14 @@ export function startClaudeRun({
 
   proc.on('close', (code) => {
     clearTimeout(idleTimer);
+    // Resume 완전성 검증: 요청한 세션 ID 와 실제 사용된 세션 ID 가 다르면
+    // Claude CLI 가 새 세션으로 silent fallback 한 것 — 대화 컨텍스트 유실.
+    if (effectiveResumeId && resultSessionId && resultSessionId !== effectiveResumeId) {
+      logger.warn(
+        { agent: agent.id, requested: effectiveResumeId, actual: resultSessionId },
+        'runner: claude CLI dropped --resume target — created NEW session (context lost)'
+      );
+    }
     const final = resultText || (assistantTexts.length ? assistantTexts.join('\n\n') : null);
     if (code === 0 || final) {
       onResult?.({ text: final, claudeSessionId: resultSessionId, model: resultModel, usage: resultUsage, exitCode: code });
