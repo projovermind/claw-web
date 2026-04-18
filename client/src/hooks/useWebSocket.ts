@@ -159,11 +159,15 @@ export function useWebSocket() {
               targetAgentId: msg.targetAgentId as string,
               task: (msg.task as string) ?? ''
             });
+            // 위임 시작 — origin 세션의 unread 억제 (위임 완료 시에 표시)
+            useChatStore.getState().startDelegating(msg.originSessionId as string);
           }
           if (topic === 'delegation.completed') {
             const agent = (msg.targetAgentId as string) ?? '?';
             useToastStore.getState().add('success', tRef.current('ws.delegateDone', { agent }));
             useDelegationStore.getState().complete(msg.id as string);
+            // 위임 완료 — origin 세션에 unread 표시 (현재 열려있지 않은 경우)
+            useChatStore.getState().finishDelegating(msg.originSessionId as string);
           }
 
           // Generic query invalidation for non-chat events

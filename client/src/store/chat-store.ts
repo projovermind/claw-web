@@ -27,6 +27,8 @@ interface ChatState {
   runtime: Record<string, SessionRuntime>;
   /** 세션별 안 읽은 메시지 플래그 + 마지막 업데이트 시각 (정렬용) + 에러 여부 */
   unread: Record<string, { at: number; isError?: boolean }>;
+  /** 위임 중인 origin 세션 ID Set — 위임 완료 전까지 unread 억제 */
+  delegatingSessionIds: Set<string>;
   setCurrentAgent: (id: string | null) => void;
   setCurrentSession: (id: string | null) => void;
   startRun: (sessionId: string) => void;
@@ -35,6 +37,10 @@ interface ChatState {
   finishRun: (sessionId: string, error?: string | null) => void;
   markUnread: (sessionId: string) => void;
   markRead: (sessionId: string) => void;
+  /** 위임 시작 — 해당 세션의 unread 를 위임 완료 전까지 억제 */
+  startDelegating: (sessionId: string) => void;
+  /** 위임 완료 — 억제 해제 + 비활성 세션이면 unread 표시 */
+  finishDelegating: (sessionId: string) => void;
   /** 유효한 세션 ID Set 을 받아 그 밖의 모든 unread 제거 (orphan cleanup) */
   purgeUnread: (validIds: Set<string>) => void;
   /** 모든 unread 제거 (채팅 페이지 진입 시 사용) */
@@ -56,6 +62,7 @@ export const useChatStore = create<ChatState>()(
       currentSessionId: null,
       runtime: {},
       unread: {},
+      delegatingSessionIds: new Set<string>(),
       setCurrentAgent: (currentAgentId) => set({ currentAgentId }),
       setCurrentSession: (currentSessionId) =>
         set((s) => {
@@ -90,9 +97,11 @@ export const useChatStore = create<ChatState>()(
       finishRun: (sessionId, error = null) =>
         set((s) => {
           // 채팅 완료 시 현재 열려있는 세션이 아니면 unread 표시
+          // 단, 위임 중인 세션은 위임 완료(finishDelegating) 시에 unread 표시
           const isActive = s.currentSessionId === sessionId;
+          const isDelegating = s.delegatingSessionIds.has(sessionId);
           const nextUnread = { ...s.unread };
-          if (!isActive) {
+          if (!isActive && !isDelegating) {
             nextUnread[sessionId] = { at: Date.now(), isError: !!error };
           }
           return {
@@ -102,6 +111,23 @@ export const useChatStore = create<ChatState>()(
             },
             unread: nextUnread
           };
+        }),
+      startDelegating: (sessionId) =>
+        set((s) => {
+          const next = new Set(s.delegatingSessionIds);
+          next.add(sessionId);
+          return { delegatingSessionIds: next };
+        }),
+      finishDelegating: (sessionId) =>
+        set((s) => {
+          const next = new Set(s.delegatingSessionIds);
+          next.delete(sessionId);
+          const isActive = s.currentSessionId === sessionId;
+          const nextUnread = { ...s.unread };
+          if (!isActive) {
+            nextUnread[sessionId] = { at: Date.now() };
+          }
+          return { delegatingSessionIds: next, unread: nextUnread };
         }),
       markUnread: (sessionId) =>
         set((s) => ({ unread: { ...s.unread, [sessionId]: { at: Date.now() } } })),
