@@ -58,5 +58,32 @@ export function createStatsRouter({ sessionsStore, configStore }) {
     res.json({ agents: result });
   });
 
+  // GET /api/stats/usage — 5시간/주간 rolling 토큰 사용량
+  router.get('/usage', (_req, res) => {
+    const now = Date.now();
+    const window5h = now - 5 * 60 * 60 * 1000;
+    const window7d = now - 7 * 24 * 60 * 60 * 1000;
+
+    let input5h = 0, output5h = 0;
+    let input7d = 0, output7d = 0;
+
+    for (const session of sessionsStore.list()) {
+      for (const m of session.messages ?? []) {
+        if (!m.usage || !m.ts) continue;
+        const ts = new Date(m.ts).getTime();
+        if (isNaN(ts)) continue;
+        const inp = m.usage.inputTokens ?? 0;
+        const out = m.usage.outputTokens ?? 0;
+        if (ts >= window7d) { input7d += inp; output7d += out; }
+        if (ts >= window5h) { input5h += inp; output5h += out; }
+      }
+    }
+
+    res.json({
+      window5h: { inputTokens: input5h, outputTokens: output5h, total: input5h + output5h },
+      window7d: { inputTokens: input7d, outputTokens: output7d, total: input7d + output7d }
+    });
+  });
+
   return router;
 }

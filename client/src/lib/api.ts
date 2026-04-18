@@ -227,6 +227,11 @@ export const api = {
         lastActive: string | null;
       }[];
     }>('/stats/agents'),
+  usageStats: () =>
+    get<{
+      window5h: { inputTokens: number; outputTokens: number; total: number };
+      window7d: { inputTokens: number; outputTokens: number; total: number };
+    }>('/stats/usage'),
   tunnelUrl: () => get<{ url: string | null; file: string }>(`/tunnel/url`),
   /**
    * Upload a file (from drag-drop or clipboard paste) to the server's

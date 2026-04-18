@@ -6,10 +6,17 @@ import { BackendCard } from './BackendCard';
 import { AddBackendModal } from './AddBackendModal';
 import { useT } from '../../lib/i18n';
 
+function fmtTokens(n: number) {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
 export function BackendsTab() {
   const t = useT();
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ['backends'], queryFn: api.backends });
+  const { data: usage } = useQuery({ queryKey: ['usage-stats'], queryFn: api.usageStats, refetchInterval: 30000 });
   const [adding, setAdding] = useState(false);
 
   const setActive = useMutation({
@@ -32,6 +39,29 @@ export function BackendsTab() {
 
   return (
     <div className="space-y-5">
+      {/* 토큰 사용량 요약 */}
+      {usage && (
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
+          <div className="text-sm font-semibold text-zinc-300">사용량 (토큰 기준)</div>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="rounded border border-zinc-700 bg-zinc-950/60 p-3 space-y-1">
+              <div className="text-zinc-500 uppercase tracking-wider text-[10px]">최근 5시간</div>
+              <div className="text-xl font-mono font-bold text-amber-300">{fmtTokens(usage.window5h.total)}</div>
+              <div className="text-zinc-500">
+                ↑{fmtTokens(usage.window5h.inputTokens)} &nbsp;↓{fmtTokens(usage.window5h.outputTokens)}
+              </div>
+            </div>
+            <div className="rounded border border-zinc-700 bg-zinc-950/60 p-3 space-y-1">
+              <div className="text-zinc-500 uppercase tracking-wider text-[10px]">최근 7일</div>
+              <div className="text-xl font-mono font-bold text-sky-300">{fmtTokens(usage.window7d.total)}</div>
+              <div className="text-zinc-500">
+                ↑{fmtTokens(usage.window7d.inputTokens)} &nbsp;↓{fmtTokens(usage.window7d.outputTokens)}
+              </div>
+            </div>
+          </div>
+          <div className="text-[10px] text-zinc-600">* Anthropic 계정의 실제 잔여 한도는 별도 확인 필요 (API로 조회 불가)</div>
+        </div>
+      )}
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
         <div className="text-sm font-semibold text-zinc-300">Global</div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

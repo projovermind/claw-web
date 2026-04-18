@@ -34,6 +34,28 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
   const t = useT();
   const COMMANDS = useCommands();
   const [value, setValue] = useState('');
+
+  // 드래프트 복원: 세션 전환 시 저장된 내용 불러오기
+  useEffect(() => {
+    if (!sessionId) { setValue(''); return; }
+    const saved = localStorage.getItem(`draft:${sessionId}`);
+    setValue(saved ?? '');
+    // textarea 높이 재조정
+    setTimeout(() => {
+      const ta = textareaRef.current;
+      if (ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; }
+    }, 0);
+  }, [sessionId]);
+
+  // 드래프트 저장: 타이핑 500ms 후 localStorage에 저장
+  useEffect(() => {
+    if (!sessionId) return;
+    if (!value) { localStorage.removeItem(`draft:${sessionId}`); return; }
+    const timer = setTimeout(() => {
+      localStorage.setItem(`draft:${sessionId}`, value);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [value, sessionId]);
   const staged = useUploadsStore((s) => s.staged);
   const removeStaged = useUploadsStore((s) => s.remove);
   const clearStaged = useUploadsStore((s) => s.clear);
@@ -170,6 +192,7 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
     onSend(trimmed || t('chat.input.attachOnly'), paths);
     setValue('');
     clearStaged();
+    if (sessionId) localStorage.removeItem(`draft:${sessionId}`);
     // Reset textarea height after send
     setTimeout(() => { if (textareaRef.current) textareaRef.current.style.height = 'auto'; }, 0);
   };
