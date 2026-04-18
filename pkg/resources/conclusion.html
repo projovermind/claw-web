@@ -35,11 +35,23 @@
   </div>
 
   <div class="section">
+    <h3>원격 접속 (설정한 경우)</h3>
+    <p style="font-size:13px;">
+      설치 중 터널을 선택했다면 자동으로 외부 접속 URL 이 생성됩니다.<br>
+      URL 확인:<br>
+      • Cloudflare: <code>tail /tmp/claw-web-tunnel.log | grep trycloudflare</code><br>
+      • ngrok: <code>curl http://localhost:4040/api/tunnels | grep public_url</code><br><br>
+      <b>⚠️ 외부 공개 시 반드시</b> Settings &rarr; Access 탭에서 Bearer 토큰 인증을 켜세요.
+    </p>
+  </div>
+
+  <div class="section">
     <h3>유용한 명령어</h3>
     <p style="font-size:13px;">
       서버 로그: <code>tail -f /tmp/claw-web.log</code><br>
       서버 중지: <code>launchctl unload ~/Library/LaunchAgents/com.claw-web.server.plist</code><br>
       서버 시작: <code>launchctl load ~/Library/LaunchAgents/com.claw-web.server.plist</code><br>
+      터널 중지: <code>launchctl unload ~/Library/LaunchAgents/com.claw-web.tunnel.plist</code><br>
       수동 실행: <code>cd /usr/local/lib/claw-web && npm start</code>
     </p>
   </div>

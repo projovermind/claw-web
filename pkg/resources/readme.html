@@ -42,6 +42,32 @@
     없어도 <code>claude login</code>으로 OAuth 인증하면 사용 가능합니다.
   </div>
 
+  <div class="section">
+    <h3>원격 접속 (선택) &mdash; 외부에서 내 Mac 접속</h3>
+    <p style="margin: 0 0 8px 0;">설치 직후엔 <code>localhost:3838</code>만 됩니다.
+    핸드폰 / 다른 노트북 / 외부에서 접속하려면 터널이 필요합니다. 두 가지 방법:</p>
+
+    <p style="margin: 8px 0 4px 0;"><b>① ngrok (간단, 5분)</b></p>
+    <ol style="margin: 0;">
+      <li><a href="https://dashboard.ngrok.com/signup">dashboard.ngrok.com/signup</a> 가입 (무료)</li>
+      <li>설치: <code>brew install ngrok</code></li>
+      <li>대시보드에서 authtoken 복사 → <code>ngrok config add-authtoken YOUR_TOKEN</code></li>
+      <li>실행: <code>ngrok http 3838</code></li>
+      <li>출력된 <code>https://xxxx.ngrok-free.app</code> 로 어디서든 접속</li>
+    </ol>
+
+    <p style="margin: 10px 0 4px 0;"><b>② Cloudflare Tunnel (무료, 즉시 사용)</b></p>
+    <ol style="margin: 0;">
+      <li>설치: <code>brew install cloudflared</code></li>
+      <li>실행: <code>cloudflared tunnel --url http://localhost:3838</code></li>
+      <li>터미널에 표시되는 <code>trycloudflare.com</code> URL 로 접속 (가입 불필요)</li>
+    </ol>
+
+    <p class="note" style="margin: 8px 0 0 0;">
+      원격 접속 시 반드시 Settings &rarr; Access 탭에서 <b>Bearer 토큰</b>을 설정해 인증을 활성화하세요. 안 그러면 누구나 접속 가능.
+    </p>
+  </div>
+
   <div class="note">
     설치 위치: <code>/usr/local/lib/claw-web</code><br>
     데이터 위치: <code>~/.claw-web/</code><br>
