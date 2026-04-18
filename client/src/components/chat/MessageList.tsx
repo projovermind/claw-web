@@ -306,9 +306,11 @@ function MessageBubble({ message, searchQuery, onChoice, delegationStage, runnin
     return <SystemTriggerCard content={message.content} />;
   }
   const { body, choices } = useMemo(() => isUser ? { body: message.content, choices: [] } : extractChoices(message.content), [message.content, isUser]);
+  // 에러 메시지 감지: ⚠️ 로 시작하는 assistant 메시지
+  const isError = !isUser && /^⚠️/.test(message.content.trim());
   // 버블 색상 — CSS 변수(useAppearance 훅이 주입) 기반
   const userBubbleStyle = isUser && !isQueued ? { background: 'var(--user-bubble, #3f3f46)' } : undefined;
-  const assistantBubbleStyle = !isUser ? { background: 'var(--assistant-bubble, #18181b)' } : undefined;
+  const assistantBubbleStyle = !isUser && !isError ? { background: 'var(--assistant-bubble, #18181b)' } : undefined;
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div
@@ -318,7 +320,9 @@ function MessageBubble({ message, searchQuery, onChoice, delegationStage, runnin
             ? isQueued
               ? 'bg-sky-900/40 border border-sky-700/50 text-zinc-100'
               : 'text-zinc-100'
-            : 'border border-zinc-800 text-zinc-200'
+            : isError
+              ? 'border border-red-800/60 bg-red-950/30 text-red-200'
+              : 'border border-zinc-800 text-zinc-200'
         }`}
       >
         {isQueued && (
