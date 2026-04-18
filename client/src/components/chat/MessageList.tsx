@@ -9,6 +9,13 @@ import type { ChatMessage, Session } from '../../lib/types';
 import ToolCallCard from './ToolCallCard';
 import { useT } from '../../lib/i18n';
 
+// 테이블이 버블 너비를 초과할 때 가로 스크롤 처리
+const mdComponents = {
+  table: ({ children, ...props }: React.ComponentPropsWithoutRef<'table'>) => (
+    <div className="table-scroll"><table {...props}>{children}</table></div>
+  )
+} as const;
+
 // 도구 호출 접혀있는 뷰
 function ToolCallsCollapsed({ toolCalls, ts }: { toolCalls: { name: string; input: Record<string, unknown>; ts?: string }[]; ts: string }) {
   const [open, setOpen] = useState(false);
@@ -345,14 +352,14 @@ function MessageBubble({ message, searchQuery, onChoice, delegationStage, runnin
             <HighlightText text={message.content} query={searchQuery} />
           ) : (
             <div className="markdown-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
                 {message.content}
               </ReactMarkdown>
             </div>
           )
         ) : (
           <div className="markdown-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
               {body}
             </ReactMarkdown>
           </div>

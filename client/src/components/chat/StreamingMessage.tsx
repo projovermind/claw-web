@@ -1,6 +1,13 @@
 import { useMemo, useState } from 'react';
+import type React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+const mdComponents = {
+  table: ({ children, ...props }: React.ComponentPropsWithoutRef<'table'>) => (
+    <div className="table-scroll"><table {...props}>{children}</table></div>
+  )
+} as const;
 import type { ToolCall } from '../../store/chat-store';
 import ToolCallCard from './ToolCallCard';
 import { ChoicesList, extractChoices } from './MessageList';
@@ -68,7 +75,7 @@ export default function StreamingMessage({ text, toolCalls, running, error, onCh
         {/* Streaming text — 마크다운 렌더 */}
         {body && (
           <div className="markdown-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{body}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{body}</ReactMarkdown>
           </div>
         )}
 

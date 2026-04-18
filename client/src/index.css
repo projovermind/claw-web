@@ -164,9 +164,16 @@
 .markdown-body blockquote p { margin: 0.3em 0; }
 .markdown-body table {
   border-collapse: collapse;
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   font-size: 0.75rem;
   margin: 0.75em 0;
+}
+/* 테이블 가로 스크롤 wrapper */
+.markdown-body .table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
 }
 .markdown-body th, .markdown-body td {
   border: 1px solid #27272a;
