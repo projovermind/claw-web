@@ -313,40 +313,21 @@ async function main() {
   const server = http.createServer(app);
   const wsHub = attachWsHub(server, { eventBus, webConfig });
 
-  // ── 포트 점유 고아 프로세스 자가 청소 ──
-  // launchctl 관리 밖에 떠도는 이전 server/index.js 인스턴스가 포트를 잡고 있으면
-  // launchd KeepAlive 가 10초마다 crash-loop 를 돈다. listen 전에 자진 정리.
+  // ── 포트 점유 진단 (kill 하지 않고 로그만) ──
+  // 자가 청소는 launchd unload→load 오버랩 시점에 방금 launchd 가 띄운
+  // 자매 프로세스까지 kill 해 crash-loop 를 오히려 악화시키는 부작용이 있어
+  // 제거. EADDRINUSE 는 아래 `server.on('error')` 에서 명시적으로 처리.
+  // 실제 고아가 생겼을 땐 `lsof -i :3838` 로 진단 후 수동 kill 권장.
   try {
     const selfPid = process.pid;
     const occupied = execFileSync('lsof', ['-nP', '-i', `:${webConfig.port}`, '-sTCP:LISTEN', '-t'],
-      { encoding: 'utf8', timeout: 5000 }).trim().split('\n').filter(Boolean).map(Number);
-    for (const pid of occupied) {
-      if (pid === selfPid) continue;
-      try {
-        const cmd = execFileSync('ps', ['-p', String(pid), '-o', 'command='],
-          { encoding: 'utf8', timeout: 3000 }).trim();
-        if (cmd.includes('server/index.js')) {
-          logger.warn({ pid, port: webConfig.port, cmd: cmd.slice(0, 80) },
-            'killing orphaned claw-web server occupying our port');
-          try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ }
-          // 2초 후 SIGKILL
-          setTimeout(() => { try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } }, 2000);
-        }
-      } catch { /* process lookup failed */ }
-    }
-    // 정리 시도한 경우 listen 전 대기 (커널이 TIME_WAIT 풀도록)
+      { encoding: 'utf8', timeout: 3000 }).trim().split('\n').filter(Boolean).map(Number)
+      .filter((pid) => pid !== selfPid);
     if (occupied.length > 0) {
-      // Sync 대기로 안전하게 확보
-      const waitUntil = Date.now() + 3000;
-      while (Date.now() < waitUntil) {
-        try {
-          const still = execFileSync('lsof', ['-nP', '-i', `:${webConfig.port}`, '-sTCP:LISTEN', '-t'],
-            { encoding: 'utf8', timeout: 2000 }).trim();
-          if (!still || still.split('\n').every((p) => Number(p) === selfPid)) break;
-        } catch { break; }
-      }
+      logger.warn({ port: webConfig.port, occupiedPids: occupied },
+        'port already occupied by other process(es) — will fail listen; check with `lsof -i :' + webConfig.port + '`');
     }
-  } catch { /* lsof not installed or no match */ }
+  } catch { /* lsof 없거나 출력 없음 — 정상 */ }
 
   // ── listen 에러 처리 ──
   // EADDRINUSE: 고아 프로세스가 포트를 점유 중이면 launchd ThrottleInterval 에
@@ -367,8 +348,12 @@ async function main() {
     logger.info({ port: webConfig.port }, 'hivemind-web server listening');
   });
 
-  // ── 재시작 시 자동 이어가기 ──
-  // shutdown 시 저장한 active 세션들을 읽어 마지막 user 메시지로 재제출
+  // ── 재시작 시 중단 세션 처리 ──
+  // 이전엔 자동 재개했으나:
+  //   (a) crash-loop 중이면 매 재기동마다 N개 세션 spawn → 악화
+  //   (b) delegation 루프에 빠진 에이전트가 재시작할 때마다 또 시작 → 영원히 안 끝남
+  // 기본은 **자동 재개 OFF**. pending-resume 에 ID만 남기고 각 세션에 "재기동됨 — 수동으로 재개"
+  // 알림 메시지 append. 옵션(webConfig.autoResume === true) 으로 다시 켤 수 있음.
   const resumeFile = path.join(path.dirname(WEB_CONFIG_PATH), 'logs', 'pending-resume.json');
   try {
     if (fssync.existsSync(resumeFile)) {
@@ -376,12 +361,22 @@ async function main() {
       await fs.unlink(resumeFile).catch(() => {});
       const ids = JSON.parse(raw);
       if (Array.isArray(ids) && ids.length > 0) {
-        logger.info({ count: ids.length }, 'resuming interrupted sessions');
-        // server.listen 직후 즉시 실행하면 일부 store 초기화 경쟁 가능 → 약간 지연
+        const autoResume = webConfig.autoResume === true; // 기본 false
+        logger.info({ count: ids.length, autoResume }, 'interrupted sessions found');
         setTimeout(async () => {
           for (const sid of ids) {
-            try { await resumeInterruptedSession(sid); } catch (err) {
-              logger.warn({ sid, err: err.message }, 'resume failed');
+            if (autoResume) {
+              try { await resumeInterruptedSession(sid); } catch (err) {
+                logger.warn({ sid, err: err.message }, 'resume failed');
+              }
+            } else {
+              // 각 세션에 "재기동됨 — 수동 재개" 안내만 append
+              try {
+                await sessionsStore.appendMessage(sid, {
+                  role: 'assistant',
+                  content: '⚠️ **서버 재기동으로 작업이 중단되었습니다.**\n\n이어서 진행하려면 이 세션에 다시 메시지를 보내주세요.\n(자동 재개는 Settings → Access → Server 에서 켤 수 있습니다)'
+                });
+              } catch { /* ignore */ }
             }
           }
         }, 1500);

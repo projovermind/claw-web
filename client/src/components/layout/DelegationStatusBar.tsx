@@ -81,11 +81,28 @@ export default function DelegationStatusBar() {
 
   if (delegations.length === 0) return null;
 
+  // 모바일: 진행 중인 것 우선 1개만 표시 + "외 N건" 뱃지
+  const active = delegations.filter(d => d.status !== 'completed' && d.status !== 'failed');
+  const primary = active[0] ?? delegations[0];
+  const mobileExtra = delegations.length - 1;
+
   return (
     <div className="absolute top-3 right-3 z-20 flex flex-wrap gap-2 justify-end max-w-[60%] pointer-events-none">
-      {delegations.map((entry) => (
-        <DelegationItem key={entry.id} entry={entry} />
-      ))}
+      {/* 모바일: 1개 + 외 N건 */}
+      <div className="flex items-center gap-2 lg:hidden">
+        <DelegationItem entry={primary} />
+        {mobileExtra > 0 && (
+          <span className="px-2 py-1 rounded-full text-[10px] font-bold bg-zinc-800 text-zinc-400">
+            외 {mobileExtra}건
+          </span>
+        )}
+      </div>
+      {/* 데스크톱: 전체 표시 */}
+      <div className="hidden lg:flex flex-wrap gap-2 justify-end">
+        {delegations.map((entry) => (
+          <DelegationItem key={entry.id} entry={entry} />
+        ))}
+      </div>
     </div>
   );
 }

@@ -10,7 +10,8 @@ import {
   Sparkles,
   Search,
   Menu,
-  X
+  X,
+  RotateCcw
 } from 'lucide-react';
 import { useI18nStore, useT } from '../../lib/i18n';
 import { useQuery } from '@tanstack/react-query';
@@ -199,6 +200,20 @@ export default function Sidebar() {
           aria-label={t('sidebar.searchAria')}
         >
           <Search size={16} />
+        </button>
+        <button
+          onClick={() => {
+            if (!confirm('서버를 재시작할까요?')) return;
+            fetch('/api/admin/restart', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', ...(localStorage.getItem('hivemind:auth-token') ? { Authorization: `Bearer ${localStorage.getItem('hivemind:auth-token')}` } : {}) },
+              body: JSON.stringify({ force: false })
+            }).catch(() => {});
+          }}
+          className="p-2 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+          title="서버 재시작"
+        >
+          <RotateCcw size={15} />
         </button>
       </div>
 

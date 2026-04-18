@@ -68,6 +68,10 @@ export function useWebSocket() {
 
       ws.onopen = () => {
         setState('open');
+        // 재연결 시 서버 재시작으로 완료 이벤트를 못 받은 running 항목 정리
+        if (retryRef.current > 0) {
+          useDelegationStore.getState().clearStale();
+        }
         retryRef.current = 0;
       };
       ws.onmessage = (e) => {

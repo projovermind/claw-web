@@ -93,14 +93,43 @@ export function createChatRouter({
   /**
    * Resolve the active backend for an agent and return:
    *   { backendId, backendType, backendObj }
+   *
+   * 모델 이름에 따른 자동 백엔드 재매핑:
+   *   - glm-* → 'zai' (있으면)
+   *   - claude-* → 'claude' (있으면)
+   * 이유: 사용자가 UI에서 모델만 바꿨는데 backend가 그대로라
+   *       "There's an issue with the selected model" 에러 나는 상황 방지.
    */
   function resolveBackend(agent) {
     if (!backendsStore) return { backendId: 'claude', backendType: 'claude-cli', backendObj: null };
     const raw = backendsStore.getRaw();
     const agentBackendId = agent?.backendId;
     const globalActiveId = raw?.austerityMode ? raw.austerityBackend : raw?.activeBackend;
-    const backendId = agentBackendId || globalActiveId || 'claude';
-    const backendObj = raw?.backends?.[backendId] ?? null;
+    let backendId = agentBackendId || globalActiveId || 'claude';
+    let backendObj = raw?.backends?.[backendId] ?? null;
+
+    // Model → backend 자동 재매핑: 현재 backend가 모델을 지원하지 않을 때만
+    const model = typeof agent?.model === 'string' ? agent.model.toLowerCase() : '';
+    if (model) {
+      const currentType = backendObj?.type;
+      const isGlm = model.startsWith('glm-');
+      const isClaudeModelId = model.startsWith('claude-'); // claude-opus-4-6 같은 full-ID
+      // glm 모델인데 backend가 claude-cli(anthropic native)면 강제 zai 라우팅
+      if (isGlm && currentType === 'claude-cli' && raw?.backends?.zai) {
+        backendId = 'zai';
+        backendObj = raw.backends.zai;
+        logger.warn({ agent: agent?.id, model, autoRoutedTo: 'zai' },
+          'resolveBackend: glm-* model rerouted to Z.AI (backend was claude-cli)');
+      }
+      // claude-* full-id 모델인데 backend가 openai-compatible(zai 등)이면 claude 로 (역방향 가드)
+      else if (isClaudeModelId && currentType === 'openai-compatible' && raw?.backends?.claude) {
+        backendId = 'claude';
+        backendObj = raw.backends.claude;
+        logger.warn({ agent: agent?.id, model, autoRoutedTo: 'claude' },
+          'resolveBackend: claude-* model rerouted to Claude CLI (backend was openai-compatible)');
+      }
+    }
+
     const backendType = backendObj?.type || 'claude-cli';
     return { backendId, backendType, backendObj };
   }
@@ -267,7 +296,7 @@ export function createChatRouter({
             // Web Push notification on completion
             if (pushStore) {
               const agentName = configStore.getAgent(session.agentId)?.name || session.agentId;
-              pushStore.sendPushToAll(`${agentName} 완료`, '응답이 완료되었습니다.').catch(() => {});
+              pushStore.sendPushToAll(`${agentName} 완료`, '응답이 완료되었습니다.', { url: `/chat/${sessionId}` }).catch(() => {});
             }
             // Delegation detection + Ralph Loop continuation
             const responseText = result.text ?? accumText;
@@ -313,7 +342,7 @@ export function createChatRouter({
                   // Web Push notification on delegation completion
                   if (pushStore) {
                     const agentName = configStore.getAgent(completed.targetAgentId)?.name || completed.targetAgentId;
-                    pushStore.sendPushToAll(`${agentName} 위임 완료`, completed.task?.slice(0, 80) || '위임된 작업이 완료되었습니다.').catch(() => {});
+                    pushStore.sendPushToAll(`${agentName} 위임 완료`, completed.task?.slice(0, 80) || '위임된 작업이 완료되었습니다.', { url: `/chat/${completed.originSessionId}` }).catch(() => {});
                   }
 
                   // 2. 기획자 자동 재진입 — 결과 검토 + 사용자 보고 + 다음 단계 제안
