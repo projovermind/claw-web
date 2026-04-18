@@ -1,18 +1,20 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus } from 'lucide-react';
+import { Plus, Layers } from 'lucide-react';
 import { api } from '../lib/api';
 import type { Agent } from '../lib/types';
 import AgentHierarchy from '../components/dashboard/AgentHierarchy';
 import { useT } from '../lib/i18n';
 import { AgentModal, emptyAgentForm } from '../components/agents/AgentModal';
 import type { AgentFormState } from '../components/agents/AgentModal';
+import { BulkModelChangeModal } from '../components/agents/BulkModelChangeModal';
 
 export default function AgentsPage() {
   const t = useT();
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ['agents'], queryFn: api.agents });
   const [modal, setModal] = useState<{ mode: 'create' | 'edit'; agent?: Agent } | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [quickForm, setQuickForm] = useState<AgentFormState>(emptyAgentForm());
 
   const createAgent = useMutation({
@@ -116,6 +118,12 @@ export default function AgentsPage() {
             {t('agents.totalLabel')} {data?.length ?? 0} · {t('agents.help')}
           </p>
         </div>
+        <button
+          onClick={() => setBulkOpen(true)}
+          className="flex items-center gap-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-2 text-xs"
+        >
+          <Layers size={12} /> {t('bulkModel.openButton')}
+        </button>
       </div>
 
       {/* Create section at top */}
@@ -172,6 +180,8 @@ export default function AgentsPage() {
         onDelete={handleDelete}
         onClone={handleClone}
       />
+
+      {bulkOpen && <BulkModelChangeModal onClose={() => setBulkOpen(false)} />}
 
       {modal && (
         <AgentModal

@@ -407,6 +407,26 @@ const DICT: Record<Lang, Record<string, string>> = {
     'appearance.soundVolume': '볼륨',
     'appearance.soundTest': '테스트',
 
+    // Bulk model change (agents)
+    'bulkModel.openButton': '모델 일괄 변경',
+    'bulkModel.title': '에이전트 모델 일괄 변경',
+    'bulkModel.desc': '여러 에이전트를 선택해서 같은 모델로 한 번에 변경합니다.',
+    'bulkModel.searchPlaceholder': '이름/id/프로젝트 검색',
+    'bulkModel.allProjects': '모든 프로젝트',
+    'bulkModel.unassigned': '미배치',
+    'bulkModel.allModels': '모든 모델',
+    'bulkModel.countLine': '선택됨 {selected} / 필터 결과 {total}',
+    'bulkModel.selectFiltered': '필터 전체 선택',
+    'bulkModel.clearAll': '선택 해제',
+    'bulkModel.noMatch': '조건에 맞는 에이전트 없음',
+    'bulkModel.targetModel': '대상 모델:',
+    'bulkModel.selectModel': '모델 선택',
+    'bulkModel.cancel': '취소',
+    'bulkModel.applying': '적용 중...',
+    'bulkModel.applyCount': '{count}개에 적용',
+    'bulkModel.progress': '진행: {done} / {total}',
+    'bulkModel.errorsCount': '실패 {count}건',
+
     // Chat session dots/status titles
     'chat.session.unread': '안 읽음',
     'chat.session.running': '실행 중',
@@ -1174,6 +1194,26 @@ const DICT: Record<Lang, Record<string, string>> = {
     'appearance.soundOff': 'Off',
     'appearance.soundVolume': 'Volume',
     'appearance.soundTest': 'Test',
+
+    // Bulk model change (agents)
+    'bulkModel.openButton': 'Bulk change model',
+    'bulkModel.title': 'Bulk Change Agent Model',
+    'bulkModel.desc': 'Select multiple agents and change their model in one go.',
+    'bulkModel.searchPlaceholder': 'Search name/id/project',
+    'bulkModel.allProjects': 'All projects',
+    'bulkModel.unassigned': 'Unassigned',
+    'bulkModel.allModels': 'All models',
+    'bulkModel.countLine': '{selected} selected / {total} in filter',
+    'bulkModel.selectFiltered': 'Select all filtered',
+    'bulkModel.clearAll': 'Clear',
+    'bulkModel.noMatch': 'No matching agents',
+    'bulkModel.targetModel': 'Target model:',
+    'bulkModel.selectModel': 'Select model',
+    'bulkModel.cancel': 'Cancel',
+    'bulkModel.applying': 'Applying...',
+    'bulkModel.applyCount': 'Apply to {count}',
+    'bulkModel.progress': 'Progress: {done} / {total}',
+    'bulkModel.errorsCount': '{count} failed',
 
     // Chat session dots/status titles
     'chat.session.unread': 'Unread',
