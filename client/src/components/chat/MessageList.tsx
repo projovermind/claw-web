@@ -521,9 +521,9 @@ function parseDelegationMessage(content: string): DelegationData | null {
 
 /** 위임 카드 — MessageBubble 대체 렌더 */
 function DelegationCard({ data, targetRunning = false }: { data: DelegationData; targetRunning?: boolean }) {
-  const [open, setOpen] = useState(data.kind === 'done' || data.kind === 'fail' || data.kind === 'escalate');
+  const [open, setOpen] = useState(data.kind === 'fail' || data.kind === 'escalate');
   const palette = data.kind === 'done'
-    ? { border: 'border-emerald-800/60', bg: 'bg-emerald-950/30', text: 'text-emerald-200', icon: <CheckCircle2 size={14} className="text-emerald-400" />, label: '위임 완료' }
+    ? { border: 'border-emerald-800/60', bg: 'bg-emerald-950/30', text: 'text-emerald-200', icon: <CheckCircle2 size={14} className="text-emerald-400" />, label: '위임 작업 완료' }
     : data.kind === 'fail'
       ? { border: 'border-red-800/60', bg: 'bg-red-950/30', text: 'text-red-200', icon: <XCircle size={14} className="text-red-400" />, label: '위임 실패' }
       : data.kind === 'escalate'
