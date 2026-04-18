@@ -88,7 +88,7 @@ export function createPushStore({ webConfig, webConfigPath }) {
 
   // ── Send push ────────────────────────────────────────────────
   async function sendPushToAll(title, body) {
-    if (!webConfig.push?.enabled) return;
+    if (webConfig.push?.enabled === false) return; // 명시적 false 일 때만 비활성
     if (isDesktopActive()) {
       logger.debug('push-store: desktop active — skipping push');
       return;

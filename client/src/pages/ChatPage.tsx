@@ -571,6 +571,12 @@ function MobileHeader({
             <span className="text-zinc-500">{t('chat.mobileProject')}</span>
           )}
           <ChevronDown size={12} className="text-zinc-500 shrink-0 ml-auto" />
+          {/* 프로젝트/에이전트 running/unread 상태 점 */}
+          {currentProject
+            ? <StatusDot unread={projectStatus[currentProject.id]?.unread ?? false} running={projectStatus[currentProject.id]?.running ?? false} />
+            : currentAgent
+            ? <StatusDot unread={agentStatus[currentAgent.id]?.unread ?? false} running={agentStatus[currentAgent.id]?.running ?? false} />
+            : null}
         </button>
         {projOpen && (
           <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl max-h-64 overflow-y-auto z-50">
@@ -618,8 +624,13 @@ function MobileHeader({
           onClick={() => { setSessOpen((v) => !v); setProjOpen(false); }}
           className="w-full flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 rounded px-2 py-1.5 text-xs"
         >
-          <span className="truncate">{currentSession?.title ?? t('chat.mobileSessionSelect')}</span>
-          <ChevronDown size={12} className="text-zinc-500 shrink-0 ml-auto" />
+          <span className="truncate flex-1">{currentSession?.title ?? t('chat.mobileSessionSelect')}</span>
+          <ChevronDown size={12} className="text-zinc-500 shrink-0" />
+          {/* 다른 세션 running/unread 상태 점 */}
+          <StatusDot
+            unread={sessions.some(s => sessionUnread(s.id))}
+            running={sessions.some(s => s.isRunning && s.id !== currentSessionId)}
+          />
         </button>
         {sessOpen && (
           <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl max-h-64 overflow-y-auto z-50">

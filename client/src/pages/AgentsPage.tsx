@@ -120,7 +120,7 @@ export default function AgentsPage() {
         </div>
         <button
           onClick={() => setBulkOpen(true)}
-          className="flex items-center gap-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-2 text-xs"
+          className="flex items-center gap-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-2 text-xs whitespace-nowrap shrink-0"
         >
           <Layers size={12} /> {t('bulkModel.openButton')}
         </button>

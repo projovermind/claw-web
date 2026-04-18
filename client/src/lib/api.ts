@@ -292,8 +292,8 @@ export const api = {
     req<{ ok: boolean }>('/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint }) }),
   pushActivity: () =>
     req<void>('/push/activity', { method: 'POST', body: JSON.stringify({}) }),
-  pushSaveSettings: (data: { inactiveMinutes: number }) =>
-    post<{ ok: boolean }>('/push/settings', data),
+  pushSaveSettings: (data: { enabled?: boolean; idleThreshold?: number }) =>
+    req<unknown>('/settings', { method: 'PATCH', body: JSON.stringify({ push: data }) }),
 
   uploadFile: async (file: File): Promise<{
     id: string;
