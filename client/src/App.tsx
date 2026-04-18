@@ -12,6 +12,7 @@ import { useGlobalFileDrop } from './hooks/useGlobalFileDrop';
 import { useUnreadGuard } from './hooks/useUnreadGuard';
 import { useAppearance } from './hooks/useAppearance';
 import { useUndoShortcut } from './hooks/useUndoShortcut';
+import { useActivityPing } from './hooks/useActivityPing';
 import GlobalDropOverlay from './components/layout/GlobalDropOverlay';
 import LoginDialog from './components/auth/LoginDialog';
 import CommandPalette from './components/palette/CommandPalette';
@@ -24,6 +25,7 @@ export default function App() {
   useUnreadGuard();
   useAppearance();
   useUndoShortcut();
+  useActivityPing();
   return (
     <>
       <LoginDialog />

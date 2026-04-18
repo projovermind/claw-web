@@ -49,6 +49,8 @@ import { createUndoRouter } from './routes/undo.js';
 import { createHooksStore } from './lib/hooks-store.js';
 import { createScheduler } from './lib/scheduler.js';
 import { createDelegationTracker } from './lib/delegation-tracker.js';
+import { createPushStore } from './lib/push-store.js';
+import { createPushRouter } from './routes/push.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -212,6 +214,7 @@ async function main() {
   }
   const runner = createRunner({ processTracker });
   const delegationTracker = createDelegationTracker();
+  const pushStore = createPushStore({ webConfig, webConfigPath: WEB_CONFIG_PATH });
   const eventBus = createEventBus();
   const hooksStore = await createHooksStore(path.join(REPO_ROOT, 'hooks.json'));
   const scheduler = createScheduler({
@@ -265,7 +268,8 @@ async function main() {
     backendsStore,
     runner,
     eventBus,
-    delegationTracker
+    delegationTracker,
+    pushStore
   });
   app.use('/api/chat', chatRouter);
   app.use('/api/backends', createBackendsRouter({ backendsStore, eventBus }));
@@ -278,6 +282,7 @@ async function main() {
   app.use('/api/fs', createFsBrowserRouter({ webConfig }));
   app.use('/api/tunnel', createTunnelRouter());
   app.use('/api/settings', createSettingsRouter({ webConfig, webConfigPath: WEB_CONFIG_PATH, eventBus }));
+  app.use('/api/push', createPushRouter({ pushStore }));
   app.use('/api/stats', createStatsRouter({ sessionsStore, configStore }));
   app.use('/api/tasks', createTasksRouter({ eventBus }));
   app.use('/api/hooks', createHooksRouter({ hooksStore, eventBus }));

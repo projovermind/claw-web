@@ -284,6 +284,17 @@ export const api = {
 
   undoAction: () => req<{ description: string }>('/undo', { method: 'POST', body: JSON.stringify({}) }),
 
+  // Push Notifications
+  pushVapidPublicKey: () => get<{ publicKey: string }>('/push/vapid-public-key'),
+  pushSubscribe: (sub: { endpoint: string; keys: Record<string, string> }) =>
+    post<{ ok: boolean }>('/push/subscribe', sub),
+  pushUnsubscribe: (endpoint: string) =>
+    req<{ ok: boolean }>('/push/subscribe', { method: 'DELETE', body: JSON.stringify({ endpoint }) }),
+  pushActivity: () =>
+    req<void>('/push/activity', { method: 'POST', body: JSON.stringify({}) }),
+  pushSaveSettings: (data: { inactiveMinutes: number }) =>
+    post<{ ok: boolean }>('/push/settings', data),
+
   uploadFile: async (file: File): Promise<{
     id: string;
     filename: string;

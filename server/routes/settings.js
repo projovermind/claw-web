@@ -19,6 +19,12 @@ const featurePatchSchema = z.object({
       soundEnabled: z.boolean().optional(),
       soundVolume: z.number().min(0).max(1).optional()
     })
+    .optional(),
+  push: z
+    .object({
+      enabled: z.boolean().optional(),
+      idleThreshold: z.number().int().min(1).max(30).optional()
+    })
     .optional()
 }).strict();
 
@@ -45,6 +51,9 @@ export function createSettingsRouter({ webConfig, webConfigPath, eventBus }) {
       }
       if (patch.appearance) {
         webConfig.appearance = { ...(webConfig.appearance ?? {}), ...patch.appearance };
+      }
+      if (patch.push) {
+        webConfig.push = { ...(webConfig.push ?? {}), ...patch.push };
       }
       await fs.writeFile(webConfigPath, JSON.stringify(webConfig, null, 2));
       if (eventBus) eventBus.publish('settings.updated', {});

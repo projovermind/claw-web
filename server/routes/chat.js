@@ -22,7 +22,8 @@ export function createChatRouter({
   backendsStore,
   runner,
   eventBus,
-  delegationTracker
+  delegationTracker,
+  pushStore
 }) {
   const router = Router();
 
@@ -230,6 +231,11 @@ export function createChatRouter({
               model: result.model,
               usage: result.usage ?? null
             });
+            // Web Push notification on completion
+            if (pushStore) {
+              const agentName = configStore.getAgent(session.agentId)?.name || session.agentId;
+              pushStore.sendPushToAll(`${agentName} 완료`, '응답이 완료되었습니다.').catch(() => {});
+            }
             // Delegation detection + Ralph Loop continuation
             const responseText = result.text ?? accumText;
             handleDelegation(sessionId, responseText);
@@ -271,6 +277,11 @@ export function createChatRouter({
                     targetSessionId: completed.targetSessionId,
                     targetAgentId: completed.targetAgentId
                   });
+                  // Web Push notification on delegation completion
+                  if (pushStore) {
+                    const agentName = configStore.getAgent(completed.targetAgentId)?.name || completed.targetAgentId;
+                    pushStore.sendPushToAll(`${agentName} 위임 완료`, completed.task?.slice(0, 80) || '위임된 작업이 완료되었습니다.').catch(() => {});
+                  }
 
                   // 2. 기획자 자동 재진입 — 결과 검토 + 사용자 보고 + 다음 단계 제안
                   //    (무한 루프 방지: 직전에 이미 트리거된 경우 스킵)
