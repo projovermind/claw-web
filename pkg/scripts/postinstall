@@ -70,6 +70,14 @@ if [ -z "$CLAUDE_BIN" ]; then
   notify "③ Claude CLI 설치 중..."
   # root로 실행 — /usr/local/lib 에 쓰기 권한 있음 (as_user는 EACCES 발생)
   "$NPM_BIN" install -g @anthropic-ai/claude-code 2>> "$LOG" || true
+
+  # 네이티브 바이너리 수동 설치 (npm postinstall이 root 환경에서 skip될 수 있음)
+  CLAUDE_MODULE=$("$NPM_BIN" root -g 2>/dev/null)/@anthropic-ai/claude-code
+  if [ -f "$CLAUDE_MODULE/install.cjs" ]; then
+    echo "[postinstall] running install.cjs for native binary..." >> "$LOG"
+    "$NODE_BIN" "$CLAUDE_MODULE/install.cjs" >> "$LOG" 2>&1 || true
+  fi
+
   # 설치 후 재탐색
   for p in \
     /usr/local/bin/claude \
