@@ -16,19 +16,74 @@ INSTALL_DIR="$DEFAULT_INSTALL_DIR"
 
 # ── 경로 확보 ────────────────────────────────────────────
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:$PATH"
-NODE_BIN=$(command -v node 2>/dev/null || echo "/usr/local/bin/node")
-NPM_BIN=$(command -v npm 2>/dev/null || echo "/usr/local/bin/npm")
+
+# 유저 감지 먼저 (node 탐색이 ~/.nvm 등 홈 경로 확인해야 함)
+REAL_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "$SUDO_USER")
+REAL_HOME=$(eval echo "~$REAL_USER" 2>/dev/null)
+[ -z "$REAL_HOME" ] || [ "$REAL_HOME" = "~" ] && REAL_HOME="$HOME"
+
+# Node.js 경로 탐색 (preinstall 과 동일 로직 + fnm/asdf 추가)
+find_node() {
+  for p in \
+    /opt/homebrew/bin/node \
+    /opt/homebrew/opt/node@22/bin/node \
+    /opt/homebrew/opt/node@20/bin/node \
+    /opt/homebrew/opt/node/bin/node \
+    /usr/local/bin/node \
+    /usr/local/opt/node@22/bin/node \
+    /usr/local/opt/node@20/bin/node; do
+    [ -x "$p" ] && echo "$p" && return 0
+  done
+  if [ -d "$REAL_HOME/.nvm/versions/node" ]; then
+    local latest
+    latest=$(ls -1 "$REAL_HOME/.nvm/versions/node" 2>/dev/null | sort -V | tail -1)
+    if [ -n "$latest" ] && [ -x "$REAL_HOME/.nvm/versions/node/$latest/bin/node" ]; then
+      echo "$REAL_HOME/.nvm/versions/node/$latest/bin/node" && return 0
+    fi
+  fi
+  [ -x "$REAL_HOME/.volta/bin/node" ] && echo "$REAL_HOME/.volta/bin/node" && return 0
+  if [ -d "$REAL_HOME/.local/share/fnm/node-versions" ]; then
+    local latest
+    latest=$(ls -1 "$REAL_HOME/.local/share/fnm/node-versions" 2>/dev/null | sort -V | tail -1)
+    if [ -n "$latest" ] && [ -x "$REAL_HOME/.local/share/fnm/node-versions/$latest/installation/bin/node" ]; then
+      echo "$REAL_HOME/.local/share/fnm/node-versions/$latest/installation/bin/node" && return 0
+    fi
+  fi
+  if [ -d "$REAL_HOME/.asdf/installs/nodejs" ]; then
+    local latest
+    latest=$(ls -1 "$REAL_HOME/.asdf/installs/nodejs" 2>/dev/null | sort -V | tail -1)
+    if [ -n "$latest" ] && [ -x "$REAL_HOME/.asdf/installs/nodejs/$latest/bin/node" ]; then
+      echo "$REAL_HOME/.asdf/installs/nodejs/$latest/bin/node" && return 0
+    fi
+  fi
+  command -v node 2>/dev/null
+}
+
+NODE_BIN=$(find_node)
+
+# 실행 가능 검증 (아키텍처 mismatch, 깨진 심볼릭 등 감지)
+if [ -n "$NODE_BIN" ] && ! "$NODE_BIN" --version >/dev/null 2>&1; then
+  echo "[postinstall] NODE_BIN=$NODE_BIN fails --version; invalidating" >> "$LOG"
+  NODE_BIN=""
+fi
+
+# 치명적 실패 시 명확한 에러 (preinstall 이 이미 체크하지만 방어적으로)
+if [ -z "$NODE_BIN" ]; then
+  osascript -e 'display dialog "Node.js 를 찾을 수 없습니다.\nhttps://nodejs.org 에서 설치 후 다시 시도하세요." buttons {"확인"} default button 1 with icon stop with title "Claw Web"' 2>/dev/null || true
+  echo "[postinstall] FATAL: Node.js not found" >> "$LOG"
+  exit 1
+fi
+
+NODE_DIR=$(dirname "$NODE_BIN")
+NPM_BIN="$NODE_DIR/npm"
+[ ! -x "$NPM_BIN" ] && NPM_BIN=$(command -v npm 2>/dev/null || echo "$NODE_DIR/npm")
+
 BREW_BIN=""
 for bp in /opt/homebrew/bin/brew /usr/local/bin/brew; do
   [ -x "$bp" ] && BREW_BIN="$bp" && break
 done
 
-echo "[postinstall] node=$NODE_BIN npm=$NPM_BIN brew=$BREW_BIN" >> "$LOG"
-
-# ── 유저 감지 ────────────────────────────────────────────
-REAL_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "$SUDO_USER")
-REAL_HOME=$(eval echo "~$REAL_USER" 2>/dev/null)
-[ -z "$REAL_HOME" ] || [ "$REAL_HOME" = "~" ] && REAL_HOME="$HOME"
+echo "[postinstall] node=$NODE_BIN version=$("$NODE_BIN" --version 2>/dev/null) npm=$NPM_BIN brew=$BREW_BIN" >> "$LOG"
 USER_DATA="$REAL_HOME/.claw-web"
 PLIST_DIR="$REAL_HOME/Library/LaunchAgents"
 mkdir -p "$USER_DATA" "$PLIST_DIR"
@@ -68,28 +123,38 @@ done
 
 if [ -z "$CLAUDE_BIN" ]; then
   notify "③ Claude CLI 설치 중..."
-  # root로 실행 — /usr/local/lib 에 쓰기 권한 있음 (as_user는 EACCES 발생)
-  "$NPM_BIN" install -g @anthropic-ai/claude-code 2>> "$LOG" || true
 
-  # 네이티브 바이너리 수동 설치 (npm postinstall이 root 환경에서 skip될 수 있음)
-  CLAUDE_MODULE=$("$NPM_BIN" root -g 2>/dev/null)/@anthropic-ai/claude-code
+  # 사용자 전역 npm prefix 준비 (~/.npm-global) — root 환경 HOME 문제 회피
+  as_user "mkdir -p '$REAL_HOME/.npm-global/bin'"
+  as_user "'$NPM_BIN' config set prefix '$REAL_HOME/.npm-global' --location=user" 2>> "$LOG" || true
+
+  # REAL_USER 권한으로 설치 — HOME=REAL_HOME 이어야 native binary 가 올바른 캐시 경로에 저장됨
+  as_user "export HOME='$REAL_HOME'; \
+           export PATH='$NODE_DIR:$REAL_HOME/.npm-global/bin:/usr/local/bin:/opt/homebrew/bin:\$PATH'; \
+           '$NPM_BIN' install -g @anthropic-ai/claude-code" 2>> "$LOG" || true
+
+  # install.cjs 를 REAL_USER 권한으로 확실히 실행 (npm postinstall lifecycle 스킵 대비)
+  CLAUDE_MODULE="$REAL_HOME/.npm-global/lib/node_modules/@anthropic-ai/claude-code"
   if [ -f "$CLAUDE_MODULE/install.cjs" ]; then
-    echo "[postinstall] running install.cjs for native binary..." >> "$LOG"
-    "$NODE_BIN" "$CLAUDE_MODULE/install.cjs" >> "$LOG" 2>&1 || true
+    echo "[postinstall] running install.cjs as $REAL_USER..." >> "$LOG"
+    as_user "export HOME='$REAL_HOME'; \
+             export PATH='$NODE_DIR:\$PATH'; \
+             cd '$CLAUDE_MODULE' && '$NODE_BIN' install.cjs" 2>> "$LOG" || true
   fi
 
-  # 설치 후 재탐색
+  # 설치 후 재탐색 (사용자 prefix 우선)
   for p in \
+    "$REAL_HOME/.npm-global/bin/claude" \
     /usr/local/bin/claude \
     /opt/homebrew/bin/claude \
-    "$REAL_HOME/.local/bin/claude" \
-    "$REAL_HOME/.npm-global/bin/claude"; do
+    "$REAL_HOME/.local/bin/claude"; do
     if [ -x "$p" ]; then CLAUDE_BIN="$p"; break; fi
   done
 fi
 
-# /usr/local/bin/claude 심볼릭 링크 보장
+# /usr/local/bin/claude 심볼릭 링크 보장 (root 권한 필요)
 if [ -n "$CLAUDE_BIN" ] && [ "$CLAUDE_BIN" != "/usr/local/bin/claude" ]; then
+  mkdir -p /usr/local/bin 2>/dev/null || true
   ln -sf "$CLAUDE_BIN" /usr/local/bin/claude 2>/dev/null || true
   echo "[postinstall] symlinked $CLAUDE_BIN → /usr/local/bin/claude" >> "$LOG"
 fi
@@ -103,6 +168,16 @@ for rc in "$REAL_HOME/.zshrc" "$REAL_HOME/.bash_profile"; do
   fi
 done
 chown "$REAL_USER" "$REAL_HOME/.zshrc" "$REAL_HOME/.bash_profile" 2>/dev/null || true
+
+# 최종 검증 — claude --version 이 native binary load 실패 없이 동작하는지
+if [ -n "$CLAUDE_BIN" ]; then
+  CLAUDE_VER=$(as_user "export HOME='$REAL_HOME'; '$CLAUDE_BIN' --version" 2>> "$LOG" || echo "")
+  if echo "$CLAUDE_VER" | grep -qE '[0-9]+\.[0-9]+'; then
+    echo "[postinstall] claude OK: $CLAUDE_VER" >> "$LOG"
+  else
+    echo "[postinstall] claude verification FAILED: $CLAUDE_VER" >> "$LOG"
+  fi
+fi
 
 echo "[postinstall] CLAUDE_BIN=$CLAUDE_BIN" >> "$LOG"
 
@@ -589,7 +664,7 @@ cat > "$PLIST_DIR/com.claw-web.server.plist" <<EOFPLIST
     <key>StandardErrorPath</key><string>/tmp/claw-web.log</string>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>PATH</key><string>$NODE_DIR:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
         <key>HOME</key><string>$REAL_HOME</string>
         <key>NODE_ENV</key><string>production</string>
     </dict>
