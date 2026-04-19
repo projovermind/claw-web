@@ -254,8 +254,9 @@ case "$TUNNEL_CHOICE" in
 </plist>
 TUNPLIST
       chown "$REAL_USER" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || true
-      as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" >/dev/null 2>&1 || true
-      as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'"
+      _RU=$(id -u "$REAL_USER" 2>/dev/null || echo "")
+      launchctl bootout "gui/$_RU/com.claw-web.tunnel" 2>/dev/null || as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
+      [ -n "$_RU" ] && launchctl bootstrap "gui/$_RU" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
       for i in $(seq 1 20); do
         sleep 1
         TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' /tmp/claw-web-tunnel.log 2>/dev/null | head -1)
@@ -325,8 +326,9 @@ OSA
 </plist>
 TUNPLIST
           chown "$REAL_USER" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || true
-          as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" >/dev/null 2>&1 || true
-          as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'"
+          _RU=$(id -u "$REAL_USER" 2>/dev/null || echo "")
+          launchctl bootout "gui/$_RU/com.claw-web.tunnel" 2>/dev/null || as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
+          [ -n "$_RU" ] && launchctl bootstrap "gui/$_RU" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
           for i in $(seq 1 15); do
             sleep 1
             TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); t=d.get('tunnels',[]); print(t[0]['public_url'] if t else '')" 2>/dev/null)
@@ -484,8 +486,9 @@ CFGYML
 </plist>
 TUNPLIST
               chown "$REAL_USER" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || true
-              as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" >/dev/null 2>&1 || true
-              as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'"
+              _RU=$(id -u "$REAL_USER" 2>/dev/null || echo "")
+              launchctl bootout "gui/$_RU/com.claw-web.tunnel" 2>/dev/null || as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
+              [ -n "$_RU" ] && launchctl bootstrap "gui/$_RU" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
 
               TUNNEL_URL="https://$HOSTNAME"
               TUNNEL_LABEL="Cloudflare 고정 URL"
@@ -530,13 +533,43 @@ EOFPLIST
 
 chown -R "$REAL_USER" "$USER_DATA" 2>/dev/null || true
 chown "$REAL_USER" "$PLIST_DIR/com.claw-web.server.plist" 2>/dev/null || true
-as_user "launchctl unload '$PLIST_DIR/com.claw-web.server.plist'" >/dev/null 2>&1 || true
-as_user "launchctl load '$PLIST_DIR/com.claw-web.server.plist'"
+
+# launchctl: macOS Ventura+(13+)에서 load는 deprecated → bootstrap 사용
+REAL_UID=$(id -u "$REAL_USER" 2>/dev/null || dscl . -read "/Users/$REAL_USER" UniqueID 2>/dev/null | awk '{print $2}' || echo "")
+launchctl bootout "gui/$REAL_UID/com.claw-web.server" 2>/dev/null || \
+  as_user "launchctl unload '$PLIST_DIR/com.claw-web.server.plist'" 2>/dev/null || true
+if [ -n "$REAL_UID" ]; then
+  launchctl bootstrap "gui/$REAL_UID" "$PLIST_DIR/com.claw-web.server.plist" 2>/dev/null || \
+    as_user "launchctl load '$PLIST_DIR/com.claw-web.server.plist'" 2>/dev/null || true
+else
+  as_user "launchctl load '$PLIST_DIR/com.claw-web.server.plist'" 2>/dev/null || true
+fi
+
+# fallback: LaunchAgent가 서버를 못 띄웠을 때 직접 nohup으로 실행
+SERVER_UP=0
+for i in $(seq 1 5); do
+  sleep 1
+  if lsof -i :3838 -sTCP:LISTEN >/dev/null 2>&1; then
+    SERVER_UP=1; break
+  fi
+done
+if [ "$SERVER_UP" = "0" ]; then
+  echo "[postinstall] LaunchAgent failed to start server — trying direct nohup" >> "$LOG"
+  as_user "cd '$INSTALL_DIR' && PATH='/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin' nohup '$NODE_BIN' '$INSTALL_DIR/server/index.js' >> /tmp/claw-web.log 2>&1 &"
+fi
 
 # ═══════════════════════════════════════════════════════
 # Step 7. 완료 요약 다이얼로그 + 브라우저 오픈
 # ═══════════════════════════════════════════════════════
-sleep 3
+# 포트 3838이 실제로 열릴 때까지 최대 15초 대기
+echo "[postinstall] waiting for port 3838..." >> "$LOG"
+for i in $(seq 1 15); do
+  sleep 1
+  if lsof -i :3838 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "[postinstall] port 3838 open after ${i}s" >> "$LOG"
+    break
+  fi
+done
 
 SUMMARY="Claw Web 설치 완료!
 
