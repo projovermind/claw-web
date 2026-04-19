@@ -110,33 +110,47 @@ for f in sessions.json projects.json skills.json web-metadata.json secrets.json 
 done
 
 BEARER_TOKEN="1234"
+# agents-config.json 이 배포 payload 에 없을 수도 있으므로 기본 구조로 생성
+for f in backends.json agents-config.json; do
+  if [ ! -f "$USER_DATA/$f" ]; then
+    if [ -f "$INSTALL_DIR/$f" ]; then
+      cp "$INSTALL_DIR/$f" "$USER_DATA/$f"
+    else
+      case "$f" in
+        agents-config.json) echo '{"agents":{},"channels":{}}' > "$USER_DATA/$f" ;;
+        backends.json) echo '{"version":1,"backends":{}}' > "$USER_DATA/$f" ;;
+      esac
+    fi
+  fi
+  ln -sf "$USER_DATA/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
+done
+
 if [ ! -f "$USER_DATA/web-config.json" ]; then
   cat > "$USER_DATA/web-config.json" <<CFG
 {
   "port": 3838,
   "allowedRoots": [],
   "features": {"dashboard":true,"agentsPage":true,"dragAndDrop":true,"chat":true,"activityFeed":true,"mdEditor":true},
-  "auth": {"enabled": true, "token": "$BEARER_TOKEN"}
+  "auth": {"enabled": true, "token": "$BEARER_TOKEN"},
+  "configPath": "$USER_DATA/agents-config.json"
 }
 CFG
 else
-  # 기존 설정이 있어도 토큰은 항상 1234 로 강제 (사용자 편의)
+  # 기존 설정이 있어도 토큰은 항상 1234 로 강제 + configPath 누락 시 보정
   "$NODE_BIN" -e "
     const fs = require('fs');
-    const path = process.argv[1], token = process.argv[2];
+    const path = process.argv[1], token = process.argv[2], userData = process.argv[3];
     const d = JSON.parse(fs.readFileSync(path, 'utf8'));
     if (!d.auth) d.auth = {};
     d.auth.token = token;
     d.auth.enabled = true;
+    if (!d.configPath || typeof d.configPath !== 'string') {
+      d.configPath = userData + '/agents-config.json';
+    }
     fs.writeFileSync(path, JSON.stringify(d, null, 2));
-  " "$USER_DATA/web-config.json" "$BEARER_TOKEN" 2>/dev/null || true
+  " "$USER_DATA/web-config.json" "$BEARER_TOKEN" "$USER_DATA" 2>/dev/null || true
 fi
 ln -sf "$USER_DATA/web-config.json" "$INSTALL_DIR/web-config.json" 2>/dev/null || true
-
-for f in backends.json agents-config.json; do
-  [ ! -f "$USER_DATA/$f" ] && [ -f "$INSTALL_DIR/$f" ] && cp "$INSTALL_DIR/$f" "$USER_DATA/$f"
-  ln -sf "$USER_DATA/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
-done
 chown -R "$REAL_USER" "$USER_DATA" 2>/dev/null || true
 echo "[postinstall] data dir ready, token=$BEARER_TOKEN" >> "$LOG"
 

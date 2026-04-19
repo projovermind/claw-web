@@ -192,6 +192,42 @@ async function main() {
     logger.info({ repoRoot: REPO_ROOT }, 'auto-added REPO_ROOT to allowedRoots');
   }
 
+  // ── 자가 보정: configPath 누락 (v1.2.55 이전 pkg 설치자 대응) ──
+  // configPath 가 undefined 면 proper-lockfile 이 "undefined" 문자열을 path 조각으로
+  // 써서 `${REPO_ROOT}/undefined` 를 lstat 하며 ENOENT 로 터진다.
+  // 누락/비어있으면 REPO_ROOT/agents-config.json 으로 폴백하고 파일도 없으면 생성.
+  if (!webConfig.configPath || typeof webConfig.configPath !== 'string') {
+    const defaultCfg = path.join(REPO_ROOT, 'agents-config.json');
+    if (!fssync.existsSync(defaultCfg)) {
+      try {
+        fssync.writeFileSync(defaultCfg, JSON.stringify({ agents: {}, channels: {} }, null, 2));
+        logger.info({ path: defaultCfg }, 'auto-created default agents-config.json');
+      } catch (err) {
+        logger.error({ err: err.message, path: defaultCfg }, 'failed to create default agents-config.json');
+      }
+    }
+    webConfig.configPath = defaultCfg;
+    // 영구 보정: web-config.json 에도 기록해서 다음 기동부터는 이 경로로 로드
+    try {
+      const raw = fssync.readFileSync(WEB_CONFIG_PATH, 'utf8');
+      const parsed = JSON.parse(raw);
+      parsed.configPath = defaultCfg;
+      fssync.writeFileSync(WEB_CONFIG_PATH, JSON.stringify(parsed, null, 2));
+      logger.info({ configPath: defaultCfg }, 'auto-wrote configPath into web-config.json');
+    } catch (err) {
+      logger.warn({ err: err.message }, 'failed to persist configPath to web-config.json (continuing)');
+    }
+  } else if (!fssync.existsSync(webConfig.configPath)) {
+    // configPath 가 설정돼있지만 실제 파일이 없으면 — 빈 구조로 생성
+    try {
+      fssync.mkdirSync(path.dirname(webConfig.configPath), { recursive: true });
+      fssync.writeFileSync(webConfig.configPath, JSON.stringify({ agents: {}, channels: {} }, null, 2));
+      logger.info({ path: webConfig.configPath }, 'auto-created missing agents config');
+    } catch (err) {
+      logger.error({ err: err.message, path: webConfig.configPath }, 'failed to create agents config');
+    }
+  }
+
   const configStore = await createConfigStore(webConfig.configPath);
   const metadataStore = await createMetadataStore(METADATA_PATH);
   const projectsStore = await createProjectsStore(PROJECTS_PATH);
