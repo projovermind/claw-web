@@ -25,6 +25,16 @@ const CONFIG_PATH = path.join(CF_DIR, 'config.yml');
 const TUNNEL_NAME = 'claw-web';
 const LA_LABEL = 'com.claw-web.tunnel';
 const LA_PATH = path.join(os.homedir(), 'Library', 'LaunchAgents', `${LA_LABEL}.plist`);
+const TUNNEL_URL_FILE = path.join(os.homedir(), 'Library', 'Application Support', 'hivemind', 'tunnel-url.txt');
+
+async function writeTunnelUrlFile(url) {
+  await fs.mkdir(path.dirname(TUNNEL_URL_FILE), { recursive: true });
+  await fs.writeFile(TUNNEL_URL_FILE, url + '\n', 'utf8');
+}
+
+async function clearTunnelUrlFile() {
+  try { await fs.unlink(TUNNEL_URL_FILE); } catch { /* ignore */ }
+}
 
 // 진행 상태 메모리 보관 (polling 용)
 const setupState = { phase: 'idle', loginUrl: null, hostname: null, tunnelId: null, error: null };
@@ -332,6 +342,11 @@ export function createAdminRouter({ runner, eventBus }) {
     }
     const plistLoaded = fssync.existsSync(LA_PATH);
 
+    // 터널이 구성돼있는데 tunnel-url.txt 가 없으면 자동 복구 (구버전 / 수동 설정 호환)
+    if (tunnelId && hostname && !fssync.existsSync(TUNNEL_URL_FILE)) {
+      writeTunnelUrlFile(`https://${hostname}`).catch(() => {});
+    }
+
     res.json({
       binInstalled,
       authed,
@@ -478,6 +493,11 @@ ingress:
       await execFileAsync('launchctl', ['unload', LA_PATH], { timeout: 5000 }).catch(() => {});
       await execFileAsync('launchctl', ['load', LA_PATH], { timeout: 5000 });
 
+      // 5) 상단 위젯용 URL 파일 기록
+      await writeTunnelUrlFile(`https://${hostname}`).catch((e) =>
+        logger.warn({ err: e.message }, 'admin: tunnel-url.txt write failed')
+      );
+
       setupState.phase = 'ready';
       logger.info({ hostname, tunnelId }, 'admin: Named Tunnel setup complete');
 
@@ -511,6 +531,7 @@ ingress:
         await execFileAsync(bin, ['tunnel', 'delete', '-f', TUNNEL_NAME], { timeout: 15000 });
       } catch { /* 이미 없음 */ }
       if (fssync.existsSync(CONFIG_PATH)) await fs.unlink(CONFIG_PATH).catch(() => {});
+      await clearTunnelUrlFile();
       setupState.phase = 'idle';
       setupState.tunnelId = null;
       setupState.hostname = null;
