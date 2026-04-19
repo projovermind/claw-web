@@ -205,4 +205,42 @@ https://nodejs.org 에서 업데이트해주세요.\" buttons {\"확인\"} defau
 fi
 
 echo "[preinstall] Node.js OK: $($NODE_PATH -v)" >> "$LOG"
+
+# ═══════════════════════════════════════════════
+# 3. 기존 설치 정리 (같은 버전 재설치 / 권한 꼬임 방지)
+# ═══════════════════════════════════════════════
+INSTALL_DIR="/usr/local/lib/claw-web"
+REAL_USER_CLEANUP=$(stat -f '%Su' /dev/console 2>/dev/null || echo "$SUDO_USER")
+REAL_UID_CLEANUP=$(id -u "$REAL_USER_CLEANUP" 2>/dev/null || echo "")
+REAL_HOME_CLEANUP=$(eval echo "~$REAL_USER_CLEANUP" 2>/dev/null)
+
+if [ -d "$INSTALL_DIR" ] || [ -f "$REAL_HOME_CLEANUP/Library/LaunchAgents/com.claw-web.server.plist" ]; then
+  echo "[preinstall] existing install detected — cleaning up" >> "$LOG"
+
+  # 3-1) LaunchAgent 중단 (GUI 도메인 + 구버전 경로 둘 다)
+  if [ -n "$REAL_UID_CLEANUP" ]; then
+    launchctl bootout "gui/$REAL_UID_CLEANUP/com.claw-web.server" 2>> "$LOG" || true
+  fi
+  su "$REAL_USER_CLEANUP" -c "launchctl unload '$REAL_HOME_CLEANUP/Library/LaunchAgents/com.claw-web.server.plist' 2>/dev/null" 2>> "$LOG" || true
+
+  # 3-2) 직접 기동된 node 프로세스 종료 (fallback start 로 떠있을 수 있음)
+  pkill -f "$INSTALL_DIR/server/index.js" 2>> "$LOG" || true
+  sleep 1
+
+  # 3-3) 포트 3838 을 잡고 있는 프로세스 정리 (혹시 다른 경로로 기동됐을 경우)
+  PID_ON_PORT=$(lsof -ti :3838 -sTCP:LISTEN 2>/dev/null | head -1)
+  if [ -n "$PID_ON_PORT" ]; then
+    kill "$PID_ON_PORT" 2>> "$LOG" || true
+    sleep 1
+  fi
+
+  # 3-4) 설치 디렉토리 제거 (심볼릭 링크로 붙어있는 유저 데이터는 영향 없음 — 실제 파일은 ~/.claw-web 에 있음)
+  rm -rf "$INSTALL_DIR" 2>> "$LOG" || true
+
+  # 3-5) 오래된 plist 제거 (새 postinstall 이 다시 씀)
+  rm -f "$REAL_HOME_CLEANUP/Library/LaunchAgents/com.claw-web.server.plist" 2>> "$LOG" || true
+
+  echo "[preinstall] cleanup done" >> "$LOG"
+fi
+
 exit 0
