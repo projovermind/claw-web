@@ -328,7 +328,7 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
             disabled={disabled}
             placeholder={disabled ? t('chat.input.disabledPlaceholder') : t('chat.input.placeholder')}
             rows={1}
-            className="w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-sm focus:outline-none disabled:opacity-50 overflow-hidden"
+            className="w-full resize-none bg-transparent px-3 pt-2.5 pb-1 text-sm focus:outline-none disabled:opacity-50 overflow-y-auto"
             style={{ fontSize: '16px', minHeight: '44px', maxHeight: '160px' }}
           />
           {/* Bottom bar inside the input box: attach left, send right */}
