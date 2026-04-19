@@ -1,0 +1,124 @@
+- generic [ref=e2]:
+  - generic [ref=e4]:
+    - generic [ref=e5]:
+      - img [ref=e6]
+      - heading "인증 필요" [level=3] [ref=e9]
+    - generic [ref=e10]:
+      - paragraph [ref=e11]: 이 서버는 Bearer 토큰 인증이 활성화돼 있어. Settings → Access 탭에서 설정한 토큰을 입력해.
+      - textbox "Bearer token" [active] [ref=e12]: "930214"
+      - generic [ref=e13]: 💡 토큰을 잃어버렸으면 서버에서 직접 web-config.json 을 열어 auth.enabled 를 false 로 바꾸거나 auth.token 을 재설정해.
+    - button "로그인" [ref=e15] [cursor=pointer]
+  - generic [ref=e16]:
+    - complementary [ref=e17]:
+      - generic [ref=e18]:
+        - link "🦞Claw Web" [ref=e20] [cursor=pointer]:
+          - /url: /
+        - button "검색… ⌘K" [ref=e21] [cursor=pointer]:
+          - img [ref=e22]
+          - generic [ref=e25]: 검색…
+          - generic [ref=e26]: ⌘K
+      - navigation [ref=e27]:
+        - generic [ref=e28]:
+          - link "대시보드" [ref=e29] [cursor=pointer]:
+            - /url: /
+            - img [ref=e30]
+            - generic [ref=e35]: 대시보드
+          - link "채팅" [ref=e36] [cursor=pointer]:
+            - /url: /chat
+            - img [ref=e37]
+            - generic [ref=e39]: 채팅
+        - generic [ref=e40]:
+          - link "프로젝트" [ref=e41] [cursor=pointer]:
+            - /url: /projects
+            - img [ref=e42]
+            - generic [ref=e44]: 프로젝트
+          - link "에이전트" [ref=e45] [cursor=pointer]:
+            - /url: /agents
+            - img [ref=e46]
+            - generic [ref=e51]: 에이전트
+          - link "스킬" [ref=e52] [cursor=pointer]:
+            - /url: /skills
+            - img [ref=e53]
+            - generic [ref=e55]: 스킬
+        - link "설정" [ref=e57] [cursor=pointer]:
+          - /url: /settings
+          - img [ref=e58]
+          - generic [ref=e61]: 설정
+      - generic [ref=e62]:
+        - generic [ref=e63]:
+          - img [ref=e64]
+          - generic [ref=e68]: Language
+        - generic [ref=e69]:
+          - button "한국어" [ref=e70] [cursor=pointer]
+          - button "English" [ref=e71] [cursor=pointer]
+    - main [ref=e72]:
+      - generic [ref=e73]:
+        - generic [ref=e74]:
+          - heading "작업 상태" [level=2] [ref=e75]
+          - generic [ref=e76]: 연결 끊김
+        - generic [ref=e78]:
+          - generic [ref=e79]:
+            - generic [ref=e80]: 에이전트
+            - generic [ref=e81]: ...
+          - generic [ref=e82]:
+            - generic [ref=e83]: 봇 상태
+            - generic [ref=e84]: 온라인
+          - generic [ref=e85]:
+            - generic [ref=e86]: 실행 중
+            - generic [ref=e87]: "0"
+          - generic [ref=e88]:
+            - generic [ref=e89]: 세션
+            - generic [ref=e90]: "0"
+        - generic [ref=e91]:
+          - generic [ref=e92]:
+            - img [ref=e93]
+            - generic [ref=e95]: 현재 실행 중
+            - generic [ref=e96]: (0)
+          - generic [ref=e98]: 지금 돌고 있는 작업 없음
+        - generic [ref=e99]:
+          - generic [ref=e100]:
+            - generic [ref=e101]:
+              - img [ref=e102]
+              - generic [ref=e105]: 시스템 상태
+            - generic [ref=e106]:
+              - generic [ref=e107]:
+                - img [ref=e109]
+                - generic [ref=e112]: 가동 시간
+                - generic [ref=e113]: 3h 15m
+              - generic [ref=e114]:
+                - img [ref=e116]
+                - generic [ref=e119]: 터널
+                - generic [ref=e120]: N/A
+              - generic [ref=e121]:
+                - img [ref=e123]
+                - generic [ref=e125]: 백엔드
+                - generic [ref=e126]: ...
+              - generic [ref=e127]:
+                - img [ref=e129]
+                - generic [ref=e131]: 긴축모드
+                - generic [ref=e132]: "OFF"
+          - generic [ref=e133]:
+            - generic [ref=e134]:
+              - img [ref=e135]
+              - generic [ref=e137]: 프로젝트 활동 (24h)
+              - generic [ref=e138]: (0)
+            - generic [ref=e140]: 24h 이내 활동 없음
+        - generic [ref=e141]:
+          - generic [ref=e142]:
+            - generic [ref=e143]:
+              - img [ref=e144]
+              - generic [ref=e146]: 최근 세션
+              - generic [ref=e147]: (0)
+            - generic [ref=e149]: 세션 기록 없음
+          - generic [ref=e150]:
+            - generic [ref=e151]:
+              - img [ref=e152]
+              - generic [ref=e154]: 활동 피드
+              - generic [ref=e155]: "0"
+            - generic [ref=e157]: 아직 활동 없음. 에이전트를 만들거나 채팅을 시작하면 여기 기록됨.
+        - generic [ref=e159]:
+          - generic [ref=e160]:
+            - img [ref=e161]
+            - generic [ref=e163]: 에이전트 사용량
+            - generic [ref=e164]: 0 projects
+          - generic [ref=e166]: 통계 데이터 없음

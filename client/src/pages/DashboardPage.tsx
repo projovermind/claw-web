@@ -153,21 +153,8 @@ export default function DashboardPage() {
       )}
 
       {/* Stat widgets */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <StatCard label={t('dashboard.stat.agents')} value={agents?.length ?? '...'} />
-        {health?.botConfigured === false ? (
-          <StatCard
-            label={t('dashboard.stat.webStatus')}
-            value={t('dashboard.stat.botOnline')}
-            accent="emerald"
-          />
-        ) : (
-          <StatCard
-            label={t('dashboard.stat.botStatus')}
-            value={health?.botOnline ? t('dashboard.stat.botOnline') : t('dashboard.stat.botOffline')}
-            accent={health?.botOnline ? 'emerald' : 'red'}
-          />
-        )}
         <StatCard
           label={t('dashboard.stat.running')}
           value={runningSessions.length}

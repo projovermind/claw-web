@@ -28,9 +28,12 @@ export default function AgentsPage() {
         allowedTools: form.allowedTools,
         disallowedTools: form.disallowedTools
       });
-      // Apply skillIds via PATCH since they're metadata overlay
-      if (form.skillIds.length > 0) {
-        await api.patchAgent(form.id, { skillIds: form.skillIds });
+      // skillIds / backendId 는 metadata overlay — create 후 PATCH 로 적용
+      const patch: Record<string, unknown> = {};
+      if (form.skillIds.length > 0) patch.skillIds = form.skillIds;
+      if (form.backend && form.backend !== 'claude') patch.backendId = form.backend;
+      if (Object.keys(patch).length > 0) {
+        await api.patchAgent(form.id, patch);
       }
       return created;
     },
@@ -38,6 +41,9 @@ export default function AgentsPage() {
       qc.invalidateQueries({ queryKey: ['agents'] });
       setModal(null);
       setQuickForm(emptyAgentForm());
+    },
+    onError: (err: Error) => {
+      alert(`${t('agents.saveFailed')}: ${err.message}`);
     }
   });
 
