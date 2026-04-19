@@ -111,14 +111,40 @@ chown -R "$REAL_USER" "$INSTALL_DIR" 2>/dev/null || true
 # ═══════════════════════════════════════════════════════
 # Step 2. Claude CLI 자동 설치
 # ═══════════════════════════════════════════════════════
-# 이미 설치된 위치 탐색
+# claude v2.1.70+ 에는 install.cjs 가 없음.
+# "native binary not installed" 에러 = optionalDependencies (@img/sharp-*) 미설치
+# → npm 설치 시 --include=optional 명시 + sharp 바이너리 존재 검증 필수
+
+ARCH=$(uname -m)   # arm64 | x86_64
+case "$ARCH" in
+  arm64)  SHARP_PKG="@img/sharp-darwin-arm64" ; SHARP_LIBVIPS="@img/sharp-libvips-darwin-arm64" ;;
+  x86_64) SHARP_PKG="@img/sharp-darwin-x64"   ; SHARP_LIBVIPS="@img/sharp-libvips-darwin-x64"   ;;
+  *)      SHARP_PKG="@img/sharp-darwin-arm64" ; SHARP_LIBVIPS="@img/sharp-libvips-darwin-arm64" ;;
+esac
+echo "[postinstall] arch=$ARCH sharp=$SHARP_PKG" >> "$LOG"
+
+# 기존 claude 동작 검증 함수 — 설치는 됐지만 sharp 바이너리 없으면 broken
+check_claude_works() {
+  local bin="$1"
+  [ -x "$bin" ] || return 1
+  # --version 이 정상 숫자 출력하면 OK (native binary load 실패 시 stderr 에러 + 비정상 exit)
+  local ver
+  ver=$(su "$REAL_USER" -c "export HOME='$REAL_HOME'; '$bin' --version 2>&1" 2>/dev/null)
+  echo "$ver" | grep -qE '^[0-9]+\.[0-9]+' && ! echo "$ver" | grep -qi "native binary"
+}
+
+# 기존 설치 탐색 + 검증
 CLAUDE_BIN=""
 for p in \
+  "$REAL_HOME/.npm-global/bin/claude" \
   /usr/local/bin/claude \
   /opt/homebrew/bin/claude \
-  "$REAL_HOME/.local/bin/claude" \
-  "$REAL_HOME/.npm-global/bin/claude"; do
-  if [ -x "$p" ]; then CLAUDE_BIN="$p"; break; fi
+  "$REAL_HOME/.local/bin/claude"; do
+  if check_claude_works "$p"; then
+    CLAUDE_BIN="$p"
+    echo "[postinstall] existing claude OK at $p" >> "$LOG"
+    break
+  fi
 done
 
 if [ -z "$CLAUDE_BIN" ]; then
@@ -126,23 +152,21 @@ if [ -z "$CLAUDE_BIN" ]; then
 
   # 사용자 전역 npm prefix 준비 (~/.npm-global) — root 환경 HOME 문제 회피
   as_user "mkdir -p '$REAL_HOME/.npm-global/bin'"
-  as_user "'$NPM_BIN' config set prefix '$REAL_HOME/.npm-global' --location=user" 2>> "$LOG" || true
+  as_user "'$NPM_BIN' config set prefix '$REAL_HOME/.npm-global' --location=user" 2>> "$LOG" || \
+    as_user "'$NPM_BIN' config set prefix '$REAL_HOME/.npm-global'" 2>> "$LOG" || true
+  # 사용자 .npmrc 에서 optional dep 를 배제하는 설정이 있으면 덮어씀
+  as_user "'$NPM_BIN' config set omit '' --location=user" 2>> "$LOG" || true
+  as_user "'$NPM_BIN' config set ignore-scripts false --location=user" 2>> "$LOG" || true
 
-  # REAL_USER 권한으로 설치 — HOME=REAL_HOME 이어야 native binary 가 올바른 캐시 경로에 저장됨
+  # REAL_USER 권한 + HOME=REAL_HOME + --include=optional 로 설치
+  # --foreground-scripts 로 lifecycle 스크립트가 확실히 실행되게 함
+  echo "[postinstall] installing @anthropic-ai/claude-code + $SHARP_PKG as $REAL_USER..." >> "$LOG"
   as_user "export HOME='$REAL_HOME'; \
            export PATH='$NODE_DIR:$REAL_HOME/.npm-global/bin:/usr/local/bin:/opt/homebrew/bin:\$PATH'; \
-           '$NPM_BIN' install -g @anthropic-ai/claude-code" 2>> "$LOG" || true
+           '$NPM_BIN' install -g --include=optional --foreground-scripts \
+             @anthropic-ai/claude-code $SHARP_PKG $SHARP_LIBVIPS" 2>> "$LOG" || true
 
-  # install.cjs 를 REAL_USER 권한으로 확실히 실행 (npm postinstall lifecycle 스킵 대비)
-  CLAUDE_MODULE="$REAL_HOME/.npm-global/lib/node_modules/@anthropic-ai/claude-code"
-  if [ -f "$CLAUDE_MODULE/install.cjs" ]; then
-    echo "[postinstall] running install.cjs as $REAL_USER..." >> "$LOG"
-    as_user "export HOME='$REAL_HOME'; \
-             export PATH='$NODE_DIR:\$PATH'; \
-             cd '$CLAUDE_MODULE' && '$NODE_BIN' install.cjs" 2>> "$LOG" || true
-  fi
-
-  # 설치 후 재탐색 (사용자 prefix 우선)
+  # 설치 후 재탐색
   for p in \
     "$REAL_HOME/.npm-global/bin/claude" \
     /usr/local/bin/claude \
@@ -150,16 +174,24 @@ if [ -z "$CLAUDE_BIN" ]; then
     "$REAL_HOME/.local/bin/claude"; do
     if [ -x "$p" ]; then CLAUDE_BIN="$p"; break; fi
   done
+
+  # sharp 바이너리 실제 존재 검증 — 없으면 강제 추가 설치
+  CLAUDE_MODULE="$REAL_HOME/.npm-global/lib/node_modules/@anthropic-ai/claude-code"
+  if [ -d "$CLAUDE_MODULE" ] && [ ! -d "$CLAUDE_MODULE/node_modules/$SHARP_PKG" ]; then
+    echo "[postinstall] sharp binary missing — installing $SHARP_PKG into module..." >> "$LOG"
+    as_user "export HOME='$REAL_HOME'; cd '$CLAUDE_MODULE' && \
+             '$NPM_BIN' install --no-save --include=optional $SHARP_PKG $SHARP_LIBVIPS" 2>> "$LOG" || true
+  fi
 fi
 
-# /usr/local/bin/claude 심볼릭 링크 보장 (root 권한 필요)
+# /usr/local/bin/claude 심볼릭 링크 (root 권한)
 if [ -n "$CLAUDE_BIN" ] && [ "$CLAUDE_BIN" != "/usr/local/bin/claude" ]; then
   mkdir -p /usr/local/bin 2>/dev/null || true
   ln -sf "$CLAUDE_BIN" /usr/local/bin/claude 2>/dev/null || true
   echo "[postinstall] symlinked $CLAUDE_BIN → /usr/local/bin/claude" >> "$LOG"
 fi
 
-# .zshrc / .bash_profile 에도 PATH 추가 (심볼릭 링크 실패 대비)
+# .zshrc / .bash_profile PATH 추가
 CLAUDE_DIR=$(dirname "${CLAUDE_BIN:-/usr/local/bin/claude}")
 for rc in "$REAL_HOME/.zshrc" "$REAL_HOME/.bash_profile"; do
   if [ -f "$rc" ] || [ "$rc" = "$REAL_HOME/.zshrc" ]; then
@@ -169,13 +201,15 @@ for rc in "$REAL_HOME/.zshrc" "$REAL_HOME/.bash_profile"; do
 done
 chown "$REAL_USER" "$REAL_HOME/.zshrc" "$REAL_HOME/.bash_profile" 2>/dev/null || true
 
-# 최종 검증 — claude --version 이 native binary load 실패 없이 동작하는지
+# 최종 검증 — native binary 에러 없는지 실제 실행으로 확인
 if [ -n "$CLAUDE_BIN" ]; then
-  CLAUDE_VER=$(as_user "export HOME='$REAL_HOME'; '$CLAUDE_BIN' --version" 2>> "$LOG" || echo "")
-  if echo "$CLAUDE_VER" | grep -qE '[0-9]+\.[0-9]+'; then
+  if check_claude_works "$CLAUDE_BIN"; then
+    CLAUDE_VER=$(as_user "export HOME='$REAL_HOME'; '$CLAUDE_BIN' --version" 2>/dev/null)
     echo "[postinstall] claude OK: $CLAUDE_VER" >> "$LOG"
   else
+    CLAUDE_VER=$(as_user "export HOME='$REAL_HOME'; '$CLAUDE_BIN' --version 2>&1" 2>/dev/null)
     echo "[postinstall] claude verification FAILED: $CLAUDE_VER" >> "$LOG"
+    # 사용자에게 경고하지만 설치는 계속 (웹 UI Settings 에서 재시도 가능)
   fi
 fi
 
