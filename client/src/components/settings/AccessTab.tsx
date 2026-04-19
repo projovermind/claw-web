@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Globe, Copy, RefreshCw, Check, AlertTriangle, Wifi, ShoppingCart, Search, Link, Power, ExternalLink, Loader2 } from 'lucide-react';
+import { Globe, Copy, RefreshCw, Check, AlertTriangle, Wifi, ShoppingCart, Search, Link, Power, ExternalLink, Loader2, Download } from 'lucide-react';
 import { api, getAuthToken } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 
@@ -671,6 +671,106 @@ function NamedTunnelCard() {
   );
 }
 
+interface UpdateInfo {
+  current: string;
+  latest: string | null;
+  hasUpdate: boolean;
+  downloadUrl?: string;
+  releaseUrl?: string;
+  publishedAt?: string;
+  notes?: string;
+  error?: string;
+}
+
+function UpdateCheckCard() {
+  const { data, refetch, isFetching } = useQuery<UpdateInfo>({
+    queryKey: ['update-check'],
+    queryFn: () => fetch('/api/admin/update/check', { headers: authHeaders() }).then((r) => r.json()),
+    staleTime: 60000
+  });
+
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Download size={14} className="text-cyan-400" />
+        <div className="text-sm font-semibold text-zinc-300">업데이트 확인</div>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="ml-auto p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+          title="다시 확인"
+        >
+          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {!data ? (
+        <div className="text-xs text-zinc-500 italic">확인 중...</div>
+      ) : data.error ? (
+        <div className="text-xs text-red-300 bg-red-900/20 rounded px-3 py-2">
+          {data.error} (현재 v{data.current})
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex items-center gap-3 text-xs">
+            <span className="text-zinc-500">현재</span>
+            <code className="font-mono text-zinc-200">v{data.current}</code>
+            <span className="text-zinc-600">→</span>
+            <span className="text-zinc-500">최신</span>
+            <code className={`font-mono ${data.hasUpdate ? 'text-emerald-300' : 'text-zinc-200'}`}>
+              v{data.latest || '?'}
+            </code>
+            {data.hasUpdate ? (
+              <span className="ml-auto text-[10px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-300">
+                업데이트 있음
+              </span>
+            ) : (
+              <span className="ml-auto text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                최신 버전
+              </span>
+            )}
+          </div>
+
+          {data.hasUpdate && data.downloadUrl && (
+            <>
+              <a
+                href={data.downloadUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full rounded bg-cyan-700 hover:bg-cyan-600 px-4 py-2 text-sm flex items-center justify-center gap-2"
+              >
+                <Download size={14} />
+                v{data.latest} pkg 다운로드
+              </a>
+              <p className="text-[11px] text-zinc-500 leading-snug">
+                다운로드 후 .pkg 파일을 열면 기존 설치를 자동 정리하고 업데이트됩니다.
+              </p>
+              {data.notes && (
+                <details className="text-[11px] text-zinc-500">
+                  <summary className="cursor-pointer hover:text-zinc-300">릴리즈 노트</summary>
+                  <pre className="mt-2 whitespace-pre-wrap bg-zinc-950 border border-zinc-800 rounded p-2 font-mono text-[10px] max-h-40 overflow-y-auto">
+                    {data.notes}
+                  </pre>
+                </details>
+              )}
+            </>
+          )}
+          {!data.hasUpdate && data.releaseUrl && (
+            <a
+              href={data.releaseUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] text-zinc-500 hover:text-zinc-300 underline inline-flex items-center gap-1"
+            >
+              <ExternalLink size={10} /> GitHub 릴리즈 페이지
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AccessTab() {
   const qc = useQueryClient();
   const t = useT();
@@ -686,6 +786,7 @@ export function AccessTab() {
 
   return (
     <div className="space-y-5 max-w-2xl">
+      <UpdateCheckCard />
       <TunnelUrlCard />
       <NamedTunnelCard />
       <DomainConnectCard />

@@ -47,6 +47,20 @@ function findCloudflaredBin() {
   return 'cloudflared';
 }
 
+/** semver 비교: a > b → 1, a < b → -1, 같으면 0. 형식은 x.y.z */
+function compareVersions(a, b) {
+  const pa = a.split('.').map((n) => parseInt(n, 10) || 0);
+  const pb = b.split('.').map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] || 0;
+    const y = pb[i] || 0;
+    if (x > y) return 1;
+    if (x < y) return -1;
+  }
+  return 0;
+}
+
 // ─────────────────────────────────────────────────────────
 // Claude CLI helpers (path/version/status detection + install)
 // ─────────────────────────────────────────────────────────
@@ -122,6 +136,52 @@ export function createAdminRouter({ runner, eventBus }) {
   function emit(topic, payload) {
     if (eventBus) eventBus.publish(topic, payload);
   }
+
+  // ───────────────────────────────────────────────────────
+  // GET /update/check — GitHub 최신 릴리즈 조회 후 현재 버전과 비교
+  // ───────────────────────────────────────────────────────
+  router.get('/update/check', async (_req, res) => {
+    try {
+      const pkgPath = path.join(process.cwd(), 'package.json');
+      let current = 'unknown';
+      try {
+        const raw = await fs.readFile(pkgPath, 'utf8');
+        current = JSON.parse(raw).version || 'unknown';
+      } catch { /* ignore */ }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      let release = null;
+      try {
+        const resp = await fetch(
+          'https://api.github.com/repos/projovermind/claw-web/releases/latest',
+          { headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'claw-web' }, signal: controller.signal }
+        );
+        if (resp.ok) release = await resp.json();
+      } finally {
+        clearTimeout(timeout);
+      }
+
+      if (!release) {
+        return res.json({ current, latest: null, hasUpdate: false, error: 'GitHub 응답 실패' });
+      }
+
+      const latest = (release.tag_name || '').replace(/^v/, '');
+      const pkgAsset = (release.assets || []).find((a) => a.name?.endsWith('.pkg'));
+      const hasUpdate = latest && current !== 'unknown' && compareVersions(latest, current) > 0;
+      res.json({
+        current,
+        latest,
+        hasUpdate,
+        downloadUrl: pkgAsset?.browser_download_url || release.html_url,
+        releaseUrl: release.html_url,
+        publishedAt: release.published_at,
+        notes: release.body || ''
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   // ───────────────────────────────────────────────────────
   // GET /claude/status — Claude CLI 설치 상태 조회
