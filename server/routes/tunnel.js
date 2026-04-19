@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import fs from 'node:fs/promises';
+import fssync from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
@@ -7,6 +8,22 @@ import { spawn } from 'node:child_process';
 // Module-level process tracker
 let tunnelProc = null;
 let tunnelState = { running: false, type: null, url: null, pid: null };
+
+function findCloudflaredBin() {
+  const candidates = ['/opt/homebrew/bin/cloudflared', '/usr/local/bin/cloudflared'];
+  for (const p of candidates) {
+    if (fssync.existsSync(p)) return p;
+  }
+  return null;
+}
+
+function findNgrokBin() {
+  const candidates = ['/opt/homebrew/bin/ngrok', '/usr/local/bin/ngrok'];
+  for (const p of candidates) {
+    if (fssync.existsSync(p)) return p;
+  }
+  return null;
+}
 
 /**
  * Exposes the current Cloudflare quick-tunnel URL captured by the cloudflared
@@ -38,6 +55,92 @@ async function clearTunnelUrlFile() {
   }
 }
 
+/**
+ * 임시 터널을 spawn 하고 URL 캡처까지 처리. 라우트 핸들러와 자동 기동에서 공유.
+ * 이미 실행 중이면 false 반환.
+ */
+function spawnTunnel(type, domain = null) {
+  if (tunnelState.running) return { ok: false, reason: 'already-running' };
+
+  let cmd, args;
+  if (type === 'ngrok') {
+    const bin = findNgrokBin();
+    if (!bin) return { ok: false, reason: 'ngrok-not-installed' };
+    cmd = bin;
+    args = domain ? ['http', '3838', `--url=${domain}`] : ['http', '3838'];
+  } else if (type === 'cloudflared') {
+    const bin = findCloudflaredBin();
+    if (!bin) return { ok: false, reason: 'cloudflared-not-installed' };
+    cmd = bin;
+    args = ['tunnel', '--url', 'http://localhost:3838'];
+  } else {
+    return { ok: false, reason: 'invalid-type' };
+  }
+
+  tunnelState = { running: true, type, url: null, pid: null };
+  const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  tunnelProc = proc;
+  tunnelState.pid = proc.pid;
+
+  const parseUrl = (data) => {
+    const text = data.toString();
+    const ngrokMatch = text.match(/https?:\/\/[a-zA-Z0-9\-\.]+\.ngrok(?:\.io|[-\w]*)?[^\s]*/);
+    const cfMatch = text.match(/https?:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com[^\s]*/);
+    const genericMatch = text.match(/https?:\/\/[a-zA-Z0-9\-\.]+\.[a-z]{2,}[^\s]*/);
+    const found = ngrokMatch?.[0] ?? cfMatch?.[0] ?? genericMatch?.[0];
+    if (found && !tunnelState.url) {
+      const url = found.trim();
+      tunnelState.url = url;
+      writeTunnelUrlFile(url).catch(() => {});
+    }
+  };
+  proc.stdout.on('data', parseUrl);
+  proc.stderr.on('data', parseUrl);
+
+  proc.on('exit', () => {
+    tunnelProc = null;
+    tunnelState = { running: false, type: null, url: null, pid: null };
+    clearTunnelUrlFile().catch(() => {});
+  });
+
+  return { ok: true, state: tunnelState };
+}
+
+/**
+ * 서버 기동 시 자동으로 임시 cloudflared 터널을 띄움.
+ * - cloudflared 없으면 skip
+ * - Named Tunnel 이 이미 구성돼있거나(tunnel-url.txt 존재 & https 시작) 터널이 이미 실행 중이면 skip
+ */
+export async function autoStartQuickTunnel({ logger } = {}) {
+  const log = logger || console;
+  try {
+    if (tunnelState.running) return { skipped: 'already-running' };
+
+    // 이미 Named Tunnel 등으로 URL 설정돼있으면 건드리지 않음
+    try {
+      const raw = await fs.readFile(URL_FILE, 'utf8');
+      if (raw.trim().startsWith('http')) return { skipped: 'existing-url' };
+    } catch { /* 파일 없음 — 진행 */ }
+
+    const bin = findCloudflaredBin();
+    if (!bin) {
+      log.info?.('auto-tunnel: cloudflared not found — skipping auto quick tunnel');
+      return { skipped: 'no-cloudflared' };
+    }
+
+    const result = spawnTunnel('cloudflared');
+    if (result.ok) {
+      log.info?.({ pid: result.state.pid }, 'auto-tunnel: cloudflared quick tunnel started');
+    } else {
+      log.warn?.({ reason: result.reason }, 'auto-tunnel: failed to start');
+    }
+    return result;
+  } catch (err) {
+    log.error?.({ err: err.message }, 'auto-tunnel: error');
+    return { skipped: 'error', error: err.message };
+  }
+}
+
 export function createTunnelRouter() {
   const router = Router();
 
@@ -59,56 +162,15 @@ export function createTunnelRouter() {
 
   // POST /start
   router.post('/start', (req, res) => {
-    if (tunnelState.running) {
-      return res.status(409).json({ error: 'Tunnel already running', state: tunnelState });
-    }
-
     const { type, domain } = req.body ?? {};
     if (type !== 'ngrok' && type !== 'cloudflared') {
       return res.status(400).json({ error: 'type must be "ngrok" or "cloudflared"' });
     }
-
-    let cmd, args;
-    if (type === 'ngrok') {
-      cmd = 'ngrok';
-      args = domain ? ['http', '3838', `--url=${domain}`] : ['http', '3838'];
-    } else {
-      cmd = 'cloudflared';
-      args = ['tunnel', '--url', 'http://localhost:3838'];
+    const result = spawnTunnel(type, domain);
+    if (!result.ok) {
+      const code = result.reason === 'already-running' ? 409 : 400;
+      return res.status(code).json({ error: result.reason, state: tunnelState });
     }
-
-    tunnelState = { running: true, type, url: null, pid: null };
-
-    const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    tunnelProc = proc;
-    tunnelState.pid = proc.pid;
-
-    const parseUrl = (data) => {
-      const text = data.toString();
-      // ngrok: look for https://*.ngrok.io or custom domain
-      const ngrokMatch = text.match(/https?:\/\/[a-zA-Z0-9\-\.]+\.ngrok(?:\.io|[-\w]*)?[^\s]*/);
-      // cloudflared: look for trycloudflare.com or custom domain
-      const cfMatch = text.match(/https?:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com[^\s]*/);
-      // generic fallback
-      const genericMatch = text.match(/https?:\/\/[a-zA-Z0-9\-\.]+\.[a-z]{2,}[^\s]*/);
-      const found = ngrokMatch?.[0] ?? cfMatch?.[0] ?? genericMatch?.[0];
-      if (found && !tunnelState.url) {
-        const url = found.trim();
-        tunnelState.url = url;
-        // 상단 TunnelUrlCard 위젯이 읽는 파일에도 기록 (Named Tunnel 과 동일 경로)
-        writeTunnelUrlFile(url).catch(() => {});
-      }
-    };
-
-    proc.stdout.on('data', parseUrl);
-    proc.stderr.on('data', parseUrl);
-
-    proc.on('exit', () => {
-      tunnelProc = null;
-      tunnelState = { running: false, type: null, url: null, pid: null };
-      clearTunnelUrlFile().catch(() => {});
-    });
-
     res.json({ ok: true, state: tunnelState });
   });
 

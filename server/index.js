@@ -33,7 +33,7 @@ import { createUploadsRouter } from './routes/uploads.js';
 import { createSkillsRouter } from './routes/skills.js';
 import { createActivityRouter } from './routes/activity.js';
 import { createFsBrowserRouter } from './routes/fs-browser.js';
-import { createTunnelRouter } from './routes/tunnel.js';
+import { createTunnelRouter, autoStartQuickTunnel } from './routes/tunnel.js';
 import { createAdminRouter } from './routes/admin.js';
 import { createDomainRouter } from './routes/domain.js';
 import { attachWsHub } from './ws/hub.js';
@@ -347,6 +347,15 @@ async function main() {
 
   server.listen(webConfig.port, () => {
     logger.info({ port: webConfig.port }, 'hivemind-web server listening');
+    // 외부 접속 URL 자동 구축 — cloudflared 있으면 임시 터널, 없으면 skip
+    // webConfig.autoTunnel === false 로 끌 수 있음
+    if (webConfig.autoTunnel !== false) {
+      setTimeout(() => {
+        autoStartQuickTunnel({ logger }).catch((err) =>
+          logger.warn({ err: err.message }, 'auto-tunnel: failed')
+        );
+      }, 1500);
+    }
   });
 
   // ── 재시작 시 중단 세션 처리 ──
