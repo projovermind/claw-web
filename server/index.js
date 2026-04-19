@@ -275,7 +275,8 @@ async function main() {
     runner,
     eventBus,
     delegationTracker,
-    pushStore
+    pushStore,
+    webConfig
   });
   app.use('/api/chat', chatRouter);
   app.use('/api/backends', createBackendsRouter({ backendsStore, eventBus }));
