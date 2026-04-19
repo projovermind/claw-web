@@ -111,6 +111,7 @@ export interface Skill {
 export interface HealthStatus {
   botOnline: boolean;
   botPid: number | null;
+  botConfigured?: boolean;
   webUptime: number;
   ts: string;
 }
