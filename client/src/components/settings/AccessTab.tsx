@@ -743,6 +743,7 @@ interface UpdateInfo {
   current: string;
   latest: string | null;
   hasUpdate: boolean;
+  canAutoPatch?: boolean;
   downloadUrl?: string;
   pkgUrl?: string | null;
   pkgName?: string | null;
@@ -772,6 +773,24 @@ function UpdateCheckCard() {
       return j;
     },
     onSuccess: (j) => setInstallMsg({ ok: true, text: j.message || 'Installer.app 이 열렸습니다.' }),
+    onError: (e: Error) => setInstallMsg({ ok: false, text: e.message })
+  });
+
+  const patch = useMutation({
+    mutationFn: async () => {
+      const r = await fetch('/api/admin/update/patch', {
+        method: 'POST',
+        headers: authHeaders()
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || '자동 패치 실패');
+      return j;
+    },
+    onSuccess: (j) => {
+      setInstallMsg({ ok: true, text: j.message || '자동 패치 진행 중... 잠시 후 자동 재시작됩니다.' });
+      // 재시작 감지 → 60초 후 자동 새로고침
+      setTimeout(() => window.location.reload(), 60000);
+    },
     onError: (e: Error) => setInstallMsg({ ok: false, text: e.message })
   });
 
@@ -817,21 +836,37 @@ function UpdateCheckCard() {
             )}
           </div>
 
-          {data.hasUpdate && data.pkgUrl && (
+          {data.hasUpdate && (
             <>
-              <button
-                onClick={() => {
-                  setInstallMsg(null);
-                  install.mutate(data.pkgUrl!);
-                }}
-                disabled={install.isPending}
-                className="w-full rounded bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 px-4 py-2 text-sm flex items-center justify-center gap-2"
-              >
-                {install.isPending ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                {install.isPending ? 'pkg 다운로드 중...' : `v${data.latest} 로 지금 업데이트`}
-              </button>
+              {data.canAutoPatch ? (
+                <button
+                  onClick={() => {
+                    setInstallMsg(null);
+                    patch.mutate();
+                  }}
+                  disabled={patch.isPending}
+                  className="w-full rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-50 px-4 py-2 text-sm flex items-center justify-center gap-2"
+                >
+                  {patch.isPending ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                  {patch.isPending ? '패치 중... (GUI 없음, 자동 재시작)' : `v${data.latest} 로 자동 패치 (GUI 없이)`}
+                </button>
+              ) : data.pkgUrl ? (
+                <button
+                  onClick={() => {
+                    setInstallMsg(null);
+                    install.mutate(data.pkgUrl!);
+                  }}
+                  disabled={install.isPending}
+                  className="w-full rounded bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 px-4 py-2 text-sm flex items-center justify-center gap-2"
+                >
+                  {install.isPending ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                  {install.isPending ? 'pkg 다운로드 중...' : `v${data.latest} 로 지금 업데이트`}
+                </button>
+              ) : null}
               <p className="text-[11px] text-zinc-500 leading-snug">
-                자동으로 pkg 다운로드 + macOS Installer 실행. Installer 에서 계속 버튼만 누르면 기존 설치 자동 정리 후 업데이트됨.
+                {data.canAutoPatch
+                  ? 'git 기반 자동 패치: 다운로드 + 빌드 + 재시작까지 GUI 없이 전부 자동. 60초 후 페이지 자동 새로고침.'
+                  : '자동으로 pkg 다운로드 + macOS Installer 실행. Installer 에서 계속 버튼만 누르면 기존 설치 자동 정리 후 업데이트됨.'}
               </p>
               {installMsg && (
                 <div className={`text-xs rounded px-3 py-2 ${installMsg.ok ? 'bg-emerald-900/30 text-emerald-300' : 'bg-red-900/30 text-red-300'}`}>
@@ -839,9 +874,11 @@ function UpdateCheckCard() {
                 </div>
               )}
               <div className="flex items-center gap-2 text-[11px] text-zinc-600">
-                <a href={data.pkgUrl} target="_blank" rel="noreferrer" className="hover:text-zinc-300 underline inline-flex items-center gap-1">
-                  <ExternalLink size={10} /> 수동 다운로드
-                </a>
+                {data.pkgUrl && (
+                  <a href={data.pkgUrl} target="_blank" rel="noreferrer" className="hover:text-zinc-300 underline inline-flex items-center gap-1">
+                    <ExternalLink size={10} /> 수동 다운로드
+                  </a>
+                )}
                 {data.releaseUrl && (
                   <>
                     <span>·</span>

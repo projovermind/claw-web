@@ -161,10 +161,14 @@ export function createAdminRouter({ runner, eventBus }) {
       const latest = (release.tag_name || '').replace(/^v/, '');
       const pkgAsset = (release.assets || []).find((a) => a.name?.endsWith('.pkg'));
       const hasUpdate = latest && current !== 'unknown' && compareVersions(latest, current) > 0;
+      // git 설치 여부 판별 → 자동 패치 가능 여부
+      const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+      const canAutoPatch = fssync.existsSync(path.join(repoRoot, '.git'));
       res.json({
         current,
         latest,
         hasUpdate,
+        canAutoPatch,
         downloadUrl: pkgAsset?.browser_download_url || release.html_url,
         pkgUrl: pkgAsset?.browser_download_url || null,
         pkgName: pkgAsset?.name || null,
@@ -212,6 +216,36 @@ export function createAdminRouter({ runner, eventBus }) {
       logger.error({ err: err.message }, 'admin: update install failed');
       res.status(500).json({ error: err.message });
     }
+  });
+
+  // ───────────────────────────────────────────────────────
+  // POST /update/patch — git 기반 자동 패치 (git clone / install.sh 설치 환경)
+  // 다운로드 + 빌드 + 재시작까지 GUI 없이 전부 자동. LaunchAgent KeepAlive 가 재시작 담당.
+  // ───────────────────────────────────────────────────────
+  router.post('/update/patch', async (_req, res) => {
+    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+    if (!fssync.existsSync(path.join(repoRoot, '.git'))) {
+      return res.status(400).json({ error: 'git 설치가 아닙니다. pkg 업데이트를 사용하세요.' });
+    }
+
+    // 응답 먼저 보내고 백그라운드에서 실행 (HTTP 타임아웃 회피)
+    res.json({ ok: true, message: 'git pull + build + 재시작 시작. 10~60초 후 자동으로 복귀합니다.' });
+
+    setTimeout(async () => {
+      try {
+        logger.info({ repoRoot }, 'admin: update/patch starting');
+        const opts = { cwd: repoRoot, timeout: 180000, encoding: 'utf8' };
+        await execFileAsync('git', ['fetch', 'origin'], opts);
+        await execFileAsync('git', ['reset', '--hard', 'origin/main'], opts);
+        await execFileAsync('npm', ['install', '--omit=dev'], opts);
+        await execFileAsync('npm', ['--prefix', 'client', 'install'], opts);
+        await execFileAsync('npm', ['run', 'build'], opts);
+        logger.info('admin: update/patch done, restarting');
+        setTimeout(() => process.exit(0), 500);
+      } catch (err) {
+        logger.error({ err: err.message }, 'admin: update/patch failed');
+      }
+    }, 100);
   });
 
   // ───────────────────────────────────────────────────────
