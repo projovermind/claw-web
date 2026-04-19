@@ -55,6 +55,7 @@ import { createDelegationTracker } from './lib/delegation-tracker.js';
 import { createPushStore } from './lib/push-store.js';
 import { createPushRouter } from './routes/push.js';
 import { createSessionAnalyzer } from './lib/session-analyzer.js';
+import { cleanupLegacyCloudflared } from './lib/legacy-cleanup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -179,6 +180,12 @@ const PROCESS_TRACKER_PATH = path.join(REPO_ROOT, 'logs', 'running-processes.jso
 
 async function main() {
   const webConfig = loadWebConfig(WEB_CONFIG_PATH);
+
+  // ── 레거시 정리: 구 com.hivemind.cloudflared wrapper 가 새 com.claw-web.tunnel
+  //    과 같은 tunnel 에 붙어 간헐적 404 유발. 기동 시 한 번 제거. (v1.2.58+)
+  cleanupLegacyCloudflared().catch((err) =>
+    logger.warn({ err: err.message }, 'legacy-cleanup: unhandled')
+  );
 
   // ── 자가 보정: REPO_ROOT 가 allowedRoots 에 없으면 자동 추가 ──
   // 폴더 이름 변경 (hivemind-web → claw-web 등) 에 대응하기 위함.

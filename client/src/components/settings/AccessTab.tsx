@@ -685,6 +685,15 @@ function NamedTunnelCard() {
             disabled={!status?.binInstalled}
             className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono disabled:opacity-50"
           />
+          {hostname && hostname.includes('.') && hostname.split('.').length === 2 && (
+            <div className="text-[11px] rounded px-3 py-2 bg-amber-900/20 text-amber-200 flex items-start gap-1.5">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+              <span>
+                루트(apex) 도메인은 DNS 충돌/라우팅 문제로 404 가 자주 발생합니다.
+                <b className="text-amber-100"> claw.{hostname}</b> 같은 서브도메인 사용을 권장합니다.
+              </span>
+            </div>
+          )}
           <p className="text-[11px] text-zinc-500">
             💡 도메인이 없으면? <a href="https://dash.cloudflare.com/?to=/:account/domains/register" target="_blank" rel="noreferrer" className="text-emerald-400 underline">Cloudflare Registrar</a> 에서 먼저 구매하세요. <code>.cc</code> 는 연 $8 수준.
           </p>
