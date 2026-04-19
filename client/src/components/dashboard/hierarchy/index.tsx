@@ -197,6 +197,17 @@ export default function AgentHierarchy({
     // Case 2: dropped on a named drop zone (main / project-lead / project-addon / palette)
     const target = decodeDrop(overStr);
     if (!target) return;
+
+    // 버그 방지: 같은 프로젝트 LEAD 를 ADDON 존으로 떨어뜨려 의도치 않게 강등되는 것 차단
+    // 강등은 명시적으로 ⬇ 버튼으로만 허용
+    if (
+      target.kind === 'project-addon' &&
+      agent.tier === 'project' &&
+      agent.projectId === target.projectId
+    ) {
+      return;
+    }
+
     const patch = targetToPatch(target, hierarchy, agentId);
 
     // Special: if target is the same project's addon container AND we're already an addon
@@ -235,6 +246,26 @@ export default function AgentHierarchy({
     mutate.mutate({ id: agentId, patch });
   }
 
+  // ── 카드 액션 핸들러 (드래그 없이 클릭으로 이동) ─────────
+  const mainId = hierarchy.main[0]?.id ?? null;
+  const onRemoveFromProject = (a: Agent) => {
+    mutate.mutate({ id: a.id, patch: { tier: null, projectId: null, parentId: null } });
+  };
+  const onPromoteToLead = (a: Agent) => {
+    if (!a.projectId) return;
+    mutate.mutate({
+      id: a.id,
+      patch: { tier: 'project', projectId: a.projectId, parentId: mainId }
+    });
+  };
+  const onDemoteToAddon = (a: Agent) => {
+    if (!a.projectId) return;
+    mutate.mutate({
+      id: a.id,
+      patch: { tier: 'addon', projectId: a.projectId, parentId: mainId }
+    });
+  };
+
   return (
     <DndContext
       sensors={sensors}
@@ -263,6 +294,7 @@ export default function AgentHierarchy({
             onDelete={onDelete}
             onClone={onClone}
             onContextMenu={openContextMenu}
+            onRemoveFromProject={onRemoveFromProject}
           />
           <div className="flex flex-col gap-3">
             <SectionLabel icon={<Boxes size={14} />} label={t('hier.projects')} />
@@ -280,6 +312,9 @@ export default function AgentHierarchy({
                   onDelete={onDelete}
                   onClone={onClone}
                   onContextMenu={openContextMenu}
+                  onRemoveFromProject={onRemoveFromProject}
+                  onPromoteToLead={onPromoteToLead}
+                  onDemoteToAddon={onDemoteToAddon}
                 />
               );
             })}

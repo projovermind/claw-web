@@ -1,6 +1,6 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Pencil, Trash2, Copy, MoreVertical } from 'lucide-react';
+import { Pencil, Trash2, Copy, MoreVertical, X, ArrowUp } from 'lucide-react';
 import type { Agent } from '../../../lib/types';
 import { useT } from '../../../lib/i18n';
 
@@ -10,7 +10,9 @@ export function SortableAddonCard({
   onEdit,
   onDelete,
   onClone,
-  onContextMenu
+  onContextMenu,
+  onRemoveFromProject,
+  onPromoteToLead
 }: {
   agent: Agent;
   accent?: 'amber';
@@ -18,6 +20,8 @@ export function SortableAddonCard({
   onDelete?: (a: Agent) => void;
   onClone?: (a: Agent) => void;
   onContextMenu?: (e: React.MouseEvent, a: Agent) => void;
+  onRemoveFromProject?: (a: Agent) => void;
+  onPromoteToLead?: (a: Agent) => void;
 }) {
   const t = useT();
   const {
@@ -75,6 +79,26 @@ export function SortableAddonCard({
 
         {/* Top-right: ⋮ menu */}
         <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5 z-[2]">
+          {onPromoteToLead && agent.tier === 'addon' && agent.projectId && (
+            <button
+              onPointerDown={stopDrag}
+              onClick={(e) => { e.stopPropagation(); onPromoteToLead(agent); }}
+              className="p-1.5 rounded text-zinc-500 hover:text-emerald-300 hover:bg-zinc-800 lg:opacity-0 lg:group-hover:opacity-100"
+              title="리드로 승격"
+            >
+              <ArrowUp size={14} />
+            </button>
+          )}
+          {onRemoveFromProject && (agent.tier === 'addon' || agent.tier === 'main') && (
+            <button
+              onPointerDown={stopDrag}
+              onClick={(e) => { e.stopPropagation(); onRemoveFromProject(agent); }}
+              className="p-1.5 rounded text-zinc-500 hover:text-red-300 hover:bg-zinc-800 lg:opacity-0 lg:group-hover:opacity-100"
+              title={agent.tier === 'main' ? '메인에서 빼기 (팔레트로)' : '프로젝트에서 빼기 (팔레트로)'}
+            >
+              <X size={14} />
+            </button>
+          )}
           {onContextMenu && (
             <button
               onPointerDown={stopDrag}

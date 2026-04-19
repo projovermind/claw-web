@@ -1,5 +1,5 @@
 import { useDraggable } from '@dnd-kit/core';
-import { Pencil, Trash2, Copy, MoreVertical } from 'lucide-react';
+import { Pencil, Trash2, Copy, MoreVertical, X, ArrowDown } from 'lucide-react';
 import type { Agent } from '../../../lib/types';
 
 export function DragCard({
@@ -8,7 +8,9 @@ export function DragCard({
   onEdit,
   onDelete,
   onClone,
-  onContextMenu
+  onContextMenu,
+  onRemoveFromProject,
+  onDemoteToAddon
 }: {
   agent: Agent;
   accent?: 'amber';
@@ -16,6 +18,8 @@ export function DragCard({
   onDelete?: (a: Agent) => void;
   onClone?: (a: Agent) => void;
   onContextMenu?: (e: React.MouseEvent, a: Agent) => void;
+  onRemoveFromProject?: (a: Agent) => void;
+  onDemoteToAddon?: (a: Agent) => void;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: agent.id });
   const cls =
@@ -54,7 +58,26 @@ export function DragCard({
 
       {/* Action row — always visible on mobile, hover on desktop */}
       <div className="absolute top-1.5 right-1.5 flex items-center gap-0.5">
-        {/* ⋮ menu button — always visible, opens context menu for move/reorder */}
+        {onDemoteToAddon && agent.projectId && (
+          <button
+            onPointerDown={stopDrag}
+            onClick={(e) => { e.stopPropagation(); onDemoteToAddon(agent); }}
+            className="p-1.5 rounded text-zinc-500 hover:text-amber-300 hover:bg-zinc-800 lg:opacity-0 lg:group-hover:opacity-100"
+            title="애드온으로 강등"
+          >
+            <ArrowDown size={14} />
+          </button>
+        )}
+        {onRemoveFromProject && agent.projectId && (
+          <button
+            onPointerDown={stopDrag}
+            onClick={(e) => { e.stopPropagation(); onRemoveFromProject(agent); }}
+            className="p-1.5 rounded text-zinc-500 hover:text-red-300 hover:bg-zinc-800 lg:opacity-0 lg:group-hover:opacity-100"
+            title="프로젝트에서 빼기 (팔레트로)"
+          >
+            <X size={14} />
+          </button>
+        )}
         {onContextMenu && (
           <button
             onPointerDown={stopDrag}

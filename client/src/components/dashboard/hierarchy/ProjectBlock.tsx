@@ -16,7 +16,10 @@ export function ProjectBlock({
   onEdit,
   onDelete,
   onClone,
-  onContextMenu
+  onContextMenu,
+  onRemoveFromProject,
+  onPromoteToLead,
+  onDemoteToAddon
 }: {
   project: Project;
   lead: Agent | null;
@@ -27,6 +30,9 @@ export function ProjectBlock({
   onDelete?: (a: Agent) => void;
   onClone?: (a: Agent) => void;
   onContextMenu?: (e: React.MouseEvent, a: Agent) => void;
+  onRemoveFromProject?: (a: Agent) => void;
+  onPromoteToLead?: (a: Agent) => void;
+  onDemoteToAddon?: (a: Agent) => void;
 }) {
   const t = useT();
   const leadDrop = useDroppable({ id: encProjectLead(project.id) });
@@ -66,6 +72,8 @@ export function ProjectBlock({
                 onDelete={onDelete}
                 onClone={onClone}
                 onContextMenu={onContextMenu}
+                onRemoveFromProject={onRemoveFromProject}
+                onDemoteToAddon={onDemoteToAddon}
               />
             ) : (
               <div className="text-[11px] text-zinc-600 italic px-1">{t('hier.lead.empty')}</div>
@@ -93,6 +101,8 @@ export function ProjectBlock({
                     onDelete={onDelete}
                     onClone={onClone}
                     onContextMenu={onContextMenu}
+                    onRemoveFromProject={onRemoveFromProject}
+                    onPromoteToLead={onPromoteToLead}
                   />
                 ))}
               </SortableContext>

@@ -12,13 +12,15 @@ export function MainSlot({
   onEdit,
   onDelete,
   onClone,
-  onContextMenu
+  onContextMenu,
+  onRemoveFromProject
 }: {
   agents: Agent[];
   onEdit?: (a: Agent) => void;
   onDelete?: (a: Agent) => void;
   onClone?: (a: Agent) => void;
   onContextMenu?: (e: React.MouseEvent, a: Agent) => void;
+  onRemoveFromProject?: (a: Agent) => void;
 }) {
   const t = useT();
   const { setNodeRef, isOver } = useDroppable({ id: DROP_MAIN });
@@ -45,6 +47,7 @@ export function MainSlot({
                   onDelete={onDelete}
                   onClone={onClone}
                   onContextMenu={onContextMenu}
+                  onRemoveFromProject={onRemoveFromProject}
                 />
               ))}
             </SortableContext>

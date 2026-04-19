@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, Star, Download, CheckSquare, Square, X, ChevronDown, ChevronUp } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -250,8 +250,45 @@ export function ChatSidebar({
     ? `${currentAgent.avatar ?? '🤖'} ${currentAgent.name}`
     : '';
 
+  // ── Sidebar width (drag to resize) ─────────────────
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return 256;
+    const saved = Number(localStorage.getItem('chatSidebarWidth'));
+    return Number.isFinite(saved) && saved >= 200 && saved <= 500 ? saved : 256;
+  });
+  const resizingRef = useRef(false);
+  const onResizeStart = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    resizingRef.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      if (!resizingRef.current) return;
+      const next = Math.max(200, Math.min(500, e.clientX));
+      setSidebarWidth(next);
+    };
+    const onUp = () => {
+      if (!resizingRef.current) return;
+      resizingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      try { localStorage.setItem('chatSidebarWidth', String(sidebarWidth)); } catch { /* noop */ }
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [sidebarWidth]);
+
   return (
-    <aside className="hidden lg:flex w-64 shrink-0 border-r border-zinc-700/50 bg-zinc-900/50 flex-col">
+    <aside
+      className="hidden lg:flex shrink-0 border-r border-zinc-700/50 bg-zinc-900/50 flex-col relative"
+      style={{ width: sidebarWidth }}
+    >
       {/* Project/Agent picker */}
       <div className="p-3 border-b border-zinc-800 relative">
         <label className="text-[11px] uppercase tracking-wider text-zinc-500 block mb-1">
@@ -631,6 +668,12 @@ export function ChatSidebar({
           </div>
         );
       })()}
+      {/* Resize handle */}
+      <div
+        onPointerDown={onResizeStart}
+        className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-emerald-500/40 active:bg-emerald-500/60 transition-colors z-20"
+        title="드래그로 크기 조절"
+      />
     </aside>
   );
 }
