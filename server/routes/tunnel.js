@@ -25,6 +25,19 @@ const URL_FILE = path.join(
   'tunnel-url.txt'
 );
 
+async function writeTunnelUrlFile(url) {
+  await fs.mkdir(path.dirname(URL_FILE), { recursive: true });
+  await fs.writeFile(URL_FILE, url + '\n', 'utf8');
+}
+
+async function clearTunnelUrlFile() {
+  try {
+    await fs.unlink(URL_FILE);
+  } catch {
+    // 파일이 없으면 무시
+  }
+}
+
 export function createTunnelRouter() {
   const router = Router();
 
@@ -80,7 +93,10 @@ export function createTunnelRouter() {
       const genericMatch = text.match(/https?:\/\/[a-zA-Z0-9\-\.]+\.[a-z]{2,}[^\s]*/);
       const found = ngrokMatch?.[0] ?? cfMatch?.[0] ?? genericMatch?.[0];
       if (found && !tunnelState.url) {
-        tunnelState.url = found.trim();
+        const url = found.trim();
+        tunnelState.url = url;
+        // 상단 TunnelUrlCard 위젯이 읽는 파일에도 기록 (Named Tunnel 과 동일 경로)
+        writeTunnelUrlFile(url).catch(() => {});
       }
     };
 
@@ -90,6 +106,7 @@ export function createTunnelRouter() {
     proc.on('exit', () => {
       tunnelProc = null;
       tunnelState = { running: false, type: null, url: null, pid: null };
+      clearTunnelUrlFile().catch(() => {});
     });
 
     res.json({ ok: true, state: tunnelState });
@@ -103,6 +120,7 @@ export function createTunnelRouter() {
     tunnelProc.kill();
     tunnelProc = null;
     tunnelState = { running: false, type: null, url: null, pid: null };
+    clearTunnelUrlFile().catch(() => {});
     res.json({ ok: true });
   });
 
