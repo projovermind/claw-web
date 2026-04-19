@@ -13,32 +13,50 @@ LOG="/tmp/claw-web-install.log"
 echo "[postinstall] $(date)" >> "$LOG"
 
 # ═══════════════════════════════════════════════════════
-# Step 0. 설치 경로 선택
+# Step 0. 설치 경로 선택 (Finder 폴더 피커)
 # ═══════════════════════════════════════════════════════
-CUSTOM_DIR=$(osascript 2>/dev/null <<OSA
+# 먼저 기본값 사용 / 직접 선택 물어보기
+INSTALL_CHOICE=$(osascript 2>/dev/null <<'OSA'
 try
-  set dlg to display dialog "Claw Web을 어디에 설치할까요?
+  set dlg to display dialog "Claw Web 설치 위치를 선택하세요.
 
-기본 경로: $DEFAULT_INSTALL_DIR
-다른 경로를 원하면 직접 입력하세요." default answer "$DEFAULT_INSTALL_DIR" with title "Claw Web — 설치 경로 선택" buttons {"기본값 사용", "이 경로로 설치"} default button 2 with icon note
-  return text returned of dlg
+기본 경로: /usr/local/lib/claw-web" buttons {"기본 경로 사용", "폴더 직접 선택"} default button 1 with icon note with title "Claw Web — 설치 경로"
+  return button returned of dlg
+on error
+  return "기본 경로 사용"
+end try
+OSA
+)
+
+INSTALL_DIR="$DEFAULT_INSTALL_DIR"
+
+if [ "$INSTALL_CHOICE" = "폴더 직접 선택" ]; then
+  # Finder 폴더 피커 — 상위 폴더 선택, claw-web 자동 추가
+  PARENT_DIR=$(osascript 2>/dev/null <<'OSA'
+try
+  set chosen to choose folder with prompt "claw-web 폴더를 만들 상위 폴더를 선택하세요.
+예: /Applications 선택 → /Applications/claw-web 에 설치됩니다."
+  return POSIX path of chosen
 on error
   return ""
 end try
 OSA
 )
-CUSTOM_DIR=$(echo "${CUSTOM_DIR:-$DEFAULT_INSTALL_DIR}" | sed 's|/*$||')
-[ -z "$CUSTOM_DIR" ] && CUSTOM_DIR="$DEFAULT_INSTALL_DIR"
-
-# 기본값과 다른 경우: payload를 커스텀 경로로 이동 + 심볼릭 링크
-if [ "$CUSTOM_DIR" != "$DEFAULT_INSTALL_DIR" ]; then
-  mkdir -p "$CUSTOM_DIR"
-  rsync -a "$DEFAULT_INSTALL_DIR/" "$CUSTOM_DIR/"
-  rm -rf "$DEFAULT_INSTALL_DIR"
-  ln -s "$CUSTOM_DIR" "$DEFAULT_INSTALL_DIR"
-  echo "[postinstall] custom install dir: $CUSTOM_DIR (symlink from $DEFAULT_INSTALL_DIR)" >> "$LOG"
+  if [ -n "$PARENT_DIR" ]; then
+    PARENT_DIR=$(echo "$PARENT_DIR" | sed 's|/*$||')
+    INSTALL_DIR="$PARENT_DIR/claw-web"
+    echo "[postinstall] user selected install dir: $INSTALL_DIR" >> "$LOG"
+  fi
 fi
-INSTALL_DIR="$CUSTOM_DIR"
+
+# 기본값과 다른 경우: payload 이동 + 심볼릭 링크
+if [ "$INSTALL_DIR" != "$DEFAULT_INSTALL_DIR" ]; then
+  mkdir -p "$INSTALL_DIR"
+  rsync -a "$DEFAULT_INSTALL_DIR/" "$INSTALL_DIR/"
+  rm -rf "$DEFAULT_INSTALL_DIR"
+  ln -sf "$INSTALL_DIR" "$DEFAULT_INSTALL_DIR"
+  echo "[postinstall] installed to $INSTALL_DIR, symlink from $DEFAULT_INSTALL_DIR" >> "$LOG"
+fi
 
 # ── 경로 확보 ────────────────────────────────────────────
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:$PATH"
@@ -92,9 +110,26 @@ notify "② 클라이언트 빌드 중... (1~2분)"
 CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
 if [ -z "$CLAUDE_BIN" ]; then
   notify "③ Claude CLI 설치 중..."
-  as_user "\"$NPM_BIN\" install -g @anthropic-ai/claude-code"
-  CLAUDE_BIN=$(as_user "command -v claude 2>/dev/null")
+  as_user "\"$NPM_BIN\" install -g @anthropic-ai/claude-code" 2>> "$LOG" || true
+  # npm global prefix 에서 claude 바이너리 찾기
+  NPM_PREFIX=$(as_user "\"$NPM_BIN\" config get prefix 2>/dev/null" || echo "")
+  for p in \
+    "$NPM_PREFIX/bin/claude" \
+    "$REAL_HOME/.npm-global/bin/claude" \
+    "$REAL_HOME/.npm/bin/claude" \
+    "/usr/local/bin/claude" \
+    "/opt/homebrew/bin/claude" \
+    "$REAL_HOME/.local/bin/claude"; do
+    if [ -x "$p" ]; then CLAUDE_BIN="$p"; break; fi
+  done
 fi
+
+# /usr/local/bin 에 심볼릭 링크 생성 (PATH에 항상 있음)
+if [ -n "$CLAUDE_BIN" ] && [ "$CLAUDE_BIN" != "/usr/local/bin/claude" ]; then
+  ln -sf "$CLAUDE_BIN" /usr/local/bin/claude 2>/dev/null || true
+  echo "[postinstall] symlinked $CLAUDE_BIN → /usr/local/bin/claude" >> "$LOG"
+fi
+
 echo "[postinstall] CLAUDE_BIN=$CLAUDE_BIN" >> "$LOG"
 
 # ═══════════════════════════════════════════════════════

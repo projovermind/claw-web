@@ -3,14 +3,28 @@
 <head>
 <meta charset="utf-8">
 <style>
-  html, body { background: #ffffff !important; color: #1d1d1f !important; }
+  :root {
+    --bg: #f5f5f7; --card: #e8e8ed; --text: #1d1d1f;
+    --sub: #6e6e73; --code-bg: #dcdce0; --warn-bg: #fff3cd; --warn-text: #664d03;
+    --link: #0071e3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e; --card: #2c2c2e; --text: #f2f2f7;
+      --sub: #aeaeb2; --code-bg: #3a3a3c; --warn-bg: #3a2c00; --warn-text: #ffd60a;
+      --link: #0a84ff;
+    }
+  }
+  html, body { background: var(--bg); color: var(--text); margin: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; line-height: 1.6; padding: 20px; }
   h2 { font-size: 20px; font-weight: 600; margin: 0 0 16px 0; }
-  .section { background: #f5f5f7; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; }
+  .section { background: var(--card); border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; }
   .section h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px 0; }
-  code { background: #e8e8ed; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
-  .warn { background: #fff3cd; border-radius: 12px; padding: 12px 16px; font-size: 13px; margin-bottom: 16px; }
-  .note { font-size: 13px; color: #86868b; }
+  code { background: var(--code-bg); color: var(--text); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  a { color: var(--link); }
+  .warn { background: var(--warn-bg); color: var(--warn-text); border-radius: 12px; padding: 12px 16px; font-size: 13px; margin-bottom: 16px; }
+  .warn a { color: var(--link); }
+  .note { font-size: 13px; color: var(--sub); }
 </style>
 </head>
 <body>
@@ -48,37 +62,24 @@
     <ul style="margin: 0; padding-left: 18px;">
       <li>무료, 가입 불필요, 대역폭 무제한</li>
       <li>단점: 재부팅할 때마다 URL 바뀜</li>
-      <li>간헐적 사용에 적합</li>
     </ul>
 
     <p style="margin: 10px 0 4px 0;"><b>🆓 ② ngrok (월 1GB 제한)</b></p>
     <ul style="margin: 0; padding-left: 18px;">
-      <li><a href="https://dashboard.ngrok.com/signup">dashboard.ngrok.com/signup</a> 가입 필요 (무료)</li>
-      <li>설치 중 authtoken 붙여넣으면 자동 구성</li>
-      <li><b>⚠️ 월 1GB 한도</b> &mdash; Claude 상시 사용 시 3~7일에 소진 (ERR_NGROK_725)</li>
+      <li><a href="https://dashboard.ngrok.com/signup">dashboard.ngrok.com</a> 가입 필요 (무료)</li>
+      <li><b>⚠️ 월 1GB 한도</b> &mdash; Claude 상시 사용 시 3~7일에 소진</li>
     </ul>
 
     <p style="margin: 10px 0 4px 0;"><b>⭐ ③ 고정 URL (Cloudflare Named Tunnel) &mdash; 추천</b></p>
     <ul style="margin: 0; padding-left: 18px;">
-      <li><b>영구 URL:</b> <code>claw.내도메인.com</code> 재부팅/네트워크변경에도 불변</li>
+      <li><b>영구 URL:</b> <code>claw.내도메인.com</code> &mdash; 재부팅/네트워크 변경에도 불변</li>
       <li><b>대역폭 무제한</b></li>
-      <li><b>준비물:</b> 도메인 1개 (연 $3~13 수준)
-        <ul>
-          <li>가장 쉬움: <a href="https://dash.cloudflare.com/?to=/:account/domains/register">Cloudflare Registrar</a> 원가판매</li>
-          <li>가장 쌈: <a href="https://porkbun.com/">Porkbun</a> (.cc 첫해 $3.40)</li>
-        </ul>
-      </li>
-      <li><b>자동화:</b> 설치 도중 다이얼로그에 호스트명(예: <code>claw.mydomain.com</code>) 입력 → 브라우저에서 Cloudflare '권한 부여' 클릭 1번 → 나머지 모두 자동</li>
+      <li><b>준비물:</b> 도메인 1개 (연 $3~13)</li>
     </ul>
-
-    <p class="note" style="margin: 8px 0 0 0;">
-      <b>⚠️ 원격 접속 시 필수:</b> 설치 관리자가 Bearer 토큰을 자동 생성해 <code>web-config.json</code> 에 저장합니다.
-      설치 완료 다이얼로그에서 [토큰 복사] 버튼으로 클립보드에 담기 &rarr; 폰/외부 브라우저에서 Settings &rarr; Access 탭에 입력.
-    </p>
   </div>
 
   <div class="note">
-    설치 위치: <code>/usr/local/lib/claw-web</code><br>
+    설치 위치: <code>/usr/local/lib/claw-web</code> (설치 중 변경 가능)<br>
     데이터 위치: <code>~/.claw-web/</code><br>
     서버 포트: <code>3838</code>
   </div>

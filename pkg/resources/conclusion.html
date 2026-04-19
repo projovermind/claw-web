@@ -3,14 +3,26 @@
 <head>
 <meta charset="utf-8">
 <style>
-  html, body { background: #ffffff !important; color: #1d1d1f !important; }
+  :root {
+    --bg: #f5f5f7; --card: #e8e8ed; --text: #1d1d1f;
+    --sub: #6e6e73; --code-bg: #dcdce0; --green: #1a8f3c;
+    --cmd-bg: #1d1d1f; --cmd-text: #30d158;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1e; --card: #2c2c2e; --text: #f2f2f7;
+      --sub: #aeaeb2; --code-bg: #3a3a3c; --green: #34c759;
+      --cmd-bg: #0a0a0a; --cmd-text: #30d158;
+    }
+  }
+  html, body { background: var(--bg); color: var(--text); margin: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; line-height: 1.6; padding: 20px; }
-  h2 { font-size: 22px; font-weight: 600; color: #34c759; margin-bottom: 8px; }
-  .subtitle { color: #86868b; font-size: 14px; margin-bottom: 24px; }
-  .section { background: #f5f5f7; border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; }
+  h2 { font-size: 22px; font-weight: 600; color: var(--green); margin-bottom: 8px; }
+  .subtitle { color: var(--sub); font-size: 14px; margin-bottom: 24px; }
+  .section { background: var(--card); border-radius: 12px; padding: 16px 20px; margin-bottom: 16px; }
   .section h3 { font-size: 14px; font-weight: 600; margin: 0 0 8px 0; }
-  code { background: #e8e8ed; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
-  .cmd { background: #1d1d1f; color: #30d158; padding: 12px 16px; border-radius: 8px; font-family: "SF Mono", monospace; font-size: 13px; margin: 8px 0; }
+  code { background: var(--code-bg); color: var(--text); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  .cmd { background: var(--cmd-bg); color: var(--cmd-text); padding: 12px 16px; border-radius: 8px; font-family: "SF Mono", monospace; font-size: 13px; margin: 8px 0; }
 </style>
 </head>
 <body>
@@ -20,7 +32,7 @@
   <div class="section">
     <h3>지금 바로 시작</h3>
     <div class="cmd">open http://localhost:3838</div>
-    <p style="font-size:13px; color:#86868b;">서버가 자동으로 시작됩니다. 브라우저에서 위 주소로 접속하세요.</p>
+    <p style="font-size:13px; color:var(--sub);">서버가 자동으로 시작됩니다. 브라우저에서 위 주소로 접속하세요.</p>
   </div>
 
   <div class="section">
@@ -33,37 +45,10 @@
   </div>
 
   <div class="section">
-    <h3>원격 접속 URL 확인</h3>
-    <p style="font-size:13px;">
-      설치 중 터널을 선택하셨다면 URL 이 자동 생성되었습니다.<br>
-      • <b>고정 URL:</b> <code>cat ~/.claw-web/.tunnel-url</code> (영구, 재부팅 OK)<br>
-      • <b>빠른 URL:</b> <code>grep trycloudflare /tmp/claw-web-tunnel.log</code> (재부팅마다 바뀜)<br>
-      • <b>ngrok:</b> <code>curl -s localhost:4040/api/tunnels | grep public_url</code><br><br>
-      <b>🔑 Bearer 토큰:</b> <code>cat ~/.claw-web/.bearer-token</code><br>
-      외부 브라우저/폰에서 접속 시 Settings &rarr; Access 탭에 토큰 입력 필요.
-    </p>
-  </div>
-
-  <div class="section">
     <h3>유용한 명령어</h3>
     <p style="font-size:13px;">
       서버 로그: <code>tail -f /tmp/claw-web.log</code><br>
-      서버 중지: <code>launchctl unload ~/Library/LaunchAgents/com.claw-web.server.plist</code><br>
-      서버 시작: <code>launchctl load ~/Library/LaunchAgents/com.claw-web.server.plist</code><br>
-      터널 중지: <code>launchctl unload ~/Library/LaunchAgents/com.claw-web.tunnel.plist</code><br>
-      터널 재시작: <code>launchctl load ~/Library/LaunchAgents/com.claw-web.tunnel.plist</code><br>
-      수동 실행: <code>cd /usr/local/lib/claw-web && npm start</code>
-    </p>
-  </div>
-
-  <div class="section">
-    <h3>고정 URL 재설정 (나중에 변경 시)</h3>
-    <p style="font-size:13px;">
-      설치 후에도 고정 URL 추가/변경 가능:<br>
-      1. <code>brew install cloudflared && cloudflared tunnel login</code><br>
-      2. <code>cloudflared tunnel create claw-web</code><br>
-      3. <code>cloudflared tunnel route dns claw-web claw.내도메인.com</code><br>
-      4. <code>~/.cloudflared/config.yml</code> 작성 후 터널 재시작
+      Bearer 토큰: <code>cat ~/.claw-web/.bearer-token</code>
     </p>
   </div>
 </body>
