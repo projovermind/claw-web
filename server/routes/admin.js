@@ -174,11 +174,50 @@ export function createAdminRouter({ runner, eventBus }) {
         latest,
         hasUpdate,
         downloadUrl: pkgAsset?.browser_download_url || release.html_url,
+        pkgUrl: pkgAsset?.browser_download_url || null,
+        pkgName: pkgAsset?.name || null,
         releaseUrl: release.html_url,
         publishedAt: release.published_at,
         notes: release.body || ''
       });
     } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ───────────────────────────────────────────────────────
+  // POST /update/install — pkg 다운로드 후 macOS Installer.app 자동 실행
+  // body: { pkgUrl: 'https://github.com/.../Claw-Web-1.2.x.pkg' }
+  // 설치 진행은 Installer.app GUI 로 사용자가 확인. 서버는 pkg 파일 준비 + open 까지.
+  // ───────────────────────────────────────────────────────
+  router.post('/update/install', async (req, res) => {
+    const pkgUrl = (req.body?.pkgUrl || '').trim();
+    if (!pkgUrl || !/^https:\/\/github\.com\/.+\.pkg$/.test(pkgUrl)) {
+      return res.status(400).json({ error: 'pkgUrl 이 유효하지 않습니다 (github.com/*.pkg 허용)' });
+    }
+
+    const dlPath = path.join(os.tmpdir(), `claw-web-update-${Date.now()}.pkg`);
+    try {
+      logger.info({ pkgUrl, dlPath }, 'admin: downloading update pkg');
+      const resp = await fetch(pkgUrl, { redirect: 'follow' });
+      if (!resp.ok) throw new Error(`다운로드 실패: HTTP ${resp.status}`);
+      const buf = Buffer.from(await resp.arrayBuffer());
+      if (buf.length < 1024) throw new Error('다운로드된 파일이 너무 작음');
+      await fs.writeFile(dlPath, buf);
+
+      // macOS Installer.app 실행 — GUI 가 뜨고 사용자가 계속 진행
+      const { spawn } = await import('node:child_process');
+      spawn('open', [dlPath], { detached: true, stdio: 'ignore' }).unref();
+
+      logger.info({ dlPath, size: buf.length }, 'admin: Installer.app launched');
+      res.json({
+        ok: true,
+        pkgPath: dlPath,
+        size: buf.length,
+        message: 'Installer.app 이 열렸습니다. 설치 완료 후 서버가 자동 재시작됩니다.'
+      });
+    } catch (err) {
+      logger.error({ err: err.message }, 'admin: update install failed');
       res.status(500).json({ error: err.message });
     }
   });

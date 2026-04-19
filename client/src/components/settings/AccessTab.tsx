@@ -676,6 +676,8 @@ interface UpdateInfo {
   latest: string | null;
   hasUpdate: boolean;
   downloadUrl?: string;
+  pkgUrl?: string | null;
+  pkgName?: string | null;
   releaseUrl?: string;
   publishedAt?: string;
   notes?: string;
@@ -687,6 +689,22 @@ function UpdateCheckCard() {
     queryKey: ['update-check'],
     queryFn: () => fetch('/api/admin/update/check', { headers: authHeaders() }).then((r) => r.json()),
     staleTime: 60000
+  });
+  const [installMsg, setInstallMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const install = useMutation({
+    mutationFn: async (pkgUrl: string) => {
+      const r = await fetch('/api/admin/update/install', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ pkgUrl })
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || '설치 요청 실패');
+      return j;
+    },
+    onSuccess: (j) => setInstallMsg({ ok: true, text: j.message || 'Installer.app 이 열렸습니다.' }),
+    onError: (e: Error) => setInstallMsg({ ok: false, text: e.message })
   });
 
   return (
@@ -731,20 +749,40 @@ function UpdateCheckCard() {
             )}
           </div>
 
-          {data.hasUpdate && data.downloadUrl && (
+          {data.hasUpdate && data.pkgUrl && (
             <>
-              <a
-                href={data.downloadUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="w-full rounded bg-cyan-700 hover:bg-cyan-600 px-4 py-2 text-sm flex items-center justify-center gap-2"
+              <button
+                onClick={() => {
+                  setInstallMsg(null);
+                  install.mutate(data.pkgUrl!);
+                }}
+                disabled={install.isPending}
+                className="w-full rounded bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 px-4 py-2 text-sm flex items-center justify-center gap-2"
               >
-                <Download size={14} />
-                v{data.latest} pkg 다운로드
-              </a>
+                {install.isPending ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                {install.isPending ? 'pkg 다운로드 중...' : `v${data.latest} 로 지금 업데이트`}
+              </button>
               <p className="text-[11px] text-zinc-500 leading-snug">
-                다운로드 후 .pkg 파일을 열면 기존 설치를 자동 정리하고 업데이트됩니다.
+                자동으로 pkg 다운로드 + macOS Installer 실행. Installer 에서 계속 버튼만 누르면 기존 설치 자동 정리 후 업데이트됨.
               </p>
+              {installMsg && (
+                <div className={`text-xs rounded px-3 py-2 ${installMsg.ok ? 'bg-emerald-900/30 text-emerald-300' : 'bg-red-900/30 text-red-300'}`}>
+                  {installMsg.text}
+                </div>
+              )}
+              <div className="flex items-center gap-2 text-[11px] text-zinc-600">
+                <a href={data.pkgUrl} target="_blank" rel="noreferrer" className="hover:text-zinc-300 underline inline-flex items-center gap-1">
+                  <ExternalLink size={10} /> 수동 다운로드
+                </a>
+                {data.releaseUrl && (
+                  <>
+                    <span>·</span>
+                    <a href={data.releaseUrl} target="_blank" rel="noreferrer" className="hover:text-zinc-300 underline inline-flex items-center gap-1">
+                      <ExternalLink size={10} /> 릴리즈 페이지
+                    </a>
+                  </>
+                )}
+              </div>
               {data.notes && (
                 <details className="text-[11px] text-zinc-500">
                   <summary className="cursor-pointer hover:text-zinc-300">릴리즈 노트</summary>
