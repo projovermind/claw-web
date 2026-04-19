@@ -130,18 +130,16 @@ if [ ! -f "$USER_DATA/web-config.json" ]; then
 CFG
 else
   # 기존 파일에 토큰만 주입
-  python3 - "$USER_DATA/web-config.json" "$BEARER_TOKEN" <<'PY'
-import json, sys
-path, token = sys.argv[1], sys.argv[2]
-with open(path) as f: d = json.load(f)
-d.setdefault("auth", {})
-if not d["auth"].get("token"):
-    d["auth"]["token"] = token
-    d["auth"]["enabled"] = True
-with open(path, "w") as f: json.dump(d, f, indent=2)
-PY
+  "$NODE_BIN" -e "
+    const fs = require('fs');
+    const path = process.argv[1], token = process.argv[2];
+    const d = JSON.parse(fs.readFileSync(path, 'utf8'));
+    if (!d.auth) d.auth = {};
+    if (!d.auth.token) { d.auth.token = token; d.auth.enabled = true; }
+    fs.writeFileSync(path, JSON.stringify(d, null, 2));
+  " "$USER_DATA/web-config.json" "$BEARER_TOKEN" 2>/dev/null || true
   # 기존 토큰이 있었으면 그 값을 BEARER_TOKEN 에 반영
-  BEARER_TOKEN=$(python3 -c "import json; print(json.load(open('$USER_DATA/web-config.json'))['auth']['token'])")
+  BEARER_TOKEN=$("$NODE_BIN" -e "const d=JSON.parse(require('fs').readFileSync('$USER_DATA/web-config.json','utf8')); console.log(d.auth&&d.auth.token||'')" 2>/dev/null || echo "$BEARER_TOKEN")
 fi
 ln -sf "$USER_DATA/web-config.json" "$INSTALL_DIR/web-config.json" 2>/dev/null || true
 
@@ -171,18 +169,18 @@ WORK_DIR=$(echo "$WORK_DIR" | sed "s|^~|$REAL_HOME|")
 mkdir -p "$WORK_DIR" 2>/dev/null || WORK_DIR="$REAL_HOME"
 
 # allowedRoots 에 작업 디렉토리 + 설치 디렉토리 설정
-python3 - "$USER_DATA/web-config.json" "$WORK_DIR" "$INSTALL_DIR" <<'PY'
-import json, sys
-path, work_dir, install_dir = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path) as f: d = json.load(f)
-roots = d.get("allowedRoots", [])
-for r in [work_dir, install_dir]:
-    r_slash = r.rstrip('/') + '/'
-    if not any(ex.rstrip('/') + '/' == r_slash for ex in roots):
-        roots.append(r_slash)
-d["allowedRoots"] = roots
-with open(path, "w") as f: json.dump(d, f, indent=2)
-PY
+"$NODE_BIN" -e "
+  const fs = require('fs');
+  const [path, workDir, installDir] = process.argv.slice(1);
+  const d = JSON.parse(fs.readFileSync(path, 'utf8'));
+  const roots = d.allowedRoots || [];
+  for (const r of [workDir, installDir]) {
+    const rs = r.replace(/\/*$/, '/');
+    if (!roots.some(e => e.replace(/\/*$/,'/') === rs)) roots.push(rs);
+  }
+  d.allowedRoots = roots;
+  fs.writeFileSync(path, JSON.stringify(d, null, 2));
+" "$USER_DATA/web-config.json" "$WORK_DIR" "$INSTALL_DIR" 2>/dev/null || true
 echo "[postinstall] work_dir=$WORK_DIR, allowedRoots updated" >> "$LOG"
 
 # ═══════════════════════════════════════════════════════
@@ -229,17 +227,16 @@ OSA
 )
     if [ -n "$API_KEY" ] && [ "$API_KEY" != "__SKIP__" ]; then
       # secrets.json 에 저장
-      python3 - "$USER_DATA/secrets.json" "$API_KEY" <<'PY'
-import json, os, sys
-path, key = sys.argv[1], sys.argv[2]
-try:
-    with open(path) as f: d = json.load(f)
-except: d = {"version": 1, "backends": {}}
-d.setdefault("backends", {})
-d["backends"].setdefault("claude", {})["api_key"] = key
-with open(path, "w") as f: json.dump(d, f, indent=2)
-os.chmod(path, 0o600)
-PY
+      "$NODE_BIN" -e "
+        const fs = require('fs');
+        const [path, key] = process.argv.slice(1);
+        let d; try { d = JSON.parse(fs.readFileSync(path,'utf8')); } catch { d = {version:1,backends:{}}; }
+        if (!d.backends) d.backends = {};
+        if (!d.backends.claude) d.backends.claude = {};
+        d.backends.claude.api_key = key;
+        fs.writeFileSync(path, JSON.stringify(d, null, 2));
+        fs.chmodSync(path, 0o600);
+      " "$USER_DATA/secrets.json" "$API_KEY" 2>/dev/null || true
       notify "API 키 저장 완료"
     fi
     ;;
@@ -394,7 +391,7 @@ TUNPLIST
           [ -n "$_RU" ] && launchctl bootstrap "gui/$_RU" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
           for i in $(seq 1 15); do
             sleep 1
-            TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); t=d.get('tunnels',[]); print(t[0]['public_url'] if t else '')" 2>/dev/null)
+            TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | "$NODE_BIN" -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const r=JSON.parse(d);const t=(r.tunnels||[]);console.log(t[0]&&t[0].public_url||'');}catch{console.log('');}});" 2>/dev/null || echo "")
             [ -n "$TUNNEL_URL" ] && break
           done
           TUNNEL_LABEL="ngrok (무료 1GB/월)"
@@ -495,11 +492,7 @@ OSA
           else
             # Step 5d: 터널 생성 (기존 있으면 재사용)
             TUNNEL_NAME="claw-web"
-            TUNNEL_ID=$(as_user "$CF_BIN tunnel list --output json 2>/dev/null" | python3 -c "import sys,json
-try:
-  for t in json.load(sys.stdin):
-    if t.get('name')=='$TUNNEL_NAME': print(t['id']); break
-except: pass" 2>/dev/null)
+            TUNNEL_ID=$(as_user "$CF_BIN tunnel list --output json 2>/dev/null" | "$NODE_BIN" -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const ts=JSON.parse(d);const t=ts.find(x=>x.name==='$TUNNEL_NAME');console.log(t&&t.id||'');}catch{console.log('');}});" 2>/dev/null || echo "")
 
             if [ -z "$TUNNEL_ID" ]; then
               CREATE_OUT=$(as_user "$CF_BIN tunnel create $TUNNEL_NAME" 2>&1)
