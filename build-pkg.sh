@@ -39,10 +39,10 @@ echo "→ [2/4] Assembling payload..."
 
 # 서버 코드 (node_modules + client/dist 포함 — postinstall npm install 불필요)
 rsync -a \
-  --exclude='client/node_modules' \
-  --exclude='.git' \
-  --exclude='dist' \
-  --exclude='pkg' \
+  --exclude='/client/node_modules' \
+  --exclude='/.git' \
+  --exclude='/dist' \
+  --exclude='/pkg' \
   --exclude='*.backup-*' \
   --exclude='*.pkg' \
   --exclude='.playwright-mcp' \
@@ -60,14 +60,14 @@ rsync -a \
   --exclude='push-subscriptions.json' \
   --exclude='running-processes.json' \
   --exclude='activity.jsonl' \
-  --exclude='logs' \
-  --exclude='uploads' \
-  --exclude='backups' \
-  --exclude='tests' \
-  --exclude='docs' \
-  --exclude='packaging' \
-  --exclude='build-pkg.sh' \
-  --exclude='install.sh' \
+  --exclude='/logs' \
+  --exclude='/uploads' \
+  --exclude='/backups' \
+  --exclude='/tests' \
+  --exclude='/docs' \
+  --exclude='/packaging' \
+  --exclude='/build-pkg.sh' \
+  --exclude='/install.sh' \
   "$SCRIPT_DIR/" "$BUILD_DIR/payload/"
 
 FILE_COUNT=$(find "$BUILD_DIR/payload" -type f | wc -l | tr -d ' ')
