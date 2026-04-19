@@ -34,13 +34,23 @@ echo "→ 스테이징 디렉토리 준비..."
 rm -rf "$STAGING"
 mkdir -p "$STAGING"
 
-# ── 앱 파일 복사 (빌드산출물·로컬데이터 제외) ──────────────
+# ── 의존성 설치 및 클라이언트 빌드 (번들링) ──────────────────
+echo "→ 서버 의존성 설치..."
+npm --prefix "$REPO_ROOT" install --loglevel=error
+
+echo "→ 클라이언트 의존성 설치..."
+npm --prefix "$REPO_ROOT/client" install --loglevel=error
+
+echo "→ 클라이언트 빌드..."
+npm --prefix "$REPO_ROOT" run build
+
+echo "✓ 번들 준비 완료"
+
+# ── 앱 파일 복사 (node_modules·dist 포함, 로컬데이터 제외) ───
 rsync -a \
   --exclude='.git/' \
   --exclude='.github/' \
-  --exclude='node_modules/' \
-  --exclude='client/node_modules/' \
-  --exclude='client/dist/' \
+  --exclude='client/node_modules/.cache/' \
   --exclude='packaging/' \
   --exclude='*.pkg' \
   --exclude='sessions.json' \
@@ -60,7 +70,7 @@ rsync -a \
   --exclude='.DS_Store' \
   "$REPO_ROOT/" "$STAGING/"
 
-echo "✓ 파일 복사 완료"
+echo "✓ 파일 복사 완료 (node_modules + client/dist 포함)"
 
 # ── 스크립트 실행 권한 부여 ────────────────────────────────
 chmod +x "$SCRIPT_DIR/scripts/preinstall"

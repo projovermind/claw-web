@@ -66,10 +66,18 @@ if command -v node &>/dev/null; then
   if [ "$NODE_MAJOR" -ge 20 ]; then
     ok "Node.js $NODE_VER"
   else
-    fail "Node.js 20+ 필요 (현재: $NODE_VER). https://nodejs.org 에서 업데이트."
+    warn "Node.js 20+ 필요 (현재: v$NODE_VER)"
+    echo ""
+    echo -e "  nodejs.org 다운로드 페이지를 엽니다..."
+    open "https://nodejs.org/en/download" 2>/dev/null || true
+    fail "Node.js 20 LTS 설치 후 다시 실행해주세요."
   fi
 else
-  fail "Node.js가 설치되지 않음. https://nodejs.org 에서 설치 후 다시 실행."
+  warn "Node.js가 설치되어 있지 않습니다."
+  echo ""
+  echo -e "  nodejs.org 다운로드 페이지를 엽니다..."
+  open "https://nodejs.org/en/download" 2>/dev/null || true
+  fail "Node.js 20 LTS 설치 후 다시 실행해주세요."
 fi
 
 # npm
@@ -92,8 +100,22 @@ if [ -n "$CLAUDE_BIN" ]; then
   CLAUDE_VER=$($CLAUDE_BIN --version 2>/dev/null || echo "unknown")
   ok "Claude CLI: $CLAUDE_BIN ($CLAUDE_VER)"
 else
-  warn "Claude CLI가 없음. npm install -g @anthropic-ai/claude-code 로 설치하면 채팅 가능."
-  echo -e "    ${DIM}API 키만으로도 기본 동작은 합니다.${NC}"
+  warn "Claude CLI가 없습니다 (채팅 기능에 필수)"
+  echo ""
+  ask "지금 설치할까요? (Y/n) "
+  read -r install_claude
+  if [[ ! "$install_claude" =~ ^[Nn] ]]; then
+    echo -e "  ${DIM}npm install -g @anthropic-ai/claude-code ...${NC}"
+    npm install -g @anthropic-ai/claude-code 2>&1 | tail -3
+    CLAUDE_BIN=$(command -v claude 2>/dev/null || echo "")
+    if [ -n "$CLAUDE_BIN" ]; then
+      ok "Claude CLI 설치 완료: $CLAUDE_BIN"
+    else
+      warn "설치 후 PATH에서 claude를 찾지 못했습니다. 터미널을 재시작 후 확인하세요."
+    fi
+  else
+    warn "나중에 직접 설치: npm install -g @anthropic-ai/claude-code"
+  fi
 fi
 
 # ─── Step 2: Dependencies ─────────────────────
@@ -207,15 +229,17 @@ read -r WORK_DIR
 WORK_DIR="${WORK_DIR:-$HOME}"
 WORK_DIR=$(eval echo "$WORK_DIR")  # ~ 확장
 
-# agents-config.json에 workingDir 설정
-node -e "
-  const fs = require('fs');
-  const cfg = JSON.parse(fs.readFileSync('$INSTALL_DIR/agents-config.json','utf8'));
-  for (const a of Object.values(cfg.agents)) {
-    if (!a.workingDir) a.workingDir = '$WORK_DIR';
-  }
-  fs.writeFileSync('$INSTALL_DIR/agents-config.json', JSON.stringify(cfg, null, 2));
-"
+# agents-config.json에 workingDir 설정 (파일 없으면 건너뜀)
+if [ -f "$INSTALL_DIR/agents-config.json" ]; then
+  node -e "
+    const fs = require('fs');
+    const cfg = JSON.parse(fs.readFileSync('$INSTALL_DIR/agents-config.json','utf8'));
+    for (const a of Object.values(cfg.agents || {})) {
+      if (!a.workingDir) a.workingDir = '$WORK_DIR';
+    }
+    fs.writeFileSync('$INSTALL_DIR/agents-config.json', JSON.stringify(cfg, null, 2));
+  "
+fi
 
 # web-config에 allowedRoots 설정
 node -e "
@@ -314,7 +338,7 @@ else
         <key>NODE_ENV</key>
         <string>production</string>
         <key>PATH</key>
-        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <string>$HOME/.npm-global/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 </dict>
 </plist>
@@ -412,6 +436,7 @@ for i in 1 2 3 4 5 6 7 8 9 10; do
   if lsof -i :3838 -sTCP:LISTEN &>/dev/null; then
     echo ""
     ok "서버 시작 완료! (PID $SERVER_PID, port 3838)"
+    open "http://localhost:3838" 2>/dev/null || true
     break
   fi
   echo -n "."

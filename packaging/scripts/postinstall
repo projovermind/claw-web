@@ -34,17 +34,8 @@ if [ -z "$NODE_BIN" ]; then
 fi
 log "→ Node: $NODE_BIN"
 
-# ── npm install ─────────────────────────────────────────────
-log "→ npm install (서버)..."
-sudo -u "$REAL_USER" bash -c "cd '$INSTALL_DIR' && npm install --loglevel=error" >> "$LOG" 2>&1
-log "→ npm install (클라이언트)..."
-sudo -u "$REAL_USER" bash -c "cd '$INSTALL_DIR' && npm --prefix client install --loglevel=error" >> "$LOG" 2>&1
-log "✓ 의존성 설치 완료"
-
-# ── 클라이언트 빌드 ─────────────────────────────────────────
-log "→ 클라이언트 빌드..."
-sudo -u "$REAL_USER" bash -c "cd '$INSTALL_DIR' && npm run build" >> "$LOG" 2>&1
-log "✓ 빌드 완료"
+# ── 의존성·빌드는 pkg에 이미 번들됨 (별도 설치 불필요) ────────
+log "✓ 의존성·빌드 번들 확인 (node_modules + client/dist 포함)"
 
 # ── 기본 설정 파일 생성 (없을 때만) ────────────────────────
 if [ ! -f "$INSTALL_DIR/web-config.json" ]; then
@@ -101,7 +92,7 @@ cat > "$PLIST_DIR/com.claw-web.server.plist" << EOFPLIST
         <key>NODE_ENV</key>
         <string>production</string>
         <key>PATH</key>
-        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <string>$REAL_HOME/.npm-global/bin:$REAL_HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
 </dict>
 </plist>
@@ -148,6 +139,9 @@ if [ "$PASSED" -eq 0 ]; then
   log "⚠ 테스트 실패 — 서버가 15초 내 응답하지 않음"
   log "  로그 확인: tail -f /tmp/claw-web.log"
   # 설치 자체를 실패시키지는 않음 (exit 0)
+else
+  # 설치 성공 — 브라우저 자동 오픈
+  sudo -u "$REAL_USER" bash -c 'open "http://localhost:3838"' 2>/dev/null || true
 fi
 
 log ""

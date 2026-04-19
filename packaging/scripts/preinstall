@@ -2,23 +2,79 @@
 # preinstall — Node.js 20+ 확인
 set -euo pipefail
 
-if ! command -v node &>/dev/null; then
-  osascript -e 'display alert "Node.js가 필요합니다" message "https://nodejs.org 에서 Node.js 20 LTS를 설치한 후 다시 실행해주세요." as critical' 2>/dev/null || true
-  echo "ERROR: Node.js not found" >&2
+# pkg는 root로 실행됨 — homebrew/nvm 경로 직접 탐색
+NODE_BIN=""
+REAL_USER=$(stat -f "%Su" /dev/console 2>/dev/null || echo "")
+REAL_HOME=""
+if [ -n "$REAL_USER" ]; then
+  REAL_HOME=$(dscl . -read "/Users/$REAL_USER" NFSHomeDirectory 2>/dev/null | awk '{print $2}' || true)
+fi
+
+for p in \
+  "/opt/homebrew/bin/node" \
+  "/usr/local/bin/node" \
+  "/usr/bin/node" \
+  "${REAL_HOME}/.nvm/versions/node/$(ls "${REAL_HOME}/.nvm/versions/node/" 2>/dev/null | sort -V | tail -1)/bin/node"; do
+  if [ -x "$p" ]; then NODE_BIN="$p"; break; fi
+done
+
+if [ -z "$NODE_BIN" ] && command -v node &>/dev/null; then
+  NODE_BIN=$(command -v node)
+fi
+
+if [ -z "$NODE_BIN" ]; then
+  osascript <<'APPLESCRIPT' 2>/dev/null || true
+    set result to button returned of (display alert "Node.js가 필요합니다" message "Claw Web을 설치하려면 Node.js 20 LTS가 필요합니다." & return & return & "지금 nodejs.org를 열어드릴까요?" as critical buttons {"취소", "nodejs.org 열기"} default button "nodejs.org 열기")
+    if result is "nodejs.org 열기" then
+      open location "https://nodejs.org/en/download"
+    end if
+APPLESCRIPT
+  open "https://nodejs.org/en/download" 2>/dev/null || true
+  echo "ERROR: Node.js not found. Install from https://nodejs.org" >&2
   exit 1
 fi
 
-NODE_MAJOR=$(node -v | sed 's/v//' | cut -d. -f1)
+NODE_MAJOR=$("$NODE_BIN" -v | sed 's/v//' | cut -d. -f1)
 if [ "$NODE_MAJOR" -lt 20 ]; then
-  osascript -e "display alert \"Node.js 20+ 필요\" message \"현재 버전: $(node -v)\nnodejs.org 에서 업데이트 후 다시 설치해주세요.\" as critical" 2>/dev/null || true
-  echo "ERROR: Node.js 20+ required (got $(node -v))" >&2
+  CURRENT_VER=$("$NODE_BIN" -v)
+  osascript <<APPLESCRIPT 2>/dev/null || true
+    set result to button returned of (display alert "Node.js 버전 업데이트 필요" message "현재 버전: ${CURRENT_VER}" & return & "Claw Web은 Node.js 20 이상이 필요합니다." & return & return & "nodejs.org를 열어드릴까요?" as critical buttons {"취소", "nodejs.org 열기"} default button "nodejs.org 열기")
+    if result is "nodejs.org 열기" then
+      open location "https://nodejs.org/en/download"
+    end if
+APPLESCRIPT
+  open "https://nodejs.org/en/download" 2>/dev/null || true
+  echo "ERROR: Node.js 20+ required (got ${CURRENT_VER})" >&2
   exit 1
 fi
 
-if ! command -v npm &>/dev/null; then
+NPM_BIN=$(dirname "$NODE_BIN")/npm
+if [ ! -x "$NPM_BIN" ] && ! command -v npm &>/dev/null; then
   echo "ERROR: npm not found" >&2
   exit 1
 fi
 
-echo "✓ Node.js $(node -v), npm $(npm -v)"
+# ── Claude CLI 확인 (필수 — 없으면 채팅 불가) ─────────────────
+CLAUDE_FOUND=0
+for cp in \
+  "/opt/homebrew/bin/claude" \
+  "/usr/local/bin/claude" \
+  "${REAL_HOME}/.npm-global/bin/claude" \
+  "${REAL_HOME}/.local/bin/claude"; do
+  if [ -x "$cp" ]; then CLAUDE_FOUND=1; break; fi
+done
+
+if [ "$CLAUDE_FOUND" -eq 0 ]; then
+  osascript <<APPLESCRIPT 2>/dev/null || true
+    set result to button returned of (display alert "Claude CLI가 필요합니다" message "Claw Web의 채팅 기능을 사용하려면 Claude CLI가 필요합니다." & return & return & "설치 명령어:" & return & "npm install -g @anthropic-ai/claude-code" & return & return & "지금 터미널을 열어드릴까요?" as informational buttons {"나중에 설치", "터미널 열기"} default button "터미널 열기")
+    if result is "터미널 열기" then
+      tell application "Terminal"
+        activate
+        do script "npm install -g @anthropic-ai/claude-code"
+      end tell
+    end if
+APPLESCRIPT
+fi
+
+echo "✓ Node.js $("$NODE_BIN" -v) at $NODE_BIN"
 exit 0
