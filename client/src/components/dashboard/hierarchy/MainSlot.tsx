@@ -29,8 +29,10 @@ export function MainSlot({
       <SectionLabel icon={<Crown size={14} className="text-amber-400" />} label={t('hier.main')} />
       <div
         ref={setNodeRef}
-        className={`rounded-lg border border-amber-900/30 bg-gradient-to-r from-amber-900/10 to-zinc-900/30 p-3 min-h-[72px] ${
-          isOver ? 'ring-2 ring-amber-500/50' : ''
+        className={`rounded-lg border-2 p-3 min-h-[72px] transition-all ${
+          isOver
+            ? 'border-amber-400 bg-amber-500/15 ring-4 ring-amber-400/50 shadow-[0_0_24px_rgba(251,191,36,0.4)] scale-[1.01]'
+            : 'border-amber-900/30 bg-gradient-to-r from-amber-900/10 to-zinc-900/30'
         }`}
       >
         {agents.length === 0 ? (

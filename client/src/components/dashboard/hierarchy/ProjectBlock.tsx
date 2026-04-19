@@ -38,9 +38,14 @@ export function ProjectBlock({
   const leadDrop = useDroppable({ id: encProjectLead(project.id) });
   const addonDrop = useDroppable({ id: encProjectAddon(project.id) });
   const totalCount = (lead ? 1 : 0) + addons.length;
+  const anyDropActive = leadDrop.isOver || addonDrop.isOver;
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-950/40 overflow-hidden">
+    <div className={`rounded-lg border overflow-hidden transition-all ${
+      anyDropActive
+        ? 'border-emerald-500/60 bg-zinc-950/60 shadow-[0_0_24px_rgba(52,211,153,0.2)]'
+        : 'border-zinc-800 bg-zinc-950/40'
+    }`}>
       <button
         onClick={onToggleCollapse}
         className="w-full px-3 py-2 border-b border-zinc-800 flex items-center gap-2 hover:bg-zinc-900/40 transition-colors"
@@ -60,11 +65,13 @@ export function ProjectBlock({
         <div className="p-3 flex flex-col gap-3">
           <div
             ref={leadDrop.setNodeRef}
-            className={`rounded border border-dashed border-zinc-700 bg-zinc-900/30 p-2 min-h-[56px] ${
-              leadDrop.isOver ? 'ring-2 ring-zinc-500' : ''
+            className={`rounded border-2 border-dashed p-2 min-h-[56px] transition-all ${
+              leadDrop.isOver
+                ? 'border-emerald-400 bg-emerald-500/15 ring-4 ring-emerald-400/40 shadow-[0_0_20px_rgba(52,211,153,0.35)] scale-[1.01]'
+                : 'border-zinc-700 bg-zinc-900/30'
             }`}
           >
-            <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1">{t('hier.lead')}</div>
+            <div className={`text-[11px] uppercase tracking-wider mb-1 transition-colors ${leadDrop.isOver ? 'text-emerald-300 font-semibold' : 'text-zinc-500'}`}>{t('hier.lead')}{leadDrop.isOver ? ' ← 여기에 놓기' : ''}</div>
             {lead ? (
               <DragCard
                 agent={lead}
@@ -81,12 +88,14 @@ export function ProjectBlock({
           </div>
           <div
             ref={addonDrop.setNodeRef}
-            className={`rounded border border-dashed border-zinc-800 bg-zinc-900/20 p-2 min-h-[56px] ${
-              addonDrop.isOver ? 'ring-2 ring-zinc-500' : ''
+            className={`rounded border-2 border-dashed p-2 min-h-[56px] transition-all ${
+              addonDrop.isOver
+                ? 'border-sky-400 bg-sky-500/15 ring-4 ring-sky-400/40 shadow-[0_0_20px_rgba(56,189,248,0.35)] scale-[1.01]'
+                : 'border-zinc-800 bg-zinc-900/20'
             }`}
           >
-            <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1 flex items-center gap-1">
-              <Puzzle size={10} /> {t('hier.addons')}
+            <div className={`text-[11px] uppercase tracking-wider mb-1 flex items-center gap-1 transition-colors ${addonDrop.isOver ? 'text-sky-300 font-semibold' : 'text-zinc-500'}`}>
+              <Puzzle size={10} /> {t('hier.addons')}{addonDrop.isOver ? ' ← 여기에 놓기' : ''}
             </div>
             <div className="flex flex-col gap-2">
               {addons.length === 0 && (

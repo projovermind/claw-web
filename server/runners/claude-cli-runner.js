@@ -203,7 +203,7 @@ export function startClaudeRun({
   let resultUsage = null;
   let gotAnyOutput = false;
 
-  // ── 타임아웃: 120초 동안 아무 출력 없으면 kill ──
+  // ── 타임아웃: 초기 출력 없으면 kill ──
   // Claude CLI가 --resume로 깨진 세션 로드하면 무한 대기하는 문제 방지
   const IDLE_TIMEOUT_MS = 120_000;
   let idleTimer = setTimeout(() => {
@@ -218,12 +218,12 @@ export function startClaudeRun({
   function resetIdleTimer() {
     gotAnyOutput = true;
     clearTimeout(idleTimer);
-    // 출력이 있으면 5분으로 연장 (도구 실행 중일 수 있음)
+    // 출력이 있으면 30분으로 연장 (장기 위임 작업 지원)
     idleTimer = setTimeout(() => {
       logger.warn({ agent: agent.id }, 'runner: claude CLI stalled after output — killing');
       try { proc.kill('SIGTERM'); } catch { /* ignore */ }
       setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 3000);
-    }, 300_000);
+    }, 1_800_000);
   }
 
   function handleEvent(event) {
