@@ -193,15 +193,37 @@ export function createAdminRouter({ runner, eventBus }) {
       // npm prefix 를 사용자 홈으로 고정 (root 권한 없이 설치)
       const npmGlobalPrefix = path.join(os.homedir(), '.npm-global');
       await fs.mkdir(path.join(npmGlobalPrefix, 'bin'), { recursive: true }).catch(() => {});
+
+      // npm 캐시는 항상 임시 디렉토리 사용 — ~/.npm 에 root-owned 파일이
+      // 남아있으면(이전 실패 설치의 잔재) EACCES 로 설치 실패하기 때문.
+      // 임시 캐시를 쓰면 이런 이슈를 완전히 회피.
+      const npmCacheDir = path.join(os.tmpdir(), `claw-web-npm-cache-${process.pid}`);
+      await fs.mkdir(npmCacheDir, { recursive: true }).catch(() => {});
+      emit('claude.install.log', { line: `[start] npm cache=${npmCacheDir}` });
+
       await runStep(npmBin, ['config', 'set', 'prefix', npmGlobalPrefix, '--location=user']);
       await runStep(npmBin, ['config', 'set', 'omit', '', '--location=user']);
       await runStep(npmBin, ['config', 'set', 'ignore-scripts', 'false', '--location=user']);
 
       // native pkg 를 명시적으로 함께 설치 — install.cjs 가 optionalDependency 를 찾게 됨
-      const installArgs = ['install', '-g', '--include=optional', '--foreground-scripts', '@anthropic-ai/claude-code'];
+      // --cache 로 임시 캐시 강제 → ~/.npm 권한 이슈 우회
+      const installArgs = [
+        'install', '-g',
+        '--include=optional',
+        '--foreground-scripts',
+        `--cache=${npmCacheDir}`,
+        '@anthropic-ai/claude-code'
+      ];
       if (nativePkg) installArgs.push(nativePkg);
       const rc1 = await runStep(npmBin, installArgs);
       emit('claude.install.log', { line: `[exit] npm install rc=${rc1}` });
+
+      // 설치 실패 시 ~/.npm 정리 안내 (사용자 도움용)
+      if (rc1 !== 0) {
+        emit('claude.install.log', {
+          line: `\n[hint] 설치 실패. 다음 명령어를 터미널에서 실행한 후 재설치해보세요:\n         sudo chown -R $(id -u):$(id -g) ~/.npm\n         rm -rf ~/.npm/_cacache\n`
+        });
+      }
 
       // install.cjs 를 명시 실행 (wrapper stub → real native binary 교체)
       const claudeModuleDir = path.join(npmGlobalPrefix, 'lib', 'node_modules', '@anthropic-ai', 'claude-code');
