@@ -27,6 +27,7 @@ export default function ChatPage() {
   const setCurrentAgent = useChatStore((s) => s.setCurrentAgent);
   const setCurrentSession = useChatStore((s) => s.setCurrentSession);
   const runtime = useChatStore((s) => (currentSessionId ? s.runtime[currentSessionId] : undefined));
+  const startRun = useChatStore((s) => s.startRun);
   const finishRun = useChatStore((s) => s.finishRun);
 
   useEffect(() => {
@@ -153,6 +154,12 @@ export default function ChatPage() {
   const toolCalls = runtime?.toolCalls ?? [];
   const todos = runtime?.todos ?? [];
   const error = runtime?.error ?? null;
+
+  // 서버가 isRunning인데 클라이언트 runtime이 없으면 복원 (페이지 새로고침/탭 복귀 시)
+  useEffect(() => {
+    if (!currentSessionId || !sessionQ.data?.isRunning) return;
+    if (!runtime) startRun(currentSessionId);
+  }, [currentSessionId, sessionQ.data?.isRunning, runtime, startRun]);
 
   // WS chat.done 이벤트 유실 시 서버 폴링으로 스피너 자동 해제
   useEffect(() => {
@@ -295,16 +302,20 @@ export default function ChatPage() {
               {/* Right-aligned controls — all same height (h-7) */}
               <div className="ml-auto flex items-center gap-1.5 shrink-0">
                 {currentAgent?.model && (() => {
-                  // 실제 호출되는 모델명 해석: backendId의 models 맵에서 변환
                   const bid = currentAgent.backendId;
-                  const backendModels = bid ? (backendsQ.data as { backends: Record<string, { models: Record<string, string> }> })?.backends?.[bid]?.models : null;
-                  const resolvedModel = backendModels?.[currentAgent.model] ?? currentAgent.model;
+                  const allBackends = (backendsQ.data as { backends: Record<string, { models: Record<string, string> }> })?.backends ?? {};
+                  const pool = bid ? (allBackends[bid] ? [allBackends[bid]] : []) : Object.values(allBackends);
+                  let shortKey = currentAgent.model;
+                  for (const b of pool) {
+                    const found = Object.entries(b?.models ?? {}).find(([, v]) => v === currentAgent.model);
+                    if (found) { shortKey = found[0]; break; }
+                  }
                   return (
                     <div className="h-7 px-2 rounded bg-zinc-800/50 text-[11px] text-zinc-400 font-mono flex items-center gap-1">
                       {bid && bid !== 'claude' && (
                         <span className="text-emerald-400">{bid}</span>
                       )}
-                      <span>{resolvedModel}</span>
+                      <span>{shortKey}</span>
                     </div>
                   );
                 })()}
@@ -561,6 +572,17 @@ function MobileHeader({
   }, [agentStatus, agents]);
   // 세션별 unread (현재 열린 세션 제외)
   const sessionUnread = (sid: string) => !!unread[sid] && sid !== currentSessionId;
+  const isHiddenDelegation = (s: Session) => s.title?.startsWith('[위임]');
+  const runningSessions = useMemo(() => {
+    const all = allSessionsQ.data?.sessions ?? [];
+    return all.filter((s: Session) => s.isRunning && !isHiddenDelegation(s));
+  }, [allSessionsQ.data]);
+  const unreadSessions = useMemo(() => {
+    const all = allSessionsQ.data?.sessions ?? [];
+    return all.filter((s: Session) =>
+      unread[s.id] && s.id !== currentSessionId && !isHiddenDelegation(s)
+    );
+  }, [allSessionsQ.data, unread, currentSessionId]);
   // 상태 점 컴포넌트
   const StatusDot = ({ unread, running }: { unread: boolean; running: boolean }) => {
     if (!unread && !running) return null;
@@ -599,6 +621,50 @@ function MobileHeader({
         </button>
         {projOpen && (
           <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl max-h-64 overflow-y-auto z-50">
+            {/* Running sessions — 최상단 */}
+            {runningSessions.length > 0 && (
+              <>
+                <div className="px-3 py-1 text-[11px] text-amber-400 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                  {t('dashboard.stat.running')} ({runningSessions.length})
+                </div>
+                {runningSessions.map((s) => {
+                  const agent = agents.find((a) => a.id === s.agentId);
+                  return (
+                    <button key={s.id}
+                      onClick={() => { onSelectAgent(s.agentId); onSelectSession(s.id); setProjOpen(false); }}
+                      className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-zinc-800/50">
+                      <span>{agent?.avatar ?? '🤖'}</span>
+                      <span className="truncate flex-1">{s.title}</span>
+                      <span className="text-[10px] text-amber-400 shrink-0 animate-pulse">● running</span>
+                    </button>
+                  );
+                })}
+                <div className="border-t border-zinc-800" />
+              </>
+            )}
+            {/* Unread sessions */}
+            {unreadSessions.length > 0 && (
+              <>
+                <div className="px-3 py-1 text-[11px] text-sky-400 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                  읽지 않음 ({unreadSessions.length})
+                </div>
+                {unreadSessions.map((s) => {
+                  const agent = agents.find((a) => a.id === s.agentId);
+                  return (
+                    <button key={s.id}
+                      onClick={() => { onSelectAgent(s.agentId); onSelectSession(s.id); setProjOpen(false); }}
+                      className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-zinc-800/50">
+                      <span>{agent?.avatar ?? '🤖'}</span>
+                      <span className="truncate flex-1">{s.title}</span>
+                      <span className="text-[10px] text-sky-400 shrink-0">● unread</span>
+                    </button>
+                  );
+                })}
+                <div className="border-t border-zinc-800" />
+              </>
+            )}
             {/* Global agents first */}
             {globalAgents.length > 0 && (
               <>

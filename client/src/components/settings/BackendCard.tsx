@@ -56,6 +56,13 @@ export function BackendCard({
     patchModels.mutate({ ...backend.models, [key]: newVal });
   };
 
+  const renameModel = (oldKey: string, newKey: string) => {
+    const next = { ...backend.models };
+    next[newKey] = next[oldKey];
+    delete next[oldKey];
+    patchModels.mutate(next);
+  };
+
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4 space-y-2">
       <div className="flex items-start gap-2">
@@ -195,6 +202,7 @@ export function BackendCard({
                   alias={key}
                   modelId={val}
                   onUpdate={(newVal) => updateModel(key, newVal)}
+                  onRename={(newKey) => renameModel(key, newKey)}
                   onRemove={() => removeModel(key)}
                 />
               ))}

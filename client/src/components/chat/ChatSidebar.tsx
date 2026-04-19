@@ -6,15 +6,24 @@ import { useT } from '../../lib/i18n';
 import { useChatStore } from '../../store/chat-store';
 import type { Session, Agent, Project, BackendsState } from '../../lib/types';
 
-/** 실제 호출되는 모델명을 해석해서 뱃지로 표시 */
+/** 에이전트 모델 단축명 뱃지 — 풀네임/단축명 모두 단축명으로 표시 */
 function ModelBadge({ agent, backends }: { agent: Agent; backends?: BackendsState | null }) {
   const bid = (agent as { backendId?: string }).backendId;
-  const backendModels = bid ? backends?.backends?.[bid]?.models : null;
-  const resolved = backendModels?.[agent.model ?? ''] ?? agent.model;
+  // backendId 있으면 해당 백엔드만, 없으면 전체 백엔드에서 역방향 조회
+  let shortKey = agent.model;
+  if (backends?.backends && agent.model) {
+    const pool = bid
+      ? (backends.backends[bid] ? [backends.backends[bid]] : [])
+      : Object.values(backends.backends);
+    for (const b of pool) {
+      const found = Object.entries(b?.models ?? {}).find(([, v]) => v === agent.model);
+      if (found) { shortKey = found[0]; break; }
+    }
+  }
   return (
     <span className="px-1 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]">
       {bid && bid !== 'claude' && <span className="text-emerald-400 mr-1">{bid}</span>}
-      {resolved}
+      {shortKey}
     </span>
   );
 }
@@ -68,6 +77,13 @@ export function ChatSidebar({
     const all = allSessionsData?.sessions ?? [];
     return all.filter((s: Session) => s.isRunning && !isHiddenDelegation(s));
   }, [allSessionsData]);
+
+  const unreadSessions = useMemo(() => {
+    const all = allSessionsData?.sessions ?? [];
+    return all.filter((s: Session) =>
+      unread[s.id] && s.id !== currentSessionId && !isHiddenDelegation(s)
+    );
+  }, [allSessionsData, unread, currentSessionId]);
 
   // 프로젝트/에이전트별 상태 계산 (unread/running)
   // 현재 열린 세션은 unread에서 제외 (markRead race 방어)
@@ -301,6 +317,42 @@ export function ChatSidebar({
                         <div className="text-[11px] text-zinc-500 truncate">{agent?.name ?? s.agentId}</div>
                       </div>
                       <span className="text-[10px] text-amber-400 shrink-0 animate-pulse">● running</span>
+                    </button>
+                  );
+                })}
+                <div className="border-b border-zinc-800" />
+              </>
+            )}
+
+            {/* Unread sessions */}
+            {unreadSessions.length > 0 && (
+              <>
+                <div className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-sky-400 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                  읽지 않음 ({unreadSessions.length})
+                </div>
+                {unreadSessions.map((s: Session) => {
+                  const agent = agents.find((a) => a.id === s.agentId);
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => {
+                        setCurrentAgent(s.agentId);
+                        setCurrentSession(s.id);
+                        setProjectPickerOpen(false);
+                        qc.invalidateQueries({ queryKey: ['sessions', s.agentId] });
+                        qc.invalidateQueries({ queryKey: ['session', s.id] });
+                      }}
+                      className={`w-full text-left px-3 py-2 flex items-center gap-2 text-sm hover:bg-zinc-800/60 ${
+                        currentSessionId === s.id ? 'bg-zinc-800 text-white' : 'text-zinc-300'
+                      }`}
+                    >
+                      <span className="text-base">{agent?.avatar ?? '🤖'}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold truncate">{s.title}</div>
+                        <div className="text-[11px] text-zinc-500 truncate">{agent?.name ?? s.agentId}</div>
+                      </div>
+                      <span className="text-[10px] text-sky-400 shrink-0">● unread</span>
                     </button>
                   );
                 })}

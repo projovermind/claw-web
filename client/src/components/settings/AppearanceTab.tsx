@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Volume2, VolumeX, Play } from 'lucide-react';
+import { Volume2, VolumeX, Play, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { DEFAULT_APPEARANCE } from '../../hooks/useAppearance';
 import type { Appearance } from '../../hooks/useAppearance';
@@ -111,6 +111,55 @@ export function AppearanceTab() {
           >
             <Play size={11} />
             {t('appearance.soundTest')}
+          </button>
+        </div>
+      </section>
+
+      {/* 모델 별명 */}
+      <section>
+        <h3 className="text-sm font-semibold mb-1">모델 별명</h3>
+        <p className="text-xs text-zinc-500 mb-3">원본 모델명 → 표시할 별칭 매핑. ModelBadge에 반영됩니다.</p>
+        <div className="space-y-2">
+          {Object.entries(draft.modelAliases ?? {}).map(([model, alias]) => (
+            <div key={model} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={model}
+                readOnly
+                className="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-xs font-mono outline-none text-zinc-400"
+              />
+              <span className="text-zinc-600 text-xs">→</span>
+              <input
+                type="text"
+                value={alias}
+                onChange={(e) => {
+                  const next = { ...(draft.modelAliases ?? {}), [model]: e.target.value };
+                  setDraft({ ...draft, modelAliases: next });
+                }}
+                className="flex-1 bg-zinc-950 border border-zinc-700 rounded px-2 py-1.5 text-xs font-mono outline-none focus:border-sky-500"
+                placeholder="별칭"
+              />
+              <button
+                onClick={() => {
+                  const next = { ...(draft.modelAliases ?? {}) };
+                  delete next[model];
+                  setDraft({ ...draft, modelAliases: next });
+                }}
+                className="p-1.5 rounded hover:bg-red-900/40 text-zinc-500 hover:text-red-400 shrink-0"
+              >
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+          <button
+            onClick={() => {
+              const model = prompt('원본 모델명 (예: claude-opus-4-6)');
+              if (!model?.trim()) return;
+              setDraft({ ...draft, modelAliases: { ...(draft.modelAliases ?? {}), [model.trim()]: '' } });
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-zinc-700 text-xs text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
+          >
+            <Plus size={12} /> 별명 추가
           </button>
         </div>
       </section>

@@ -10,6 +10,8 @@ export interface Appearance {
   soundEnabled: boolean;
   /** 0.0 ~ 1.0 */
   soundVolume: number;
+  /** 모델 별칭 — key=원본모델명, value=표시할 별칭 */
+  modelAliases: Record<string, string>;
 }
 
 export const DEFAULT_APPEARANCE: Appearance = {
@@ -17,7 +19,8 @@ export const DEFAULT_APPEARANCE: Appearance = {
   userBubbleColor: '#3f3f46',
   assistantBubbleColor: '#18181b',
   soundEnabled: true,
-  soundVolume: 0.2
+  soundVolume: 0.2,
+  modelAliases: {}
 };
 
 /**
