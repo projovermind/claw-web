@@ -16,7 +16,11 @@ VERSION=$(node -p "require('./package.json').version")
 PKG_ID="com.claw-web"
 INSTALL_LOCATION="/usr/local/lib/claw-web"
 
-BUILD_DIR="$SCRIPT_DIR/dist/pkg-build"
+# ⚠️ BUILD_DIR 은 반드시 APFS(macOS 네이티브 FS)에 둬야 함.
+# SCRIPT_DIR 이 exFAT/FAT32/noowners 외장드라이브일 경우 chmod 가 조용히 실패해서
+# pkg 설치 후 파일이 700 권한으로 잠기는 치명적 버그 발생.
+# (2026-04-19 까지 10+ 릴리즈가 이 문제로 실패함 — /Volumes/Core 가 exFAT)
+BUILD_DIR="/tmp/claw-web-pkg-build-$$"
 OUTPUT_DIR="$SCRIPT_DIR/dist"
 
 echo ""
@@ -75,7 +79,19 @@ find "$BUILD_DIR/payload" -type d -exec chmod 755 {} \;
 find "$BUILD_DIR/payload" -type f -exec chmod 644 {} \;
 # 실행 비트가 필요한 바이너리/스크립트는 유지 (node_modules 안의 .node, .sh 등)
 find "$BUILD_DIR/payload" -type f \( -name '*.sh' -o -name '*.node' \) -exec chmod 755 {} \;
-echo "   Permissions: dirs=755, files=644 (read+execute for all)"
+
+# 검증 — 실제로 chmod 가 적용됐는지 확인 (exFAT 같은 비정상 FS 에서 실패 방지)
+SAMPLE=$(find "$BUILD_DIR/payload" -type f -name 'package.json' | head -1)
+if [ -n "$SAMPLE" ]; then
+  ACTUAL=$(stat -f '%Sp' "$SAMPLE" 2>/dev/null)
+  if [ "$ACTUAL" != "-rw-r--r--" ]; then
+    echo "❌ FATAL: chmod did not apply (got $ACTUAL, expected -rw-r--r--)"
+    echo "   BUILD_DIR=$BUILD_DIR is on a filesystem that ignores chmod."
+    echo "   Ensure BUILD_DIR is on APFS (not exFAT/FAT32)."
+    exit 1
+  fi
+fi
+echo "   Permissions: dirs=755, files=644 (verified on $SAMPLE → $ACTUAL)"
 
 # ── 3. 스크립트 복사 ──────────────────────────────────────
 cp pkg/scripts/preinstall "$BUILD_DIR/scripts/"
