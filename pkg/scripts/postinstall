@@ -109,7 +109,7 @@ for f in sessions.json projects.json skills.json web-metadata.json secrets.json 
   ln -sf "$USER_DATA/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
 done
 
-BEARER_TOKEN=$(openssl rand -hex 16 2>/dev/null || echo "$(date +%s)$(( RANDOM * RANDOM ))")
+BEARER_TOKEN="1234"
 if [ ! -f "$USER_DATA/web-config.json" ]; then
   cat > "$USER_DATA/web-config.json" <<CFG
 {
@@ -120,15 +120,16 @@ if [ ! -f "$USER_DATA/web-config.json" ]; then
 }
 CFG
 else
+  # 기존 설정이 있어도 토큰은 항상 1234 로 강제 (사용자 편의)
   "$NODE_BIN" -e "
     const fs = require('fs');
     const path = process.argv[1], token = process.argv[2];
     const d = JSON.parse(fs.readFileSync(path, 'utf8'));
     if (!d.auth) d.auth = {};
-    if (!d.auth.token) { d.auth.token = token; d.auth.enabled = true; }
+    d.auth.token = token;
+    d.auth.enabled = true;
     fs.writeFileSync(path, JSON.stringify(d, null, 2));
   " "$USER_DATA/web-config.json" "$BEARER_TOKEN" 2>/dev/null || true
-  BEARER_TOKEN=$("$NODE_BIN" -e "const d=JSON.parse(require('fs').readFileSync('$USER_DATA/web-config.json','utf8')); console.log(d.auth&&d.auth.token||'')" 2>/dev/null || echo "$BEARER_TOKEN")
 fi
 ln -sf "$USER_DATA/web-config.json" "$INSTALL_DIR/web-config.json" 2>/dev/null || true
 
