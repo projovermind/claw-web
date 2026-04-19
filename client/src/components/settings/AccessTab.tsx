@@ -4,8 +4,10 @@ import { Globe, Copy, RefreshCw, Check, AlertTriangle, Wifi, ShoppingCart, Searc
 import { api, getAuthToken } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 
-function TunnelUrlCard() {
-  const t = useT();
+// ═══════════════════════════════════════════════════════════════
+// QuickUrlCard — 유동 URL (Quick Tunnel, trycloudflare.com)
+// ═══════════════════════════════════════════════════════════════
+function QuickUrlCard() {
   const { data, refetch, isFetching } = useQuery({
     queryKey: ['tunnel-url'],
     queryFn: api.tunnelUrl,
@@ -26,39 +28,96 @@ function TunnelUrlCard() {
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
       <div className="flex items-center gap-2">
-        <Globe size={14} className="text-emerald-400" />
-        <div className="text-sm font-semibold text-zinc-300">{t('access.tunnelTitle')}</div>
+        <Globe size={14} className="text-sky-400" />
+        <div className="text-sm font-semibold text-zinc-300">유동 URL (Quick Tunnel)</div>
+        <span className="text-[10px] px-2 py-0.5 rounded bg-sky-900/40 text-sky-300">임시</span>
         <button
           onClick={() => refetch()}
           disabled={isFetching}
           className="ml-auto p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300"
-          title={t('access.refresh')}
+          title="새로고침"
         >
           <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
         </button>
       </div>
+      <p className="text-[11px] text-zinc-500 leading-snug">
+        서버 기동 시 자동 구축되는 <code className="text-sky-300">*.trycloudflare.com</code> 주소. 재시작하면 URL 이 바뀝니다.
+      </p>
       {url ? (
-        <>
-          <div className="flex gap-2">
-            <code className="flex-1 text-xs font-mono bg-zinc-950 border border-zinc-800 rounded px-3 py-2 truncate select-all">
-              {url}
-            </code>
-            <button
-              onClick={copy}
-              className="rounded bg-zinc-800 hover:bg-zinc-700 px-3 text-xs flex items-center gap-1.5 shrink-0"
-            >
-              {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-              {copied ? t('access.copied') : t('access.copy')}
-            </button>
-          </div>
-          <p className="text-[11px] text-zinc-500 leading-snug">
-            {t('access.tunnelHint')}
-          </p>
-        </>
-      ) : (
-        <div className="text-xs text-zinc-500 italic">
-          {t('access.tunnelPreparing')}
+        <div className="flex gap-2">
+          <code className="flex-1 text-xs font-mono bg-zinc-950 border border-zinc-800 rounded px-3 py-2 truncate select-all">
+            {url}
+          </code>
+          <button
+            onClick={copy}
+            className="rounded bg-zinc-800 hover:bg-zinc-700 px-3 text-xs flex items-center gap-1.5 shrink-0"
+          >
+            {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+            {copied ? '복사됨' : '복사'}
+          </button>
         </div>
+      ) : (
+        <div className="text-xs text-zinc-500 italic">유동 URL 준비 중... (cloudflared 가 설치되어 있어야 자동 구축됨)</div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FixedUrlCard — 고정 URL (Cloudflare Named Tunnel hostname)
+// ═══════════════════════════════════════════════════════════════
+function FixedUrlCard() {
+  const { data, refetch, isFetching } = useQuery<TunnelCfStatus>({
+    queryKey: ['cf-tunnel-status'],
+    queryFn: () => fetch('/api/admin/tunnel/cf/status', { headers: authHeaders() }).then((r) => r.json()),
+    refetchInterval: 15000
+  });
+  const [copied, setCopied] = useState(false);
+  const url = data?.hostname ? `https://${data.hostname}` : null;
+  const configured = !!(data?.tunnelId && data?.hostname && data?.plistInstalled);
+
+  const copy = async () => {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Link size={14} className="text-emerald-400" />
+        <div className="text-sm font-semibold text-zinc-300">고정 URL (Named Tunnel)</div>
+        <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-300">영구</span>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching}
+          className="ml-auto p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300"
+          title="새로고침"
+        >
+          <RefreshCw size={12} className={isFetching ? 'animate-spin' : ''} />
+        </button>
+      </div>
+      <p className="text-[11px] text-zinc-500 leading-snug">
+        자신의 도메인(<code className="text-emerald-300">claw.mydomain.com</code>)으로 연결되는 영구 URL. 재부팅해도 고정.
+      </p>
+      {configured && url ? (
+        <div className="flex gap-2">
+          <code className="flex-1 text-xs font-mono bg-zinc-950 border border-zinc-800 rounded px-3 py-2 truncate select-all">
+            {url}
+          </code>
+          <button
+            onClick={copy}
+            className="rounded bg-zinc-800 hover:bg-zinc-700 px-3 text-xs flex items-center gap-1.5 shrink-0"
+          >
+            {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+            {copied ? '복사됨' : '복사'}
+          </button>
+        </div>
+      ) : (
+        <div className="text-xs text-zinc-500 italic">고정 URL 미설정 — 아래 "고정 URL 구축" 카드에서 도메인 연결하세요.</div>
       )}
     </div>
   );
@@ -793,15 +852,23 @@ function UpdateCheckCard() {
               )}
             </>
           )}
-          {!data.hasUpdate && data.releaseUrl && (
-            <a
-              href={data.releaseUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[11px] text-zinc-500 hover:text-zinc-300 underline inline-flex items-center gap-1"
-            >
-              <ExternalLink size={10} /> GitHub 릴리즈 페이지
-            </a>
+          {!data.hasUpdate && (
+            <>
+              <div className="text-xs rounded px-3 py-2 bg-emerald-900/20 text-emerald-300 flex items-center gap-2">
+                <Check size={12} />
+                <span>최신 버전입니다. 업데이트가 필요하지 않습니다.</span>
+              </div>
+              {data.releaseUrl && (
+                <a
+                  href={data.releaseUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] text-zinc-500 hover:text-zinc-300 underline inline-flex items-center gap-1"
+                >
+                  <ExternalLink size={10} /> GitHub 릴리즈 페이지
+                </a>
+              )}
+            </>
           )}
         </div>
       )}
@@ -825,7 +892,8 @@ export function AccessTab() {
   return (
     <div className="space-y-5 max-w-2xl">
       <UpdateCheckCard />
-      <TunnelUrlCard />
+      <FixedUrlCard />
+      <QuickUrlCard />
       <NamedTunnelCard />
       <DomainConnectCard />
       <DomainManagerCard />

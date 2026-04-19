@@ -109,18 +109,13 @@ function spawnTunnel(type, domain = null) {
 /**
  * 서버 기동 시 자동으로 임시 cloudflared 터널을 띄움.
  * - cloudflared 없으면 skip
- * - Named Tunnel 이 이미 구성돼있거나(tunnel-url.txt 존재 & https 시작) 터널이 이미 실행 중이면 skip
+ * - 이미 quick tunnel 실행 중이면 skip
+ * - Named Tunnel(고정) 과는 독립 — 둘 다 동시 구동 가능
  */
 export async function autoStartQuickTunnel({ logger } = {}) {
   const log = logger || console;
   try {
     if (tunnelState.running) return { skipped: 'already-running' };
-
-    // 이미 Named Tunnel 등으로 URL 설정돼있으면 건드리지 않음
-    try {
-      const raw = await fs.readFile(URL_FILE, 'utf8');
-      if (raw.trim().startsWith('http')) return { skipped: 'existing-url' };
-    } catch { /* 파일 없음 — 진행 */ }
 
     const bin = findCloudflaredBin();
     if (!bin) {
