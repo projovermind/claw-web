@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -91,6 +91,15 @@ export function AgentModal({
         }
       : emptyAgentForm()
   );
+  // form.model이 전체 ID('claude-sonnet-4-6')로 저장된 경우 → alias('sonnet')로 정규화
+  useEffect(() => {
+    if (!backendsState) return;
+    const b = backendsState.backends?.[form.backend];
+    if (!b?.models) return;
+    const alias = Object.entries(b.models).find(([, v]) => v === form.model)?.[0];
+    if (alias && alias !== form.model) setForm((f) => ({ ...f, model: alias }));
+  }, [backendsState, form.backend]);
+
   // Models available for the currently selected backend
   const availableModels = useMemo(() => {
     const b = backendsState?.backends?.[form.backend];

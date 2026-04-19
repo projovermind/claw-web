@@ -85,10 +85,11 @@ export function createRunner({ processTracker } = {}) {
         }
         parts.push('\n---\n');
       }
-      // 프레임워크 자동 주입: BASE → CARL → PAUL → 에이전트 MD → Dashboard(마지막 고정)
+      // 프레임워크 자동 주입: BASE → CARL → PAUL → ProjectMemory → 에이전트 MD → Dashboard(마지막 고정)
       if (agent.baseContext) parts.push(agent.baseContext);
       if (agent.carlContext) parts.push(agent.carlContext);
       if (agent.paulContext) parts.push(agent.paulContext);
+      if (agent.projectMemory) parts.push(`\n<project-memory>\n${agent.projectMemory}\n</project-memory>`);
       if (agent.choicesHint) parts.push(agent.choicesHint);
       if (agent.delegateHint) parts.push(agent.delegateHint);
       if (agent.systemPrompt) parts.push(agent.systemPrompt);

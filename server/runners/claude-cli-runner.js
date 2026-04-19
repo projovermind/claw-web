@@ -147,10 +147,11 @@ export function startClaudeRun({
     }
     parts.push('\n---\n');
   }
-  // 프레임워크 자동 주입 순서: BASE → CARL → PAUL → Dashboard
+  // 프레임워크 자동 주입 순서: BASE → CARL → PAUL → ProjectMemory → Dashboard
   if (agent.baseContext) parts.push(agent.baseContext);
   if (agent.carlContext) parts.push(agent.carlContext);
   if (agent.paulContext) parts.push(agent.paulContext);
+  if (agent.projectMemory) parts.push(`\n<project-memory>\n${agent.projectMemory}\n</project-memory>`);
   if (agent.dashboardHint) parts.push(agent.dashboardHint);
   if (agent.choicesHint) parts.push(agent.choicesHint);
   if (agent.delegateHint) parts.push(agent.delegateHint);

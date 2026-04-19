@@ -113,6 +113,28 @@ export function createProjectsRouter({ projectsStore, configStore, metadataStore
     } catch (err) { next(err); }
   });
 
+  // 프로젝트 메모리 읽기 (에이전트/UI 공용)
+  router.get('/:id/memory', (req, res, next) => {
+    try {
+      const project = projectsStore.getById(req.params.id);
+      if (!project) return next(new HttpError(404, 'Project not found', 'PROJECT_NOT_FOUND'));
+      res.json({ memory: project.dashboard?.memory ?? '' });
+    } catch (err) { next(err); }
+  });
+
+  // 프로젝트 메모리 업데이트 (에이전트 curl 직접 호출용)
+  router.put('/:id/memory', async (req, res, next) => {
+    try {
+      const project = projectsStore.getById(req.params.id);
+      if (!project) return next(new HttpError(404, 'Project not found', 'PROJECT_NOT_FOUND'));
+      const dashboard = project.dashboard ?? { notes: '', goals: [], widgets: [] };
+      dashboard.memory = req.body.memory ?? '';
+      await projectsStore.update(req.params.id, { dashboard });
+      if (eventBus) eventBus.publish('project.updated', { project: { ...project, dashboard } });
+      res.json({ memory: dashboard.memory });
+    } catch (err) { next(err); }
+  });
+
   // 메모 업데이트
   router.put('/:id/notes', async (req, res, next) => {
     try {

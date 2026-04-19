@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { Project, Agent, GoalCard, CustomWidget, ProjectDashboard as DashboardData } from '../../lib/types';
 import { NotesEditor } from './NotesEditor';
+import { ProjectMemory } from './ProjectMemory';
 import { GoalBoard } from './GoalBoard';
 import { AgentTimeline } from './AgentTimeline';
 import { AgentTokenStats } from './AgentTokenStats';
@@ -37,6 +38,12 @@ export function ProjectDashboard({
           <div className="text-[11px] text-zinc-500 font-mono">{project.path}</div>
         </div>
       </div>
+
+      {/* 프로젝트 메모리 (에이전트 운영 컨텍스트) */}
+      <ProjectMemory
+        memory={dashboard.memory ?? ''}
+        onSave={(memory) => save.mutate({ memory })}
+      />
 
       {/* 메모 */}
       <NotesEditor

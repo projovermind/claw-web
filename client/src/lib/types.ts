@@ -80,6 +80,7 @@ export interface ProjectDashboard {
   notes: string;
   goals: GoalCard[];
   widgets: CustomWidget[];
+  memory?: string;
 }
 
 export interface Project {

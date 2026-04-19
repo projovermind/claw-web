@@ -37,6 +37,12 @@ export function createChatRouter({
   const retryCounters = new Map();
   const MAX_AUTO_RETRIES = 3;
 
+  // ── 위임 재진입 카운터 ──
+  // originSessionId → number (위임 완료 후 기획자 자동 재진입 횟수)
+  // 새 유저 메시지 수신 시 리셋
+  const reEntryCounters = new Map();
+  const MAX_REENTRY = 8;
+
   /**
    * 에러 메시지를 분류해 자동 재시도 전략을 반환.
    * @returns {{ canRetry: boolean, delay: number, label: string }}
@@ -209,6 +215,15 @@ export function createChatRouter({
     if (isFirstMsg) {
       const baseCtx = buildBaseContext(agent.workingDir);
       if (baseCtx) agent.baseContext = baseCtx;
+
+      // ProjectMemory: 프로젝트 운영 컨텍스트 (경로, 배포, 작업 히스토리)
+      // 첫 메시지에만 주입 → 토큰 최소화
+      const agentMeta = metadataStore?.getAgent(session.agentId);
+      if (agentMeta?.projectId && projectsStore) {
+        const proj = projectsStore.getById(agentMeta.projectId);
+        const memory = proj?.dashboard?.memory?.trim();
+        if (memory) agent.projectMemory = memory;
+      }
     }
     // CARL: 키워드 매칭 규칙 (매 메시지)
     const carlContext = buildCarlContext(agent.workingDir, message);
@@ -218,20 +233,23 @@ export function createChatRouter({
     if (paulCtx) agent.paulContext = paulCtx;
 
     // 대시보드 API 안내: 프로젝트 소속 에이전트에게 대시보드 조작 방법 주입
+    // 위임된 워커 에이전트는 대시보드/위임 힌트 불필요 — 토큰 절약
+    const isWorkerSession = session.isDelegation === true;
     const meta = metadataStore?.getAgent(session.agentId);
-    if (meta?.projectId) {
+    if (!isWorkerSession && meta?.projectId) {
       const isLead = meta.tier === 'project';
       const leadPrefix = isLead
         ? `당신은 이 프로젝트의 리드 에이전트입니다. 작업 시작/완료/진행 상황을 반드시 대시보드에 기록하세요. 목표는 시작 시 todo로 추가하고, 완료 시 done으로 갱신하세요. 위젯/메모도 적극 활용하세요.\n`
         : `작업 완료 시 반드시 프로젝트 대시보드를 업데이트하세요. 작업 시작 시 goal을 todo로 추가하고, 완료 시 done으로 갱신하세요.\n`;
-      agent.dashboardHint = `\n<dashboard-api>\n${leadPrefix}- 목표 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/goals -H "Content-Type: application/json" -d '{"title":"목표","status":"todo"}'\n- 목표 완료: curl -s -X PATCH http://localhost:3838/api/projects/${meta.projectId}/goals/GOAL_ID -H "Content-Type: application/json" -d '{"status":"done"}'\n- 위젯 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/widgets -H "Content-Type: application/json" -d '{"type":"link","title":"제목","value":"URL"}'\n- 메모 수정: curl -s -X PUT http://localhost:3838/api/projects/${meta.projectId}/notes -H "Content-Type: application/json" -d '{"notes":"내용"}'\n</dashboard-api>`;
+      agent.dashboardHint = `\n<dashboard-api>\n${leadPrefix}- 목표 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/goals -H "Content-Type: application/json" -d '{"title":"목표","status":"todo"}'\n- 목표 완료: curl -s -X PATCH http://localhost:3838/api/projects/${meta.projectId}/goals/GOAL_ID -H "Content-Type: application/json" -d '{"status":"done"}'\n- 위젯 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/widgets -H "Content-Type: application/json" -d '{"type":"link","title":"제목","value":"URL"}'\n- 메모 수정: curl -s -X PUT http://localhost:3838/api/projects/${meta.projectId}/notes -H "Content-Type: application/json" -d '{"notes":"내용"}'\n- 프로젝트 메모리 업데이트: curl -s -X PUT http://localhost:3838/api/projects/${meta.projectId}/memory -H "Content-Type: application/json" -d '{"memory":"내용"}'\n\n프로젝트 메모리는 모든 에이전트가 세션 시작 시 읽는 운영 컨텍스트입니다. 작업 완료 시 핵심 경로/배포 방식/최근 작업 내역을 반드시 업데이트하세요. 1500자 이하로 유지하세요.\n</dashboard-api>`;
     }
 
     // 선택지 버튼 UI 힌트: 여러 옵션 중 하나 고르게 할 때 <choices> 태그 사용
     agent.choicesHint = `\n<ui-hints>\n이 세션은 비대화형(-p) 모드 입니다. AskUserQuestion / ExitPlanMode 같은 대화형 툴은 호출하지 마세요 — 응답이 '취소됨' 으로 돌아와 작업이 애매하게 종료됩니다.\n\n사용자에게 질문하거나 선택지를 주고 싶을 때는 반드시 응답 끝에 <choices> 태그로 감싸서 제공하세요. UI 에서 버튼으로 렌더링됩니다.\n가장 추천하는 옵션 하나에 ⭐ 마커를 앞에 붙이면 추천 배지로 강조됩니다. (또는 [추천] / (추천) 태그도 가능)\n예시:\n<choices>\n- ⭐ 옵션 A (가장 추천)\n- 옵션 B\n- 옵션 C\n</choices>\n\n사용자 승인이 필요한 플랜을 세운 경우에도 ExitPlanMode 대신: (1) 플랜 본문 마크다운으로 작성 → (2) 끝에 <choices> 로 "바로 실행" / "수정 필요" / "보류" 제시.\n</ui-hints>`;
 
     // 위임 포맷 안내: 같은 프로젝트 내 다른 에이전트 ID + JSON 포맷 자동 주입
-    {
+    // 위임된 워커 에이전트는 스킵 (재위임 불필요 + 토큰 절약)
+    if (!isWorkerSession) {
       const allAgents = configStore.getAgents?.() || {};
       const sameProject = [];
       const selfMeta = metadataStore?.getAgent(session.agentId);
@@ -249,7 +267,7 @@ export function createChatRouter({
         ? sameProject.map(a => `- ${a.id}${a.name && a.name !== a.id ? ` (${a.name})` : ''}`).join('\n')
         : '- (동일 프로젝트 내 다른 에이전트 없음 — 필요 시 범용 planner_office 또는 다른 프로젝트 에이전트 ID 사용)';
       agent.delegateHint = `\n<delegation>\n다른 에이전트에게 작업을 맡기려면 응답에 아래 JSON을 포함하세요 (코드블록 안이어도 됨):\n\n\`\`\`json\n{"message": "짧은 안내", "delegate": {"agent": "실제_에이전트_ID", "task": "작업 설명(200자 이내)", "model": "glm-5.1 또는 sonnet/opus", "loop": false}}\n\`\`\`\n\n중요:\n- agent ID는 반드시 실제 등록된 ID(언더스코어 표기). 점(.)/대시(-) 표기는 자동 정규화되지만 혼동 방지를 위해 언더스코어 권장.\n- task 는 한국어 200자 이내 요약. 파일 전체 본문을 붙여넣지 마세요.\n- loop:true 면 Ralph Loop 모드 (DONE 출력까지 반복).\n- "새 세션을 열어 붙여넣으세요" 같은 우회 응답 금지 — 직접 이 JSON 을 출력하세요.\n\n같은 프로젝트 내 위임 가능 에이전트:\n${delegateTargets}\n</delegation>`;
-    }
+    } // end !isWorkerSession delegateHint
 
     let accumText = '';
     const toolCalls = [];
@@ -346,14 +364,12 @@ export function createChatRouter({
                   }
 
                   // 2. 기획자 자동 재진입 — 결과 검토 + 사용자 보고 + 다음 단계 제안
-                  //    (무한 루프 방지: 직전에 이미 트리거된 경우 스킵)
+                  //    (무한 루프 방지: 기획자가 이미 실행 중이면 스킵)
                   try {
-                    const origin = sessionsStore.get(completed.originSessionId);
-                    const msgs = origin?.messages ?? [];
-                    const recentTrigger = msgs.slice(-4).some((m) =>
-                      m?.role === 'user' && (m.content || '').startsWith('[위임 결과 보고]')
-                    );
-                    if (!recentTrigger) {
+                    const alreadyRunning = runner.isRunning(completed.originSessionId);
+                    const reEntryCount = (reEntryCounters.get(completed.originSessionId) ?? 0) + 1;
+                    if (!alreadyRunning && reEntryCount <= MAX_REENTRY) {
+                      reEntryCounters.set(completed.originSessionId, reEntryCount);
                       const trigger =
                         `[위임 결과 보고]\n\n` +
                         `**대상 에이전트**: ${completed.targetAgentId}\n` +
@@ -368,8 +384,14 @@ export function createChatRouter({
                         content: trigger
                       });
                       sendRunnerMessage(completed.originSessionId, trigger);
+                    } else if (reEntryCount > MAX_REENTRY) {
+                      logger.warn({ originSessionId: completed.originSessionId, reEntryCount }, 'delegation re-entry limit exceeded — stopping auto-chain');
+                      await sessionsStore.appendMessage(completed.originSessionId, {
+                        role: 'assistant',
+                        content: `⚠️ **위임 자동 진행 한계 도달** (${reEntryCount - 1}/${MAX_REENTRY}회) — 무한 루프 방지를 위해 자동 진행을 중단합니다. 다음 단계를 직접 지시해 주세요.`
+                      });
                     } else {
-                      logger.info({ originSessionId: completed.originSessionId }, 'delegation re-entry skipped (recent trigger)');
+                      logger.info({ originSessionId: completed.originSessionId }, 'delegation re-entry skipped (planner already running)');
                     }
                   } catch (err) {
                     logger.warn({ err: err.message }, 'delegation re-entry failed');
@@ -853,6 +875,8 @@ export function createChatRouter({
         });
       }
 
+      // 새 유저 메시지 수신 시 재진입 카운터 리셋 (사용자가 직접 개입한 것)
+      reEntryCounters.delete(sessionId);
       sendRunnerMessage(sessionId, augmentedMessage);
       res.status(202).json({ sessionId, status: 'started' });
     } catch (err) {
