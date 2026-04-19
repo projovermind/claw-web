@@ -288,7 +288,7 @@ async function main() {
   app.use('/api/activity', createActivityRouter({ activityLog }));
   app.use('/api/fs', createFsBrowserRouter({ webConfig }));
   app.use('/api/tunnel', createTunnelRouter());
-  app.use('/api/admin', createAdminRouter({ runner }));
+  app.use('/api/admin', createAdminRouter({ runner, eventBus }));
   app.use('/api/domain', createDomainRouter({ secretsStore }));
   app.use('/api/settings', createSettingsRouter({ webConfig, webConfigPath: WEB_CONFIG_PATH, eventBus }));
   app.use('/api/push', createPushRouter({ pushStore }));

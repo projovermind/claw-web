@@ -1,28 +1,25 @@
 #!/bin/bash
-# Claw Web — postinstall: 초보자용 대화형 설치
+# Claw Web — postinstall (최소화 버전 v1.2.43)
+# - 파일 권한 고정 + 데이터 디렉토리 + LaunchAgent 만 수행
+# - Claude CLI 설치/인증/터널 설정은 웹 UI Settings 에서 사용자가 직접 처리
 set -e
 
-# 한글 깨짐 방지
 export LANG=en_US.UTF-8
 export LC_ALL=en_US.UTF-8
 export LANGUAGE=en_US.UTF-8
 
-DEFAULT_INSTALL_DIR="/usr/local/lib/claw-web"
+INSTALL_DIR="/usr/local/lib/claw-web"
 LOG="/tmp/claw-web-install.log"
-
 echo "[postinstall] $(date)" >> "$LOG"
 
-INSTALL_DIR="$DEFAULT_INSTALL_DIR"
-
-# ── 경로 확보 ────────────────────────────────────────────
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:$PATH"
 
-# 유저 감지 먼저 (node 탐색이 ~/.nvm 등 홈 경로 확인해야 함)
+# ── 사용자 / 홈 감지 ─────────────────────────────────────
 REAL_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "$SUDO_USER")
 REAL_HOME=$(eval echo "~$REAL_USER" 2>/dev/null)
 [ -z "$REAL_HOME" ] || [ "$REAL_HOME" = "~" ] && REAL_HOME="$HOME"
 
-# Node.js 경로 탐색 (preinstall 과 동일 로직 + fnm/asdf 추가)
+# ── Node.js 탐색 (brew / nvm / volta / fnm / asdf) ───────
 find_node() {
   for p in \
     /opt/homebrew/bin/node \
@@ -37,37 +34,29 @@ find_node() {
   if [ -d "$REAL_HOME/.nvm/versions/node" ]; then
     local latest
     latest=$(ls -1 "$REAL_HOME/.nvm/versions/node" 2>/dev/null | sort -V | tail -1)
-    if [ -n "$latest" ] && [ -x "$REAL_HOME/.nvm/versions/node/$latest/bin/node" ]; then
+    [ -n "$latest" ] && [ -x "$REAL_HOME/.nvm/versions/node/$latest/bin/node" ] && \
       echo "$REAL_HOME/.nvm/versions/node/$latest/bin/node" && return 0
-    fi
   fi
   [ -x "$REAL_HOME/.volta/bin/node" ] && echo "$REAL_HOME/.volta/bin/node" && return 0
   if [ -d "$REAL_HOME/.local/share/fnm/node-versions" ]; then
     local latest
     latest=$(ls -1 "$REAL_HOME/.local/share/fnm/node-versions" 2>/dev/null | sort -V | tail -1)
-    if [ -n "$latest" ] && [ -x "$REAL_HOME/.local/share/fnm/node-versions/$latest/installation/bin/node" ]; then
+    [ -n "$latest" ] && [ -x "$REAL_HOME/.local/share/fnm/node-versions/$latest/installation/bin/node" ] && \
       echo "$REAL_HOME/.local/share/fnm/node-versions/$latest/installation/bin/node" && return 0
-    fi
   fi
   if [ -d "$REAL_HOME/.asdf/installs/nodejs" ]; then
     local latest
     latest=$(ls -1 "$REAL_HOME/.asdf/installs/nodejs" 2>/dev/null | sort -V | tail -1)
-    if [ -n "$latest" ] && [ -x "$REAL_HOME/.asdf/installs/nodejs/$latest/bin/node" ]; then
+    [ -n "$latest" ] && [ -x "$REAL_HOME/.asdf/installs/nodejs/$latest/bin/node" ] && \
       echo "$REAL_HOME/.asdf/installs/nodejs/$latest/bin/node" && return 0
-    fi
   fi
   command -v node 2>/dev/null
 }
 
 NODE_BIN=$(find_node)
-
-# 실행 가능 검증 (아키텍처 mismatch, 깨진 심볼릭 등 감지)
 if [ -n "$NODE_BIN" ] && ! "$NODE_BIN" --version >/dev/null 2>&1; then
-  echo "[postinstall] NODE_BIN=$NODE_BIN fails --version; invalidating" >> "$LOG"
   NODE_BIN=""
 fi
-
-# 치명적 실패 시 명확한 에러 (preinstall 이 이미 체크하지만 방어적으로)
 if [ -z "$NODE_BIN" ]; then
   osascript -e 'display dialog "Node.js 를 찾을 수 없습니다.\nhttps://nodejs.org 에서 설치 후 다시 시도하세요." buttons {"확인"} default button 1 with icon stop with title "Claw Web"' 2>/dev/null || true
   echo "[postinstall] FATAL: Node.js not found" >> "$LOG"
@@ -75,148 +64,36 @@ if [ -z "$NODE_BIN" ]; then
 fi
 
 NODE_DIR=$(dirname "$NODE_BIN")
-NPM_BIN="$NODE_DIR/npm"
-[ ! -x "$NPM_BIN" ] && NPM_BIN=$(command -v npm 2>/dev/null || echo "$NODE_DIR/npm")
-
-BREW_BIN=""
-for bp in /opt/homebrew/bin/brew /usr/local/bin/brew; do
-  [ -x "$bp" ] && BREW_BIN="$bp" && break
-done
-
-echo "[postinstall] node=$NODE_BIN version=$("$NODE_BIN" --version 2>/dev/null) npm=$NPM_BIN brew=$BREW_BIN" >> "$LOG"
 USER_DATA="$REAL_HOME/.claw-web"
 PLIST_DIR="$REAL_HOME/Library/LaunchAgents"
 mkdir -p "$USER_DATA" "$PLIST_DIR"
-echo "[postinstall] real user=$REAL_USER home=$REAL_HOME" >> "$LOG"
+echo "[postinstall] node=$NODE_BIN home=$REAL_HOME user=$REAL_USER" >> "$LOG"
 
-# ── 헬퍼: 알림 ───────────────────────────────────────────
 notify() {
-  local msg="$1"
-  osascript -e "display notification \"$msg\" with title \"Claw Web 설치 중\"" 2>/dev/null || true
-  echo "[postinstall] $msg" >> "$LOG"
+  osascript -e "display notification \"$1\" with title \"Claw Web 설치 중\"" 2>/dev/null || true
+  echo "[postinstall] $1" >> "$LOG"
 }
-
-# 헬퍼: 사용자 컨텍스트로 실행 (homebrew, claude 로그인 등)
-as_user() {
-  su "$REAL_USER" -c "$1" 2>> "$LOG" || true
-}
+as_user() { su "$REAL_USER" -c "$1" 2>> "$LOG" || true; }
 
 # ═══════════════════════════════════════════════════════
-# Step 1. node_modules + client/dist 이미 번들됨 — 소유권만 정리
+# Step 1. 파일 소유권 + 권한 (v1.2.43 핵심 fix)
 # ═══════════════════════════════════════════════════════
+# pkg payload 가 root:wheel 로 설치되면 user 접근 불가. user 소유로 넘기고
+# 모든 파일에 read+execute 권한 보장.
 notify "① 파일 준비 중..."
-cd "$INSTALL_DIR"
-chown -R "$REAL_USER" "$INSTALL_DIR" 2>/dev/null || true
+chown -R "$REAL_USER:staff" "$INSTALL_DIR" 2>/dev/null || true
+chmod -R a+rX "$INSTALL_DIR" 2>/dev/null || true
+echo "[postinstall] permissions set: owner=$REAL_USER mode=a+rX" >> "$LOG"
 
-# ═══════════════════════════════════════════════════════
-# Step 2. Claude CLI 자동 설치
-# ═══════════════════════════════════════════════════════
-# claude v2.1.70+ 에는 install.cjs 가 없음.
-# "native binary not installed" 에러 = optionalDependencies (@img/sharp-*) 미설치
-# → npm 설치 시 --include=optional 명시 + sharp 바이너리 존재 검증 필수
-
-ARCH=$(uname -m)   # arm64 | x86_64
-case "$ARCH" in
-  arm64)  SHARP_PKG="@img/sharp-darwin-arm64" ; SHARP_LIBVIPS="@img/sharp-libvips-darwin-arm64" ;;
-  x86_64) SHARP_PKG="@img/sharp-darwin-x64"   ; SHARP_LIBVIPS="@img/sharp-libvips-darwin-x64"   ;;
-  *)      SHARP_PKG="@img/sharp-darwin-arm64" ; SHARP_LIBVIPS="@img/sharp-libvips-darwin-arm64" ;;
-esac
-echo "[postinstall] arch=$ARCH sharp=$SHARP_PKG" >> "$LOG"
-
-# 기존 claude 동작 검증 함수 — 설치는 됐지만 sharp 바이너리 없으면 broken
-check_claude_works() {
-  local bin="$1"
-  [ -x "$bin" ] || return 1
-  # --version 이 정상 숫자 출력하면 OK (native binary load 실패 시 stderr 에러 + 비정상 exit)
-  local ver
-  ver=$(su "$REAL_USER" -c "export HOME='$REAL_HOME'; '$bin' --version 2>&1" 2>/dev/null)
-  echo "$ver" | grep -qE '^[0-9]+\.[0-9]+' && ! echo "$ver" | grep -qi "native binary"
-}
-
-# 기존 설치 탐색 + 검증
-CLAUDE_BIN=""
-for p in \
-  "$REAL_HOME/.npm-global/bin/claude" \
-  /usr/local/bin/claude \
-  /opt/homebrew/bin/claude \
-  "$REAL_HOME/.local/bin/claude"; do
-  if check_claude_works "$p"; then
-    CLAUDE_BIN="$p"
-    echo "[postinstall] existing claude OK at $p" >> "$LOG"
-    break
-  fi
-done
-
-if [ -z "$CLAUDE_BIN" ]; then
-  notify "③ Claude CLI 설치 중..."
-
-  # 사용자 전역 npm prefix 준비 (~/.npm-global) — root 환경 HOME 문제 회피
-  as_user "mkdir -p '$REAL_HOME/.npm-global/bin'"
-  as_user "'$NPM_BIN' config set prefix '$REAL_HOME/.npm-global' --location=user" 2>> "$LOG" || \
-    as_user "'$NPM_BIN' config set prefix '$REAL_HOME/.npm-global'" 2>> "$LOG" || true
-  # 사용자 .npmrc 에서 optional dep 를 배제하는 설정이 있으면 덮어씀
-  as_user "'$NPM_BIN' config set omit '' --location=user" 2>> "$LOG" || true
-  as_user "'$NPM_BIN' config set ignore-scripts false --location=user" 2>> "$LOG" || true
-
-  # REAL_USER 권한 + HOME=REAL_HOME + --include=optional 로 설치
-  # --foreground-scripts 로 lifecycle 스크립트가 확실히 실행되게 함
-  echo "[postinstall] installing @anthropic-ai/claude-code + $SHARP_PKG as $REAL_USER..." >> "$LOG"
-  as_user "export HOME='$REAL_HOME'; \
-           export PATH='$NODE_DIR:$REAL_HOME/.npm-global/bin:/usr/local/bin:/opt/homebrew/bin:\$PATH'; \
-           '$NPM_BIN' install -g --include=optional --foreground-scripts \
-             @anthropic-ai/claude-code $SHARP_PKG $SHARP_LIBVIPS" 2>> "$LOG" || true
-
-  # 설치 후 재탐색
-  for p in \
-    "$REAL_HOME/.npm-global/bin/claude" \
-    /usr/local/bin/claude \
-    /opt/homebrew/bin/claude \
-    "$REAL_HOME/.local/bin/claude"; do
-    if [ -x "$p" ]; then CLAUDE_BIN="$p"; break; fi
-  done
-
-  # sharp 바이너리 실제 존재 검증 — 없으면 강제 추가 설치
-  CLAUDE_MODULE="$REAL_HOME/.npm-global/lib/node_modules/@anthropic-ai/claude-code"
-  if [ -d "$CLAUDE_MODULE" ] && [ ! -d "$CLAUDE_MODULE/node_modules/$SHARP_PKG" ]; then
-    echo "[postinstall] sharp binary missing — installing $SHARP_PKG into module..." >> "$LOG"
-    as_user "export HOME='$REAL_HOME'; cd '$CLAUDE_MODULE' && \
-             '$NPM_BIN' install --no-save --include=optional $SHARP_PKG $SHARP_LIBVIPS" 2>> "$LOG" || true
-  fi
+# 설치 검증 — server/index.js 가 실제 존재하는지
+if [ ! -f "$INSTALL_DIR/server/index.js" ]; then
+  osascript -e "display dialog \"설치 파일이 손상되었습니다.\n$INSTALL_DIR/server/index.js 를 찾을 수 없습니다.\n다시 설치해주세요.\" buttons {\"확인\"} with icon stop with title \"Claw Web\"" 2>/dev/null || true
+  echo "[postinstall] FATAL: server/index.js missing at $INSTALL_DIR" >> "$LOG"
+  exit 1
 fi
 
-# /usr/local/bin/claude 심볼릭 링크 (root 권한)
-if [ -n "$CLAUDE_BIN" ] && [ "$CLAUDE_BIN" != "/usr/local/bin/claude" ]; then
-  mkdir -p /usr/local/bin 2>/dev/null || true
-  ln -sf "$CLAUDE_BIN" /usr/local/bin/claude 2>/dev/null || true
-  echo "[postinstall] symlinked $CLAUDE_BIN → /usr/local/bin/claude" >> "$LOG"
-fi
-
-# .zshrc / .bash_profile PATH 추가
-CLAUDE_DIR=$(dirname "${CLAUDE_BIN:-/usr/local/bin/claude}")
-for rc in "$REAL_HOME/.zshrc" "$REAL_HOME/.bash_profile"; do
-  if [ -f "$rc" ] || [ "$rc" = "$REAL_HOME/.zshrc" ]; then
-    grep -q "$CLAUDE_DIR" "$rc" 2>/dev/null || \
-      echo "export PATH=\"$CLAUDE_DIR:\$PATH\" # added by Claw Web installer" >> "$rc"
-  fi
-done
-chown "$REAL_USER" "$REAL_HOME/.zshrc" "$REAL_HOME/.bash_profile" 2>/dev/null || true
-
-# 최종 검증 — native binary 에러 없는지 실제 실행으로 확인
-if [ -n "$CLAUDE_BIN" ]; then
-  if check_claude_works "$CLAUDE_BIN"; then
-    CLAUDE_VER=$(as_user "export HOME='$REAL_HOME'; '$CLAUDE_BIN' --version" 2>/dev/null)
-    echo "[postinstall] claude OK: $CLAUDE_VER" >> "$LOG"
-  else
-    CLAUDE_VER=$(as_user "export HOME='$REAL_HOME'; '$CLAUDE_BIN' --version 2>&1" 2>/dev/null)
-    echo "[postinstall] claude verification FAILED: $CLAUDE_VER" >> "$LOG"
-    # 사용자에게 경고하지만 설치는 계속 (웹 UI Settings 에서 재시도 가능)
-  fi
-fi
-
-echo "[postinstall] CLAUDE_BIN=$CLAUDE_BIN" >> "$LOG"
-
 # ═══════════════════════════════════════════════════════
-# Step 3. 데이터 디렉토리 + 심볼릭 링크
+# Step 2. 데이터 디렉토리 + 심볼릭 링크 + Bearer 토큰
 # ═══════════════════════════════════════════════════════
 for f in sessions.json projects.json skills.json web-metadata.json secrets.json hooks.json schedules.json; do
   if [ ! -f "$USER_DATA/$f" ]; then
@@ -232,10 +109,7 @@ for f in sessions.json projects.json skills.json web-metadata.json secrets.json 
   ln -sf "$USER_DATA/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
 done
 
-# Bearer 토큰 자동 생성 — 보안 기본값
 BEARER_TOKEN=$(openssl rand -hex 16 2>/dev/null || echo "$(date +%s)$(( RANDOM * RANDOM ))")
-
-# web-config.json 초기화 (없으면) + 토큰 강제 설정
 if [ ! -f "$USER_DATA/web-config.json" ]; then
   cat > "$USER_DATA/web-config.json" <<CFG
 {
@@ -246,7 +120,6 @@ if [ ! -f "$USER_DATA/web-config.json" ]; then
 }
 CFG
 else
-  # 기존 파일에 토큰만 주입
   "$NODE_BIN" -e "
     const fs = require('fs');
     const path = process.argv[1], token = process.argv[2];
@@ -255,7 +128,6 @@ else
     if (!d.auth.token) { d.auth.token = token; d.auth.enabled = true; }
     fs.writeFileSync(path, JSON.stringify(d, null, 2));
   " "$USER_DATA/web-config.json" "$BEARER_TOKEN" 2>/dev/null || true
-  # 기존 토큰이 있었으면 그 값을 BEARER_TOKEN 에 반영
   BEARER_TOKEN=$("$NODE_BIN" -e "const d=JSON.parse(require('fs').readFileSync('$USER_DATA/web-config.json','utf8')); console.log(d.auth&&d.auth.token||'')" 2>/dev/null || echo "$BEARER_TOKEN")
 fi
 ln -sf "$USER_DATA/web-config.json" "$INSTALL_DIR/web-config.json" 2>/dev/null || true
@@ -264,422 +136,43 @@ for f in backends.json agents-config.json; do
   [ ! -f "$USER_DATA/$f" ] && [ -f "$INSTALL_DIR/$f" ] && cp "$INSTALL_DIR/$f" "$USER_DATA/$f"
   ln -sf "$USER_DATA/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
 done
+chown -R "$REAL_USER" "$USER_DATA" 2>/dev/null || true
 echo "[postinstall] data dir ready, token=$BEARER_TOKEN" >> "$LOG"
 
 # ═══════════════════════════════════════════════════════
-# Step 3b. 에이전트 작업 디렉토리 설정
+# Step 3. 작업 디렉토리 선택 (유일하게 남은 대화상자)
 # ═══════════════════════════════════════════════════════
 WORK_DIR=$(osascript 2>/dev/null <<OSA
 try
-  set chosen to choose folder with prompt "에이전트가 파일을 읽고 쓸 프로젝트 폴더를 선택하세요.
-(에이전트가 이 폴더 안의 파일을 읽고 수정할 수 있습니다)" default location (POSIX file "$REAL_HOME")
+  set chosen to choose folder with prompt "에이전트가 파일을 읽고 쓸 프로젝트 폴더를 선택하세요." default location (POSIX file "$REAL_HOME")
   return POSIX path of chosen
 on error
   return ""
 end try
 OSA
 )
-# 비어있거나 건너뛴 경우 홈 디렉토리
 WORK_DIR="${WORK_DIR:-$REAL_HOME}"
 WORK_DIR=$(echo "$WORK_DIR" | sed "s|^~|$REAL_HOME|")
-# 존재하지 않는 경로면 생성
 mkdir -p "$WORK_DIR" 2>/dev/null || WORK_DIR="$REAL_HOME"
 
-# allowedRoots 에 작업 디렉토리 + 설치 디렉토리 설정
 "$NODE_BIN" -e "
   const fs = require('fs');
-  const [path, workDir, installDir] = process.argv.slice(1);
-  const d = JSON.parse(fs.readFileSync(path, 'utf8'));
+  const [p, w, i] = process.argv.slice(1);
+  const d = JSON.parse(fs.readFileSync(p, 'utf8'));
   const roots = d.allowedRoots || [];
-  for (const r of [workDir, installDir]) {
+  for (const r of [w, i]) {
     const rs = r.replace(/\/*$/, '/');
     if (!roots.some(e => e.replace(/\/*$/,'/') === rs)) roots.push(rs);
   }
   d.allowedRoots = roots;
-  fs.writeFileSync(path, JSON.stringify(d, null, 2));
+  fs.writeFileSync(p, JSON.stringify(d, null, 2));
 " "$USER_DATA/web-config.json" "$WORK_DIR" "$INSTALL_DIR" 2>/dev/null || true
-echo "[postinstall] work_dir=$WORK_DIR, allowedRoots updated" >> "$LOG"
+echo "[postinstall] work_dir=$WORK_DIR" >> "$LOG"
 
 # ═══════════════════════════════════════════════════════
-# Step 4. Claude 인증 방법 선택 (대화형)
+# Step 4. LaunchAgent 등록 + 서버 기동
 # ═══════════════════════════════════════════════════════
-AUTH_CHOICE=$(osascript 2>/dev/null <<'OSA'
-try
-  set dlg to display dialog "Claude AI 와 연결하는 방법을 선택하세요.
-
-• OAuth 로그인 — Claude Pro/Max 구독 계정 (터미널 창이 열립니다)
-• API 키 — Anthropic 콘솔에서 발급받은 키 직접 입력
-• 나중에 — Settings 메뉴에서 나중에 설정" buttons {"나중에", "API 키", "OAuth 로그인"} default button 3 with icon note with title "Claw Web — Claude 인증 (1/2)"
-  return button returned of dlg
-on error
-  return "나중에"
-end try
-OSA
-)
-echo "[postinstall] auth choice = $AUTH_CHOICE" >> "$LOG"
-
-case "$AUTH_CHOICE" in
-  "OAuth 로그인")
-    # 터미널에서 claude login 실행 → 사용자 브라우저 오픈 → 인증 완료 대기
-    as_user 'osascript -e '"'"'tell application "Terminal" to do script "claude login"'"'"
-    osascript 2>/dev/null -e 'display dialog "터미널이 열렸습니다.
-
-1) 표시된 URL 을 브라우저로 열어 Claude 로그인
-2) 터미널에 나타난 코드를 입력
-3) 완료되면 터미널 창을 닫고 [확인] 클릭" buttons {"확인"} default button 1 with icon note with title "Claw Web — OAuth 대기 중"' || true
-    ;;
-  "API 키")
-    API_KEY=$(osascript 2>/dev/null <<'OSA'
-try
-  set dlg to display dialog "Anthropic API 키를 입력하세요 (sk-ant-...)
-
-발급 방법: console.anthropic.com 접속 → 로그인 → Settings → API Keys → Create Key
-
-키가 없으면 [건너뛰기] 클릭 후 나중에 Settings 에서 입력하셔도 됩니다." default answer "" with hidden answer buttons {"건너뛰기", "저장"} default button 2 with icon note with title "Claw Web — API 키 입력"
-  return text returned of dlg
-on error
-  return "__SKIP__"
-end try
-OSA
-)
-    if [ -n "$API_KEY" ] && [ "$API_KEY" != "__SKIP__" ]; then
-      # secrets.json 에 저장
-      "$NODE_BIN" -e "
-        const fs = require('fs');
-        const [path, key] = process.argv.slice(1);
-        let d; try { d = JSON.parse(fs.readFileSync(path,'utf8')); } catch { d = {version:1,backends:{}}; }
-        if (!d.backends) d.backends = {};
-        if (!d.backends.claude) d.backends.claude = {};
-        d.backends.claude.api_key = key;
-        fs.writeFileSync(path, JSON.stringify(d, null, 2));
-        fs.chmodSync(path, 0o600);
-      " "$USER_DATA/secrets.json" "$API_KEY" 2>/dev/null || true
-      notify "API 키 저장 완료"
-    fi
-    ;;
-  *)
-    echo "[postinstall] auth skipped" >> "$LOG"
-    ;;
-esac
-
-# ═══════════════════════════════════════════════════════
-# Step 5. 원격 접속 터널 선택 (대화형) — 3가지 옵션
-# ═══════════════════════════════════════════════════════
-TUNNEL_CHOICE=$(osascript 2>/dev/null <<'OSA'
-try
-  set dlg to display dialog "외부에서 Claw Web 에 접속하도록 설정할까요?
-(핸드폰 / 카페 / 회사 등 다른 네트워크에서 접속)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🆓 빠른 URL — 무료, 가입 불필요, 자동 설정
-     단점: 재부팅하면 URL 바뀜, 대역폭 무제한
-
-🆓 ngrok — 무료, 가입 필요, URL 바뀜
-     단점: 월 1GB 제한 (Claude 사용엔 빠듯)
-
-⭐ 고정 URL — 도메인 필요 ($3~13/년), 영구 URL
-     장점: 'claw.내도메인.com' 영원히 고정
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" buttons {"건너뛰기", "ngrok", "빠른URL", "고정URL"} default button 3 with icon note with title "Claw Web — 원격 접속 (2/2)"
-  return button returned of dlg
-on error
-  return "건너뛰기"
-end try
-OSA
-)
-echo "[postinstall] tunnel choice = $TUNNEL_CHOICE" >> "$LOG"
-
-TUNNEL_LABEL=""
-TUNNEL_URL=""
-
-# ── 공통: cloudflared 설치 헬퍼 ───────────────────────
-install_cloudflared() {
-  CF_BIN=$(command -v cloudflared 2>/dev/null || true)
-  if [ -z "$CF_BIN" ] && [ -n "$BREW_BIN" ]; then
-    notify "Cloudflare Tunnel 설치 중..."
-    as_user "$BREW_BIN install cloudflared"
-    CF_BIN=$(command -v cloudflared 2>/dev/null || true)
-  fi
-  if [ -z "$CF_BIN" ]; then
-    for p in /opt/homebrew/bin/cloudflared /usr/local/bin/cloudflared; do
-      [ -x "$p" ] && CF_BIN="$p" && break
-    done
-  fi
-}
-
-case "$TUNNEL_CHOICE" in
-  "빠른URL")
-    # ─── Cloudflare Quick Tunnel (무료, URL 매번 바뀜) ───
-    install_cloudflared
-    if [ -n "$CF_BIN" ]; then
-      cat > "$PLIST_DIR/com.claw-web.tunnel.plist" <<TUNPLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.claw-web.tunnel</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$CF_BIN</string>
-    <string>tunnel</string><string>--url</string><string>http://localhost:3838</string>
-    <string>--no-autoupdate</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/claw-web-tunnel.log</string>
-  <key>StandardErrorPath</key><string>/tmp/claw-web-tunnel.log</string>
-</dict>
-</plist>
-TUNPLIST
-      chown "$REAL_USER" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || true
-      _RU=$(id -u "$REAL_USER" 2>/dev/null || echo "")
-      launchctl bootout "gui/$_RU/com.claw-web.tunnel" 2>/dev/null || as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
-      [ -n "$_RU" ] && launchctl bootstrap "gui/$_RU" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
-      for i in $(seq 1 20); do
-        sleep 1
-        TUNNEL_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' /tmp/claw-web-tunnel.log 2>/dev/null | head -1)
-        [ -n "$TUNNEL_URL" ] && break
-      done
-      TUNNEL_LABEL="Cloudflare 빠른 URL"
-      echo "[postinstall] cloudflare quick tunnel URL: $TUNNEL_URL" >> "$LOG"
-    fi
-    ;;
-
-  "ngrok")
-    # ─── ngrok Free (월 1GB 제한 경고 포함) ──────────────
-    osascript 2>/dev/null -e 'display dialog "⚠️ ngrok 무료 플랜 주의사항
-
-• 월 대역폭: 1GB (Claude Web 같은 상시 연결 앱엔 3~7일이면 소진)
-• 소진 시 ERR_NGROK_725 로 접속 차단
-• URL 도 재시작 시 바뀜
-
-대역폭을 많이 쓰실 거면 '빠른URL' 또는 '고정URL' 을 추천합니다.
-그래도 ngrok 으로 계속하시겠어요?" buttons {"취소","계속"} default button 2 with icon caution with title "Claw Web — ngrok 경고"' > /tmp/ngrok-warn.txt 2>/dev/null || true
-    NGROK_CONT=$(cat /tmp/ngrok-warn.txt 2>/dev/null)
-    rm -f /tmp/ngrok-warn.txt
-    if ! echo "$NGROK_CONT" | grep -q "계속"; then
-      echo "[postinstall] ngrok cancelled after warning" >> "$LOG"
-    else
-      NGROK_TOKEN=$(osascript 2>/dev/null <<'OSA'
-try
-  set dlg to display dialog "ngrok authtoken 을 입력하세요.
-
-① dashboard.ngrok.com/signup 에서 가입 (무료)
-② dashboard.ngrok.com/get-started/your-authtoken 에서 토큰 복사
-③ 여기 붙여넣기
-
-가입/토큰 없이 [건너뛰기] 선택 시 ngrok 설정 생략." default answer "" buttons {"건너뛰기", "저장"} default button 2 with icon note with title "Claw Web — ngrok authtoken"
-  return text returned of dlg
-on error
-  return "__SKIP__"
-end try
-OSA
-)
-      if [ -n "$NGROK_TOKEN" ] && [ "$NGROK_TOKEN" != "__SKIP__" ]; then
-        NGROK_BIN=$(command -v ngrok 2>/dev/null || true)
-        if [ -z "$NGROK_BIN" ] && [ -n "$BREW_BIN" ]; then
-          notify "ngrok 설치 중..."
-          as_user "$BREW_BIN install ngrok"
-          NGROK_BIN=$(command -v ngrok 2>/dev/null || true)
-        fi
-        if [ -n "$NGROK_BIN" ]; then
-          as_user "\"$NGROK_BIN\" config add-authtoken \"$NGROK_TOKEN\""
-          cat > "$PLIST_DIR/com.claw-web.tunnel.plist" <<TUNPLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.claw-web.tunnel</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$NGROK_BIN</string>
-    <string>http</string><string>3838</string>
-    <string>--log</string><string>stdout</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/claw-web-tunnel.log</string>
-  <key>StandardErrorPath</key><string>/tmp/claw-web-tunnel.log</string>
-</dict>
-</plist>
-TUNPLIST
-          chown "$REAL_USER" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || true
-          _RU=$(id -u "$REAL_USER" 2>/dev/null || echo "")
-          launchctl bootout "gui/$_RU/com.claw-web.tunnel" 2>/dev/null || as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
-          [ -n "$_RU" ] && launchctl bootstrap "gui/$_RU" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
-          for i in $(seq 1 15); do
-            sleep 1
-            TUNNEL_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | "$NODE_BIN" -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const r=JSON.parse(d);const t=(r.tunnels||[]);console.log(t[0]&&t[0].public_url||'');}catch{console.log('');}});" 2>/dev/null || echo "")
-            [ -n "$TUNNEL_URL" ] && break
-          done
-          TUNNEL_LABEL="ngrok (무료 1GB/월)"
-        fi
-      fi
-    fi
-    ;;
-
-  "고정URL")
-    # ─── Cloudflare Named Tunnel (유료 도메인, 영구 URL) ───
-    install_cloudflared
-    if [ -z "$CF_BIN" ]; then
-      osascript -e 'display dialog "cloudflared 설치 실패. Homebrew 가 필요합니다." buttons {"확인"} with icon stop' 2>/dev/null || true
-    else
-      # Step 5a: 도메인 보유 안내 + Cloudflare 등록 상태 확인
-      DOMAIN_CHOICE=$(osascript 2>/dev/null <<'OSA'
-try
-  set dlg to display dialog "📌 고정 URL 설정 전 확인사항:
-
-1. 도메인을 이미 구매하셨나요? (예: mydomain.com)
-2. 그 도메인이 Cloudflare 계정에 등록되어 있나요?
-   (Cloudflare Registrar 에서 구매했거나,
-    다른 곳에서 샀다면 NS 를 Cloudflare 로 변경한 상태)
-
-둘 다 YES 여야 진행 가능합니다.
-
-처음이시면 Cloudflare Registrar 에서 구매가 제일 간단해요
-(.cc 같은 경우 연 $8 수준, 도매가 원가판매)
-
-도메인 준비가 안 되셨으면 [나중에] 를 누르시고,
-브라우저가 열리는 Cloudflare Registrar 페이지에서 구매 후
-다시 설치 관리자를 실행하세요." buttons {"나중에 (Registrar 열기)", "준비됨 (진행)"} default button 2 with icon note with title "Claw Web — 고정 URL 준비 확인"
-  return button returned of dlg
-on error
-  return "나중에 (Registrar 열기)"
-end try
-OSA
-)
-      if echo "$DOMAIN_CHOICE" | grep -q "나중에"; then
-        as_user "open 'https://dash.cloudflare.com/?to=/:account/domains/register'"
-        echo "[postinstall] named tunnel deferred (opened registrar)" >> "$LOG"
-      else
-        # Step 5b: 도메인 + 호스트명 입력
-        DOMAIN_INPUT=$(osascript 2>/dev/null <<'OSA'
-try
-  set dlg to display dialog "사용할 도메인의 전체 호스트명을 입력하세요.
-
-예시:
-  claw.subinggrae.cc
-  web.mydomain.com
-  app.example.io
-
-(서브도메인 + 루트 도메인 전부 포함)" default answer "claw." buttons {"취소","다음"} default button 2 with icon note with title "Claw Web — 호스트명 입력"
-  return text returned of dlg
-on error
-  return "__SKIP__"
-end try
-OSA
-)
-        if [ -z "$DOMAIN_INPUT" ] || [ "$DOMAIN_INPUT" = "__SKIP__" ] || [ "$DOMAIN_INPUT" = "claw." ]; then
-          echo "[postinstall] named tunnel: hostname input skipped" >> "$LOG"
-        else
-          HOSTNAME="$DOMAIN_INPUT"
-          echo "[postinstall] named tunnel hostname: $HOSTNAME" >> "$LOG"
-
-          # Step 5c: cert.pem 없으면 cloudflared login
-          CERT_PATH="$REAL_HOME/.cloudflared/cert.pem"
-          if [ ! -f "$CERT_PATH" ]; then
-            # 백그라운드로 login 실행 → 브라우저 자동 오픈
-            as_user "$CF_BIN tunnel login > /tmp/claw-cf-login.log 2>&1 &"
-            sleep 3
-            LOGIN_URL=$(grep -oE 'https://dash\.cloudflare\.com/argotunnel[^ ]*' /tmp/claw-cf-login.log 2>/dev/null | head -1)
-
-            osascript 2>/dev/null -e "display dialog \"Cloudflare 계정 인증이 필요합니다.
-
-방금 브라우저가 자동으로 열렸을 거예요.
-
-브라우저에서:
-1) Cloudflare 로그인 (도메인 구매한 계정)
-2) 사용할 도메인 체크박스 선택
-3) 파란색 '권한 부여' 버튼 클릭
-
-완료하신 후 [계속] 을 누르세요.
-(브라우저가 안 열렸으면 터미널의 URL 을 직접 여세요)\" buttons {\"취소\",\"계속\"} default button 2 with icon note with title \"Claw Web — Cloudflare 권한 부여 대기\"" > /tmp/cf-auth.txt || true
-            AUTH_RESULT=$(cat /tmp/cf-auth.txt 2>/dev/null)
-            rm -f /tmp/cf-auth.txt
-
-            # cert.pem 생성 대기 (최대 60초)
-            for i in $(seq 1 60); do
-              [ -f "$CERT_PATH" ] && break
-              sleep 1
-            done
-          fi
-
-          if [ ! -f "$CERT_PATH" ]; then
-            osascript -e 'display dialog "Cloudflare 인증 실패. 설치 후 Settings 에서 다시 시도하세요." buttons {"확인"} with icon caution' 2>/dev/null || true
-            echo "[postinstall] named tunnel: cert.pem not found after login" >> "$LOG"
-          else
-            # Step 5d: 터널 생성 (기존 있으면 재사용)
-            TUNNEL_NAME="claw-web"
-            TUNNEL_ID=$(as_user "$CF_BIN tunnel list --output json 2>/dev/null" | "$NODE_BIN" -e "let d='';process.stdin.on('data',c=>d+=c);process.stdin.on('end',()=>{try{const ts=JSON.parse(d);const t=ts.find(x=>x.name==='$TUNNEL_NAME');console.log(t&&t.id||'');}catch{console.log('');}});" 2>/dev/null || echo "")
-
-            if [ -z "$TUNNEL_ID" ]; then
-              CREATE_OUT=$(as_user "$CF_BIN tunnel create $TUNNEL_NAME" 2>&1)
-              TUNNEL_ID=$(echo "$CREATE_OUT" | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1)
-              echo "[postinstall] tunnel created: $TUNNEL_ID" >> "$LOG"
-            else
-              echo "[postinstall] tunnel reused: $TUNNEL_ID" >> "$LOG"
-            fi
-
-            if [ -n "$TUNNEL_ID" ]; then
-              # Step 5e: DNS 라우트
-              as_user "$CF_BIN tunnel route dns $TUNNEL_NAME $HOSTNAME" >> "$LOG" 2>&1 || true
-
-              # Step 5f: config.yml 작성
-              CREDS_PATH="$REAL_HOME/.cloudflared/$TUNNEL_ID.json"
-              cat > "$REAL_HOME/.cloudflared/config.yml" <<CFGYML
-tunnel: $TUNNEL_ID
-credentials-file: $CREDS_PATH
-
-ingress:
-  - hostname: $HOSTNAME
-    service: http://localhost:3838
-  - service: http_status:404
-CFGYML
-              chown "$REAL_USER" "$REAL_HOME/.cloudflared/config.yml" 2>/dev/null || true
-
-              # Step 5g: LaunchAgent (tunnel run)
-              cat > "$PLIST_DIR/com.claw-web.tunnel.plist" <<TUNPLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>com.claw-web.tunnel</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$CF_BIN</string>
-    <string>tunnel</string>
-    <string>--no-autoupdate</string>
-    <string>run</string>
-    <string>$TUNNEL_NAME</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/claw-web-tunnel.log</string>
-  <key>StandardErrorPath</key><string>/tmp/claw-web-tunnel.log</string>
-</dict>
-</plist>
-TUNPLIST
-              chown "$REAL_USER" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || true
-              _RU=$(id -u "$REAL_USER" 2>/dev/null || echo "")
-              launchctl bootout "gui/$_RU/com.claw-web.tunnel" 2>/dev/null || as_user "launchctl unload '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
-              [ -n "$_RU" ] && launchctl bootstrap "gui/$_RU" "$PLIST_DIR/com.claw-web.tunnel.plist" 2>/dev/null || as_user "launchctl load '$PLIST_DIR/com.claw-web.tunnel.plist'" 2>/dev/null || true
-
-              TUNNEL_URL="https://$HOSTNAME"
-              TUNNEL_LABEL="Cloudflare 고정 URL"
-              echo "[postinstall] named tunnel active: $TUNNEL_URL" >> "$LOG"
-            else
-              osascript -e 'display dialog "터널 생성 실패. Settings 에서 재시도 가능합니다." buttons {"확인"} with icon caution' 2>/dev/null || true
-            fi
-          fi
-        fi
-      fi
-    fi
-    ;;
-esac
-
-# ═══════════════════════════════════════════════════════
-# Step 6. 서버 LaunchAgent 등록 + 시작
-# ═══════════════════════════════════════════════════════
-notify "④ 자동 시작 등록 중..."
+notify "② 자동 시작 등록 중..."
 cat > "$PLIST_DIR/com.claw-web.server.plist" <<EOFPLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -706,86 +199,62 @@ cat > "$PLIST_DIR/com.claw-web.server.plist" <<EOFPLIST
 </plist>
 EOFPLIST
 
-chown -R "$REAL_USER" "$USER_DATA" 2>/dev/null || true
 chown "$REAL_USER" "$PLIST_DIR/com.claw-web.server.plist" 2>/dev/null || true
 
-# launchctl: macOS Ventura+(13+)에서 load는 deprecated → bootstrap 사용
-REAL_UID=$(id -u "$REAL_USER" 2>/dev/null || dscl . -read "/Users/$REAL_USER" UniqueID 2>/dev/null | awk '{print $2}' || echo "")
+REAL_UID=$(id -u "$REAL_USER" 2>/dev/null || echo "")
 launchctl bootout "gui/$REAL_UID/com.claw-web.server" 2>/dev/null || \
   as_user "launchctl unload '$PLIST_DIR/com.claw-web.server.plist'" 2>/dev/null || true
 if [ -n "$REAL_UID" ]; then
   launchctl bootstrap "gui/$REAL_UID" "$PLIST_DIR/com.claw-web.server.plist" 2>/dev/null || \
     as_user "launchctl load '$PLIST_DIR/com.claw-web.server.plist'" 2>/dev/null || true
-  # bootstrap 후 즉시 시작
   launchctl kickstart -k "gui/$REAL_UID/com.claw-web.server" 2>/dev/null || true
 else
   as_user "launchctl load '$PLIST_DIR/com.claw-web.server.plist'" 2>/dev/null || true
 fi
 
-# fallback: LaunchAgent가 서버를 못 띄웠을 때 직접 실행 (su - = login shell, HOME 포함)
+# fallback: LaunchAgent 실패 시 직접 기동
 SERVER_UP=0
 for i in $(seq 1 8); do
   sleep 1
-  if lsof -i :3838 -sTCP:LISTEN >/dev/null 2>&1; then
-    SERVER_UP=1; break
-  fi
+  if lsof -i :3838 -sTCP:LISTEN >/dev/null 2>&1; then SERVER_UP=1; break; fi
 done
 if [ "$SERVER_UP" = "0" ]; then
-  echo "[postinstall] LaunchAgent failed — using direct start fallback" >> "$LOG"
+  echo "[postinstall] LaunchAgent failed — fallback direct start" >> "$LOG"
   su - "$REAL_USER" -c "export NODE_ENV=production; export HOME='$REAL_HOME'; cd '$INSTALL_DIR'; nohup '$NODE_BIN' '$INSTALL_DIR/server/index.js' >> /tmp/claw-web.log 2>&1 & disown" 2>> "$LOG" || true
 fi
 
 # ═══════════════════════════════════════════════════════
-# Step 7. 완료 요약 다이얼로그 + 브라우저 오픈
+# Step 5. 완료 다이얼로그 + 브라우저 오픈
 # ═══════════════════════════════════════════════════════
-# 포트 3838이 실제로 열릴 때까지 최대 15초 대기
 echo "[postinstall] waiting for port 3838..." >> "$LOG"
 for i in $(seq 1 15); do
   sleep 1
-  if lsof -i :3838 -sTCP:LISTEN >/dev/null 2>&1; then
-    echo "[postinstall] port 3838 open after ${i}s" >> "$LOG"
-    break
-  fi
+  lsof -i :3838 -sTCP:LISTEN >/dev/null 2>&1 && { echo "[postinstall] port 3838 open after ${i}s" >> "$LOG"; break; }
 done
 
 SUMMARY="Claw Web 설치 완료!
 
-🔑 Bearer 토큰 (외부 접속 시 입력):
+🔑 Bearer 토큰 (외부 접속용):
 $BEARER_TOKEN
 
 📁 작업 디렉토리:
 $WORK_DIR
 
-🏠 로컬 접속:
-http://localhost:3838"
+🏠 접속: http://localhost:3838
 
-if [ -n "$TUNNEL_URL" ]; then
-  SUMMARY="$SUMMARY
+Claude CLI 및 원격 접속 설정은 웹에서 Settings 메뉴를 통해 처리하세요."
 
-🌐 원격 접속 ($TUNNEL_LABEL):
-$TUNNEL_URL"
-fi
-
-SUMMARY="$SUMMARY
-
-설정은 언제든 Settings 메뉴에서 변경 가능합니다."
-
-# 토큰을 별도 파일로 저장해 사용자가 나중에 참조 가능
 echo "$BEARER_TOKEN" > "$USER_DATA/.bearer-token"
-[ -n "$TUNNEL_URL" ] && echo "$TUNNEL_URL" > "$USER_DATA/.tunnel-url"
-chown "$REAL_USER" "$USER_DATA/.bearer-token" "$USER_DATA/.tunnel-url" 2>/dev/null || true
+chown "$REAL_USER" "$USER_DATA/.bearer-token" 2>/dev/null || true
 
 osascript 2>/dev/null -e "display dialog \"$SUMMARY\" buttons {\"토큰 복사\",\"브라우저 열기\"} default button 2 with icon note with title \"Claw Web 설치 완료\"" > /tmp/claw-web-finish.txt || true
 RESULT=$(cat /tmp/claw-web-finish.txt 2>/dev/null)
 rm -f /tmp/claw-web-finish.txt
 
-# 토큰 복사 선택 시 클립보드로 (사용자 컨텍스트)
 if echo "$RESULT" | grep -q "토큰 복사"; then
   as_user "echo -n '$BEARER_TOKEN' | pbcopy"
 fi
-
-# 브라우저 자동 오픈
 as_user "open http://localhost:3838"
 
-echo "[postinstall] COMPLETE (token=$BEARER_TOKEN tunnel=$TUNNEL_URL)" >> "$LOG"
+echo "[postinstall] COMPLETE (token=$BEARER_TOKEN)" >> "$LOG"
 exit 0

@@ -37,8 +37,210 @@ function findCloudflaredBin() {
   return 'cloudflared';
 }
 
-export function createAdminRouter({ runner }) {
+// ─────────────────────────────────────────────────────────
+// Claude CLI helpers (path/version/status detection + install)
+// ─────────────────────────────────────────────────────────
+const CLAUDE_PATH_CANDIDATES = [
+  path.join(os.homedir(), '.npm-global', 'bin', 'claude'),
+  '/usr/local/bin/claude',
+  '/opt/homebrew/bin/claude',
+  path.join(os.homedir(), '.local', 'bin', 'claude')
+];
+
+function findClaudeBin() {
+  for (const p of CLAUDE_PATH_CANDIDATES) {
+    if (fssync.existsSync(p)) return p;
+  }
+  return null;
+}
+
+function findNodeBin() {
+  const candidates = [
+    '/opt/homebrew/bin/node',
+    '/usr/local/bin/node',
+    '/opt/homebrew/opt/node@22/bin/node',
+    '/opt/homebrew/opt/node@20/bin/node'
+  ];
+  for (const p of candidates) {
+    if (fssync.existsSync(p)) return p;
+  }
+  // nvm fallback
+  const nvmDir = path.join(os.homedir(), '.nvm', 'versions', 'node');
+  if (fssync.existsSync(nvmDir)) {
+    try {
+      const versions = fssync.readdirSync(nvmDir).sort().reverse();
+      for (const v of versions) {
+        const candidate = path.join(nvmDir, v, 'bin', 'node');
+        if (fssync.existsSync(candidate)) return candidate;
+      }
+    } catch { /* ignore */ }
+  }
+  return process.execPath;
+}
+
+async function checkClaudeStatus() {
+  const bin = findClaudeBin();
+  if (!bin) {
+    return { status: 'missing', bin: null, version: null, error: null };
+  }
+  try {
+    const { stdout, stderr } = await execFileAsync(bin, ['--version'], { timeout: 10000 });
+    const out = (stdout || '') + (stderr || '');
+    if (/native binary not installed/i.test(out)) {
+      return { status: 'broken', bin, version: null, error: 'native binary not installed' };
+    }
+    const m = out.match(/([0-9]+\.[0-9]+\.[0-9]+[^\s]*)/);
+    return { status: 'ok', bin, version: m ? m[1] : out.trim(), error: null };
+  } catch (err) {
+    const msg = (err.stdout || '') + (err.stderr || '') + (err.message || '');
+    const broken = /native binary not installed/i.test(msg);
+    return {
+      status: broken ? 'broken' : 'error',
+      bin,
+      version: null,
+      error: msg.slice(0, 500)
+    };
+  }
+}
+
+export function createAdminRouter({ runner, eventBus }) {
   const router = Router();
+
+  // 현재 설치 진행 상태 (동시 설치 방지)
+  const installState = { running: false, startedAt: null };
+
+  function emit(topic, payload) {
+    if (eventBus) eventBus.publish(topic, payload);
+  }
+
+  // ───────────────────────────────────────────────────────
+  // GET /claude/status — Claude CLI 설치 상태 조회
+  // ───────────────────────────────────────────────────────
+  router.get('/claude/status', async (_req, res) => {
+    try {
+      const info = await checkClaudeStatus();
+      res.json({ ...info, installing: installState.running });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ───────────────────────────────────────────────────────
+  // POST /claude/install — Claude CLI 설치/재설치
+  // body: { reinstall?: boolean }
+  // 진행 로그는 WebSocket 'claude.install.log' 이벤트로 스트리밍
+  // 완료 시 'claude.install.done' 이벤트
+  // ───────────────────────────────────────────────────────
+  router.post('/claude/install', async (req, res) => {
+    if (installState.running) {
+      return res.status(409).json({ error: 'install already in progress' });
+    }
+
+    const reinstall = req.body?.reinstall === true;
+    const nodeBin = findNodeBin();
+    const nodeDir = path.dirname(nodeBin);
+    const npmBin = fssync.existsSync(path.join(nodeDir, 'npm'))
+      ? path.join(nodeDir, 'npm')
+      : 'npm';
+
+    // arch 감지 → 정확한 native binary 패키지 지정
+    const arch = os.arch();
+    const platform = os.platform();
+    const nativePkg =
+      platform === 'darwin' && arch === 'arm64' ? '@anthropic-ai/claude-code-darwin-arm64' :
+      platform === 'darwin' && arch === 'x64'   ? '@anthropic-ai/claude-code-darwin-x64'   :
+      platform === 'linux'  && arch === 'arm64' ? '@anthropic-ai/claude-code-linux-arm64'  :
+      platform === 'linux'  && arch === 'x64'   ? '@anthropic-ai/claude-code-linux-x64'    :
+      null;
+
+    installState.running = true;
+    installState.startedAt = new Date().toISOString();
+    emit('claude.install.log', { line: `[start] reinstall=${reinstall} platform=${platform}-${arch} nativePkg=${nativePkg}` });
+    emit('claude.install.log', { line: `[start] node=${nodeBin}` });
+    emit('claude.install.log', { line: `[start] npm=${npmBin}` });
+
+    // 응답은 즉시 (실제 설치는 비동기로 진행)
+    res.json({ ok: true, message: 'install started', startedAt: installState.startedAt });
+
+    const runStep = (cmd, args, opts = {}) => new Promise((resolve) => {
+      emit('claude.install.log', { line: `\n$ ${cmd} ${args.join(' ')}` });
+      const child = spawn(cmd, args, {
+        env: {
+          ...process.env,
+          HOME: os.homedir(),
+          PATH: `${nodeDir}:${path.join(os.homedir(), '.npm-global', 'bin')}:/usr/local/bin:/opt/homebrew/bin:${process.env.PATH || ''}`
+        },
+        ...opts
+      });
+      child.stdout.on('data', (chunk) => {
+        for (const line of chunk.toString().split('\n')) {
+          if (line) emit('claude.install.log', { line });
+        }
+      });
+      child.stderr.on('data', (chunk) => {
+        for (const line of chunk.toString().split('\n')) {
+          if (line) emit('claude.install.log', { line });
+        }
+      });
+      child.on('close', (code) => resolve(code));
+      child.on('error', (err) => {
+        emit('claude.install.log', { line: `[error] ${err.message}` });
+        resolve(-1);
+      });
+    });
+
+    try {
+      // npm prefix 를 사용자 홈으로 고정 (root 권한 없이 설치)
+      const npmGlobalPrefix = path.join(os.homedir(), '.npm-global');
+      await fs.mkdir(path.join(npmGlobalPrefix, 'bin'), { recursive: true }).catch(() => {});
+      await runStep(npmBin, ['config', 'set', 'prefix', npmGlobalPrefix, '--location=user']);
+      await runStep(npmBin, ['config', 'set', 'omit', '', '--location=user']);
+      await runStep(npmBin, ['config', 'set', 'ignore-scripts', 'false', '--location=user']);
+
+      // native pkg 를 명시적으로 함께 설치 — install.cjs 가 optionalDependency 를 찾게 됨
+      const installArgs = ['install', '-g', '--include=optional', '--foreground-scripts', '@anthropic-ai/claude-code'];
+      if (nativePkg) installArgs.push(nativePkg);
+      const rc1 = await runStep(npmBin, installArgs);
+      emit('claude.install.log', { line: `[exit] npm install rc=${rc1}` });
+
+      // install.cjs 를 명시 실행 (wrapper stub → real native binary 교체)
+      const claudeModuleDir = path.join(npmGlobalPrefix, 'lib', 'node_modules', '@anthropic-ai', 'claude-code');
+      const installCjs = path.join(claudeModuleDir, 'install.cjs');
+      if (fssync.existsSync(installCjs)) {
+        const rc2 = await runStep(nodeBin, [installCjs], { cwd: claudeModuleDir });
+        emit('claude.install.log', { line: `[exit] install.cjs rc=${rc2}` });
+      } else {
+        emit('claude.install.log', { line: `[warn] install.cjs not found at ${installCjs}` });
+      }
+
+      // 최종 검증
+      const status = await checkClaudeStatus();
+      emit('claude.install.log', { line: `[verify] status=${status.status} bin=${status.bin} version=${status.version}` });
+      emit('claude.install.done', { status });
+    } catch (err) {
+      emit('claude.install.log', { line: `[fatal] ${err.message}` });
+      emit('claude.install.done', { status: { status: 'error', error: err.message } });
+    } finally {
+      installState.running = false;
+    }
+  });
+
+  // ───────────────────────────────────────────────────────
+  // POST /claude/login — Terminal.app 에서 `claude login` 실행
+  // ───────────────────────────────────────────────────────
+  router.post('/claude/login', async (_req, res) => {
+    const bin = findClaudeBin();
+    if (!bin) {
+      return res.status(400).json({ error: 'claude not installed' });
+    }
+    try {
+      const script = `tell application "Terminal" to do script "${bin} login"`;
+      await execFileAsync('osascript', ['-e', script, '-e', 'tell application "Terminal" to activate'], { timeout: 5000 });
+      res.json({ ok: true, message: 'Terminal opened with claude login' });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   // ───────────────────────────────────────────────────────
   // POST /restart — 서버 재시작

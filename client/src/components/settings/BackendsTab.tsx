@@ -4,6 +4,7 @@ import { Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { BackendCard } from './BackendCard';
 import { AddBackendModal } from './AddBackendModal';
+import { ClaudeStatusCard } from './ClaudeStatusCard';
 import { useT } from '../../lib/i18n';
 
 function fmtTokens(n: number) {
@@ -39,6 +40,9 @@ export function BackendsTab() {
 
   return (
     <div className="space-y-5">
+      {/* Claude CLI 상태 — 설치/재설치/로그인 */}
+      <ClaudeStatusCard />
+
       {/* 토큰 사용량 요약 */}
       {usage && (
         <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">

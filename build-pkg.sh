@@ -69,6 +69,14 @@ rsync -a \
 FILE_COUNT=$(find "$BUILD_DIR/payload" -type f | wc -l | tr -d ' ')
 echo "   Payload: ${FILE_COUNT} files"
 
+# 권한 정리 — 일반 유저도 읽기/실행 가능하도록 (pkg 설치 후 /usr/local/lib/claw-web 이 700 권한으로 잠기는 버그 차단)
+# 디렉토리와 파일 타입별로 분리 적용해야 안정적 (macOS chmod 는 u=rwX,go=rX 조합이 타입 판정에 따라 다르게 동작)
+find "$BUILD_DIR/payload" -type d -exec chmod 755 {} \;
+find "$BUILD_DIR/payload" -type f -exec chmod 644 {} \;
+# 실행 비트가 필요한 바이너리/스크립트는 유지 (node_modules 안의 .node, .sh 등)
+find "$BUILD_DIR/payload" -type f \( -name '*.sh' -o -name '*.node' \) -exec chmod 755 {} \;
+echo "   Permissions: dirs=755, files=644 (read+execute for all)"
+
 # ── 3. 스크립트 복사 ──────────────────────────────────────
 cp pkg/scripts/preinstall "$BUILD_DIR/scripts/"
 cp pkg/scripts/postinstall "$BUILD_DIR/scripts/"

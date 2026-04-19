@@ -233,6 +233,14 @@ export const api = {
       window7d: { inputTokens: number; outputTokens: number; total: number };
     }>('/stats/usage'),
   tunnelUrl: () => get<{ url: string | null; file: string }>(`/tunnel/url`),
+
+  // Claude CLI 관리 (Admin)
+  claudeStatus: () =>
+    get<{ status: 'ok' | 'broken' | 'missing' | 'error'; bin: string | null; version: string | null; error: string | null; installing: boolean }>(`/admin/claude/status`),
+  claudeInstall: (reinstall = false) =>
+    post<{ ok: boolean; message: string; startedAt: string }>(`/admin/claude/install`, { reinstall }),
+  claudeLogin: () =>
+    post<{ ok: boolean; message: string }>(`/admin/claude/login`, {}),
   /**
    * Upload a file (from drag-drop or clipboard paste) to the server's
    * /api/uploads endpoint. Base64-encodes the bytes and attaches the auth
