@@ -33,11 +33,9 @@ mkdir -p "$BUILD_DIR/payload" "$BUILD_DIR/scripts" "$OUTPUT_DIR"
 # ── 2. payload 구성 ───────────────────────────────────────
 echo "→ [2/4] Assembling payload..."
 
-# 서버 코드
+# 서버 코드 (node_modules + client/dist 포함 — postinstall npm install 불필요)
 rsync -a \
-  --exclude='node_modules' \
   --exclude='client/node_modules' \
-  --exclude='client/dist' \
   --exclude='.git' \
   --exclude='dist' \
   --exclude='pkg' \

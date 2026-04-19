@@ -91,18 +91,11 @@ as_user() {
 }
 
 # ═══════════════════════════════════════════════════════
-# Step 1. 의존성 설치 + 빌드
+# Step 1. node_modules + client/dist 이미 번들됨 — 소유권만 정리
 # ═══════════════════════════════════════════════════════
-notify "① 의존성 설치 중..."
+notify "① 파일 준비 중..."
 cd "$INSTALL_DIR"
-"$NPM_BIN" install --omit=dev --loglevel=error 2>> "$LOG" || \
-"$NPM_BIN" install --production --loglevel=error 2>> "$LOG" || true
-
-"$NPM_BIN" --prefix client install --loglevel=error 2>> "$LOG" || true
-
-notify "② 클라이언트 빌드 중... (1~2분)"
-"$NPM_BIN" run build 2>> "$LOG" || true
-"$NPM_BIN" --prefix client prune --omit=dev --loglevel=error 2>> "$LOG" || true
+chown -R "$REAL_USER" "$INSTALL_DIR" 2>/dev/null || true
 
 # ═══════════════════════════════════════════════════════
 # Step 2. Claude CLI 자동 설치
@@ -625,6 +618,8 @@ cat > "$PLIST_DIR/com.claw-web.server.plist" <<EOFPLIST
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>HOME</key><string>$REAL_HOME</string>
+        <key>NODE_ENV</key><string>production</string>
     </dict>
 </dict>
 </plist>
@@ -640,21 +635,23 @@ launchctl bootout "gui/$REAL_UID/com.claw-web.server" 2>/dev/null || \
 if [ -n "$REAL_UID" ]; then
   launchctl bootstrap "gui/$REAL_UID" "$PLIST_DIR/com.claw-web.server.plist" 2>/dev/null || \
     as_user "launchctl load '$PLIST_DIR/com.claw-web.server.plist'" 2>/dev/null || true
+  # bootstrap 후 즉시 시작
+  launchctl kickstart -k "gui/$REAL_UID/com.claw-web.server" 2>/dev/null || true
 else
   as_user "launchctl load '$PLIST_DIR/com.claw-web.server.plist'" 2>/dev/null || true
 fi
 
-# fallback: LaunchAgent가 서버를 못 띄웠을 때 직접 nohup으로 실행
+# fallback: LaunchAgent가 서버를 못 띄웠을 때 직접 실행 (su - = login shell, HOME 포함)
 SERVER_UP=0
-for i in $(seq 1 5); do
+for i in $(seq 1 8); do
   sleep 1
   if lsof -i :3838 -sTCP:LISTEN >/dev/null 2>&1; then
     SERVER_UP=1; break
   fi
 done
 if [ "$SERVER_UP" = "0" ]; then
-  echo "[postinstall] LaunchAgent failed to start server — trying direct nohup" >> "$LOG"
-  as_user "cd '$INSTALL_DIR' && PATH='/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin' nohup '$NODE_BIN' '$INSTALL_DIR/server/index.js' >> /tmp/claw-web.log 2>&1 &"
+  echo "[postinstall] LaunchAgent failed — using direct start fallback" >> "$LOG"
+  su - "$REAL_USER" -c "export NODE_ENV=production; export HOME='$REAL_HOME'; cd '$INSTALL_DIR'; nohup '$NODE_BIN' '$INSTALL_DIR/server/index.js' >> /tmp/claw-web.log 2>&1 & disown" 2>> "$LOG" || true
 fi
 
 # ═══════════════════════════════════════════════════════
