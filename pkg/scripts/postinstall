@@ -123,6 +123,42 @@ done
 echo "[postinstall] data dir ready, token=$BEARER_TOKEN" >> "$LOG"
 
 # ═══════════════════════════════════════════════════════
+# Step 3b. 에이전트 작업 디렉토리 설정
+# ═══════════════════════════════════════════════════════
+WORK_DIR=$(osascript 2>/dev/null <<OSA
+try
+  set dlg to display dialog "에이전트가 파일을 읽고 쓸 작업 디렉토리를 입력하세요.
+
+예: /Users/$(id -un)/Projects
+비워두면 홈 디렉토리($REAL_HOME)로 설정됩니다." default answer "$REAL_HOME/Projects" with title "Claw Web — 작업 디렉토리 설정" buttons {"건너뛰기", "선택"} default button 2 with icon note
+  return text returned of dlg
+on error
+  return ""
+end try
+OSA
+)
+# 비어있거나 건너뛴 경우 홈 디렉토리
+WORK_DIR="${WORK_DIR:-$REAL_HOME}"
+WORK_DIR=$(echo "$WORK_DIR" | sed "s|^~|$REAL_HOME|")
+# 존재하지 않는 경로면 생성
+mkdir -p "$WORK_DIR" 2>/dev/null || WORK_DIR="$REAL_HOME"
+
+# allowedRoots 에 작업 디렉토리 + 설치 디렉토리 설정
+python3 - "$USER_DATA/web-config.json" "$WORK_DIR" "$INSTALL_DIR" <<'PY'
+import json, sys
+path, work_dir, install_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path) as f: d = json.load(f)
+roots = d.get("allowedRoots", [])
+for r in [work_dir, install_dir]:
+    r_slash = r.rstrip('/') + '/'
+    if not any(ex.rstrip('/') + '/' == r_slash for ex in roots):
+        roots.append(r_slash)
+d["allowedRoots"] = roots
+with open(path, "w") as f: json.dump(d, f, indent=2)
+PY
+echo "[postinstall] work_dir=$WORK_DIR, allowedRoots updated" >> "$LOG"
+
+# ═══════════════════════════════════════════════════════
 # Step 4. Claude 인증 방법 선택 (대화형)
 # ═══════════════════════════════════════════════════════
 AUTH_CHOICE=$(osascript 2>/dev/null <<'OSA'
@@ -575,6 +611,9 @@ SUMMARY="Claw Web 설치 완료!
 
 🔑 Bearer 토큰 (외부 접속 시 입력):
 $BEARER_TOKEN
+
+📁 작업 디렉토리:
+$WORK_DIR
 
 🏠 로컬 접속:
 http://localhost:3838"
