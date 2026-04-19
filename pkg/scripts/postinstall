@@ -100,28 +100,45 @@ chown -R "$REAL_USER" "$INSTALL_DIR" 2>/dev/null || true
 # ═══════════════════════════════════════════════════════
 # Step 2. Claude CLI 자동 설치
 # ═══════════════════════════════════════════════════════
-CLAUDE_BIN=$(command -v claude 2>/dev/null || true)
+# 이미 설치된 위치 탐색
+CLAUDE_BIN=""
+for p in \
+  /usr/local/bin/claude \
+  /opt/homebrew/bin/claude \
+  "$REAL_HOME/.local/bin/claude" \
+  "$REAL_HOME/.npm-global/bin/claude"; do
+  if [ -x "$p" ]; then CLAUDE_BIN="$p"; break; fi
+done
+
 if [ -z "$CLAUDE_BIN" ]; then
   notify "③ Claude CLI 설치 중..."
-  as_user "\"$NPM_BIN\" install -g @anthropic-ai/claude-code" 2>> "$LOG" || true
-  # npm global prefix 에서 claude 바이너리 찾기
-  NPM_PREFIX=$(as_user "\"$NPM_BIN\" config get prefix 2>/dev/null" || echo "")
+  # root로 실행 — /usr/local/lib 에 쓰기 권한 있음 (as_user는 EACCES 발생)
+  "$NPM_BIN" install -g @anthropic-ai/claude-code 2>> "$LOG" || true
+  # 설치 후 재탐색
   for p in \
-    "$NPM_PREFIX/bin/claude" \
-    "$REAL_HOME/.npm-global/bin/claude" \
-    "$REAL_HOME/.npm/bin/claude" \
-    "/usr/local/bin/claude" \
-    "/opt/homebrew/bin/claude" \
-    "$REAL_HOME/.local/bin/claude"; do
+    /usr/local/bin/claude \
+    /opt/homebrew/bin/claude \
+    "$REAL_HOME/.local/bin/claude" \
+    "$REAL_HOME/.npm-global/bin/claude"; do
     if [ -x "$p" ]; then CLAUDE_BIN="$p"; break; fi
   done
 fi
 
-# /usr/local/bin 에 심볼릭 링크 생성 (PATH에 항상 있음)
+# /usr/local/bin/claude 심볼릭 링크 보장
 if [ -n "$CLAUDE_BIN" ] && [ "$CLAUDE_BIN" != "/usr/local/bin/claude" ]; then
   ln -sf "$CLAUDE_BIN" /usr/local/bin/claude 2>/dev/null || true
   echo "[postinstall] symlinked $CLAUDE_BIN → /usr/local/bin/claude" >> "$LOG"
 fi
+
+# .zshrc / .bash_profile 에도 PATH 추가 (심볼릭 링크 실패 대비)
+CLAUDE_DIR=$(dirname "${CLAUDE_BIN:-/usr/local/bin/claude}")
+for rc in "$REAL_HOME/.zshrc" "$REAL_HOME/.bash_profile"; do
+  if [ -f "$rc" ] || [ "$rc" = "$REAL_HOME/.zshrc" ]; then
+    grep -q "$CLAUDE_DIR" "$rc" 2>/dev/null || \
+      echo "export PATH=\"$CLAUDE_DIR:\$PATH\" # added by Claw Web installer" >> "$rc"
+  fi
+done
+chown "$REAL_USER" "$REAL_HOME/.zshrc" "$REAL_HOME/.bash_profile" 2>/dev/null || true
 
 echo "[postinstall] CLAUDE_BIN=$CLAUDE_BIN" >> "$LOG"
 
