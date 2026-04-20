@@ -203,40 +203,57 @@ export function startClaudeRun({
   let resultUsage = null;
   let gotAnyOutput = false;
 
-  // ── 타임아웃: 초기 출력 없으면 kill ──
-  // Claude CLI가 --resume로 깨진 세션 로드하면 무한 대기하는 문제 방지
-  const IDLE_TIMEOUT_MS = 120_000;
+  // ── 타임아웃 전략 (상태별 차등) ──
+  // 1) 초기 출력 없음 (2분): resume 깨짐/크래시 감지
+  // 2) tool_use 진행 중 stall (30분): Bash 도구가 npm build/pkg 빌드 등 장시간 실행 중
+  // 3) 일반 stall (5분): Claude 모델이 응답 생성 중 멈춤
+  const INITIAL_IDLE_MS = 120_000;       // 2분
+  const TOOL_RUNNING_STALL_MS = 1_800_000; // 30분 (도구 실행 중)
+  const IDLE_STALL_MS = 300_000;           // 5분 (일반 응답 대기)
+
+  let pendingToolUse = false;  // 마지막으로 본 이벤트가 tool_use인데 아직 결과 못 받음
   let idleTimer = setTimeout(() => {
     if (!gotAnyOutput) {
-      logger.warn({ agent: agent.id, cwd }, 'runner: claude CLI idle timeout — killing');
+      logger.warn({ agent: agent.id, cwd }, 'runner: claude CLI idle timeout (no output) — killing');
       try { proc.kill('SIGTERM'); } catch { /* ignore */ }
-      // 잠시 후 SIGKILL
       setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 3000);
     }
-  }, IDLE_TIMEOUT_MS);
+  }, INITIAL_IDLE_MS);
+
+  function scheduleStallTimer() {
+    clearTimeout(idleTimer);
+    const timeoutMs = pendingToolUse ? TOOL_RUNNING_STALL_MS : IDLE_STALL_MS;
+    const reason = pendingToolUse ? 'stalled while tool running' : 'stalled (no tool)';
+    idleTimer = setTimeout(() => {
+      logger.warn({ agent: agent.id, reason, timeoutMs }, 'runner: claude CLI killed — ' + reason);
+      try { proc.kill('SIGTERM'); } catch { /* ignore */ }
+      setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 3000);
+    }, timeoutMs);
+  }
 
   function resetIdleTimer() {
     gotAnyOutput = true;
-    clearTimeout(idleTimer);
-    // 출력이 있으면 30분으로 연장 (장기 위임 작업 지원)
-    idleTimer = setTimeout(() => {
-      logger.warn({ agent: agent.id }, 'runner: claude CLI stalled after output — killing');
-      try { proc.kill('SIGTERM'); } catch { /* ignore */ }
-      setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 3000);
-    }, 1_800_000);
+    scheduleStallTimer();
   }
 
   function handleEvent(event) {
     if (event.type === 'tool_use') {
+      pendingToolUse = true;
       onToolUse?.({ name: event.name || event.tool_name || 'unknown', input: event.input || {} });
     } else if (event.type === 'content_block_start' && event.content_block?.type === 'tool_use') {
+      pendingToolUse = true;
       onToolUse?.({ name: event.content_block.name, input: event.content_block.input || {} });
+    } else if (event.type === 'user') {
+      // tool_result 가 담겨서 오는 이벤트 — 도구 실행 완료
+      pendingToolUse = false;
     } else if (event.type === 'assistant') {
       if (!resultModel) resultModel = event.message?.model || event.model || null;
       const content = event.message?.content || event.content || [];
+      let sawToolUse = false;
       if (Array.isArray(content)) {
         for (const block of content) {
           if (block.type === 'tool_use') {
+            sawToolUse = true;
             onToolUse?.({ name: block.name, input: block.input || {} });
           } else if (block.type === 'text' && block.text) {
             assistantTexts.push(block.text);
@@ -244,9 +261,12 @@ export function startClaudeRun({
           }
         }
       }
+      // assistant 메시지에 tool_use 블록이 있으면 도구 실행 시작 상태로 전환
+      if (sawToolUse) pendingToolUse = true;
       if (event.message?.text) { assistantTexts.push(event.message.text); onText?.(event.message.text); }
       if (typeof event.text === 'string' && event.text) { assistantTexts.push(event.text); onText?.(event.text); }
     } else if (event.type === 'result') {
+      pendingToolUse = false;
       resultText = event.result ?? null;
       resultSessionId = event.session_id || null;
       if (!resultModel) resultModel = event.model || null;
@@ -262,7 +282,7 @@ export function startClaudeRun({
   }
 
   proc.stdout.on('data', (d) => {
-    resetIdleTimer();
+    gotAnyOutput = true;
     buffer += d.toString();
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
@@ -270,6 +290,8 @@ export function startClaudeRun({
       if (!line.trim()) continue;
       try { handleEvent(JSON.parse(line)); } catch { /* ignore non-JSON */ }
     }
+    // 이벤트 파싱 후 pendingToolUse 상태 반영하여 타이머 재설정
+    scheduleStallTimer();
   });
 
   const stderrChunks = [];
