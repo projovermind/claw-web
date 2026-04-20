@@ -31,6 +31,10 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 1000);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
     const all = sessionsStore.list(typeof agentId === 'string' ? agentId : undefined);
+    // 최신 세션이 잘리지 않도록 updatedAt DESC 로 정렬 후 페이징.
+    // (store 내부 Object.values 는 삽입 순서 = 생성 순. 세션이 limit 초과하면
+    //  최근 세션들이 오래된 100개에 밀려 응답에서 완전히 누락되는 버그 방지.)
+    all.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
     const total = all.length;
     const paged = all.slice(offset, offset + limit);
     res.json({
