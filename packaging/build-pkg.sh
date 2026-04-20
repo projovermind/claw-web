@@ -111,7 +111,8 @@ LEAK_PATTERNS=(
 )
 LEAKS_FOUND=0
 for pattern in "${LEAK_PATTERNS[@]}"; do
-  matches=$(find "$STAGING" -name "$pattern" 2>/dev/null | grep -v node_modules)
+  # grep -v 가 매치 없을 때 exit 1 → set -e + pipefail 로 스크립트 중단되는 문제 회피
+  matches=$(find "$STAGING" -name "$pattern" 2>/dev/null | { grep -v node_modules || true; })
   if [ -n "$matches" ]; then
     echo "  ⚠️ 민감 파일 발견 ($pattern):"
     echo "$matches" | sed 's/^/     /'
