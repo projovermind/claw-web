@@ -409,7 +409,13 @@ export function startClaudeRun({
       // 에러가 아닌 정상 중단으로 처리
       onResult?.({ text: final ?? '(응답이 중단되었습니다)', claudeSessionId: resultSessionId, model: resultModel, usage: resultUsage, exitCode: code });
     } else {
-      const errMsg = stderrChunks.join('').trim().slice(0, 400) || `exit ${code}`;
+      const rawStderr = stderrChunks.join('').trim();
+      // stderr 가 비었는데 exit != 0 인 경우: Claude CLI 가 조용히 죽은 상황 (주로
+      // --resume 세션 파일 손상/버전 불일치). 에러 메시지에 resume 상태를 포함해서
+      // classifyError 가 'cli_exit' 로 재시도 가능하도록 판단할 수 있게 함.
+      const errMsg = rawStderr
+        ? rawStderr.slice(0, 400)
+        : `claude CLI exited ${code} (no stderr${effectiveResumeId ? ', resume=true' : ''})`;
       onError?.(new Error(errMsg));
     }
     onExit?.({ code });

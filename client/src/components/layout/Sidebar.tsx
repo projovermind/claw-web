@@ -37,26 +37,30 @@ export default function Sidebar() {
     queryFn: api.allSessions,
     refetchInterval: 5000
   });
-  // 유효한 unread 만 카운트: (존재하는 세션) ∧ (현재 열린 세션 아님)
+  // 유효한 unread 만 카운트: (존재하는 세션) ∧ (현재 열린 세션 아님) ∧ (위임 세션 아님)
   // 이 필터 없으면 삭제된 세션 / 열고 있는 세션의 유령 unread 로 파란점 상시 점등
-  const validUnreadCount = (() => {
+  // 위임 세션([위임] 으로 시작) 은 ChatSidebar/ChatPage 에서 숨기므로 여기도 제외해야
+  // "읽을게 없는데 채팅 네비에 파란 불" 증상 방지
+  const isHiddenDelegation = (title?: string) => !!title?.startsWith('[위임]');
+  const visibleUnread = (() => {
     const sessions = sessionsData?.sessions ?? [];
-    if (sessions.length === 0) return 0;
-    const valid = new Set(sessions.map((s) => s.id));
-    let n = 0;
+    if (sessions.length === 0) return [] as string[];
+    const bySid = new Map(sessions.map((s) => [s.id, s]));
+    const out: string[] = [];
     for (const id of Object.keys(unread)) {
-      if (id !== currentSessionId && valid.has(id)) n++;
+      if (id === currentSessionId) continue;
+      const s = bySid.get(id);
+      if (!s) continue;
+      if (isHiddenDelegation(s.title)) continue;
+      out.push(id);
     }
-    return n;
+    return out;
   })();
-  const hasUnread = validUnreadCount > 0;
-  const hasError = (() => {
-    const sessions = sessionsData?.sessions ?? [];
-    if (sessions.length === 0) return false;
-    const valid = new Set(sessions.map((s) => s.id));
-    return Object.entries(unread).some(([id, u]) => u?.isError && valid.has(id) && id !== currentSessionId);
-  })();
-  const hasRunning = (sessionsData?.sessions ?? []).some((s) => isSessionRunning(s, runtime));
+  const hasUnread = visibleUnread.length > 0;
+  const hasError = visibleUnread.some((id) => unread[id]?.isError);
+  const hasRunning = (sessionsData?.sessions ?? []).some(
+    (s) => isSessionRunning(s, runtime) && !isHiddenDelegation(s.title)
+  );
   const chatDotColor = hasError ? 'bg-red-400' : hasUnread ? 'bg-sky-400' : hasRunning ? 'bg-amber-400' : null;
 
   // Close drawer on route change (mobile)

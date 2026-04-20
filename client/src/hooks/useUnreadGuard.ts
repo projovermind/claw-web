@@ -24,7 +24,13 @@ export function useUnreadGuard() {
 
   useEffect(() => {
     if (!data?.sessions) return;
-    const validIds = new Set(data.sessions.map((s) => s.id));
+    // 위임 세션([위임] 으로 시작) 은 UI 에서 숨김 → unread 대상에서도 제외
+    // 존재하는 세션 중 '표시 가능한' 것만 valid 로 간주해서 위임/삭제 unread 한번에 purge
+    const validIds = new Set(
+      data.sessions
+        .filter((s) => !s.title?.startsWith('[위임]'))
+        .map((s) => s.id)
+    );
     purgeUnread(validIds);
   }, [data, purgeUnread]);
 }

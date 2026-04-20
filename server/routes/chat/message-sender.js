@@ -231,15 +231,18 @@ export function createMessageSender(ctx) {
           const { canRetry, delay, label } = classifyError(err.message);
           const counter = retryCounters.get(sessionId) ?? { count: 0, lastError: '' };
 
-          if (canRetry && counter.count < MAX_AUTO_RETRIES) {
+          // cli_exit (stderr 없는 exit N) 는 1회만 재시도 — 지속 실패 시 빠르게 포기
+          const maxForLabel = label === 'cli_exit' ? 1 : MAX_AUTO_RETRIES;
+
+          if (canRetry && counter.count < maxForLabel) {
             const attempt = counter.count + 1;
             retryCounters.set(sessionId, { count: attempt, lastError: err.message });
             logger.warn({ sessionId, label, attempt, delay }, 'chat: auto-recovery scheduled');
             sessionsStore.appendMessage(sessionId, {
               role: 'assistant',
-              content: `🔄 **자동 복구 중** (${attempt}/${MAX_AUTO_RETRIES}) — \`${label}\` 오류 감지. ${delay >= 1000 ? `${delay / 1000}초 후 재시도합니다...` : '즉시 재시도합니다...'}`
+              content: `🔄 **자동 복구 중** (${attempt}/${maxForLabel}) — \`${label}\` 오류 감지. ${delay >= 1000 ? `${delay / 1000}초 후 재시도합니다...` : '즉시 재시도합니다...'}`
             }).catch(() => {});
-            eventBus.publish('chat.error', { sessionId, error: `[auto-retry ${attempt}/${MAX_AUTO_RETRIES}] ${err.message}` });
+            eventBus.publish('chat.error', { sessionId, error: `[auto-retry ${attempt}/${maxForLabel}] ${err.message}` });
             sessionsStore.update(sessionId, { claudeSessionId: null }).catch(() => {});
             setTimeout(() => {
               try {
@@ -260,7 +263,7 @@ export function createMessageSender(ctx) {
           eventBus.publish('chat.error', { sessionId, error: err.message });
           sessionsStore.appendMessage(sessionId, {
             role: 'assistant',
-            content: `⚠️ **응답 중단됨** — ${err.message}${counter.count >= MAX_AUTO_RETRIES ? `\n\n자동 복구를 ${MAX_AUTO_RETRIES}회 시도했지만 해결되지 않았습니다.` : '\n\n메시지를 다시 보내주세요.'}`
+            content: `⚠️ **응답 중단됨** — ${err.message}${counter.count >= maxForLabel ? `\n\n자동 복구를 ${counter.count}회 시도했지만 해결되지 않았습니다.` : '\n\n메시지를 다시 보내주세요.'}`
           }).catch(() => {});
           if (session.claudeSessionId) {
             logger.warn({ sessionId, err: err.message }, 'chat: clearing claudeSessionId on error (auto-recovery)');

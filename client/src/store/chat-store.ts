@@ -73,9 +73,16 @@ export const useChatStore = create<ChatState>()(
           return { currentSessionId, unread: next };
         }),
       startRun: (sessionId) =>
-        set((s) => ({
-          runtime: { ...s.runtime, [sessionId]: { ...emptyRuntime(), running: true } }
-        })),
+        set((s) => {
+          // 새 런 시작 시 해당 세션의 stale unread 제거
+          // (이전 위임 완료/persist 잔재로 "읽을 게 없는데 파란불" 증상 방지)
+          const nextUnread = { ...s.unread };
+          delete nextUnread[sessionId];
+          return {
+            runtime: { ...s.runtime, [sessionId]: { ...emptyRuntime(), running: true } },
+            unread: nextUnread
+          };
+        }),
       appendChunk: (sessionId, text) =>
         set((s) => {
           const r = { ...(s.runtime[sessionId] ?? emptyRuntime()) };
@@ -123,8 +130,11 @@ export const useChatStore = create<ChatState>()(
           const next = new Set(s.delegatingSessionIds);
           next.delete(sessionId);
           const isActive = s.currentSessionId === sessionId;
+          // 플래너가 아직 돌고 있으면 unread 표시 보류 — 최종 finishRun 이 결정
+          // (중간 위임 완료마다 unread 점등되어 "읽을 게 없는데 파란불" 증상 유발하던 버그 방지)
+          const isStillRunning = s.runtime[sessionId]?.running === true;
           const nextUnread = { ...s.unread };
-          if (!isActive) {
+          if (!isActive && !isStillRunning) {
             nextUnread[sessionId] = { at: Date.now() };
           }
           return { delegatingSessionIds: next, unread: nextUnread };

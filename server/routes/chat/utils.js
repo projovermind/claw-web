@@ -22,6 +22,12 @@ export function classifyError(errMsg = '') {
   if (msg.includes('context') && (msg.includes('long') || msg.includes('length') || msg.includes('exceed'))) {
     return { canRetry: true, delay: 1000, label: 'context_length' };
   }
+  // Claude CLI 가 stderr 없이 exit != 0 로 종료 (runner.js 가 생성한 'claude CLI exited N'
+  // 또는 'exit N' fallback 메시지). 주로 --resume 세션 손상/모델 일시 장애.
+  // → 1회만 재시도 허용 (message-sender 에서 counter 로 cap). claudeSessionId 는 자동 클리어됨.
+  if (/^claude cli exited\s+\d+/i.test(errMsg) || /^exit\s+\d+\s*$/i.test(msg)) {
+    return { canRetry: true, delay: 1500, label: 'cli_exit' };
+  }
   return { canRetry: false, delay: 0, label: 'unrecoverable' };
 }
 
