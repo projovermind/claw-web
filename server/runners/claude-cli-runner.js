@@ -204,12 +204,12 @@ export function startClaudeRun({
   let gotAnyOutput = false;
 
   // ── 타임아웃 전략 (상태별 차등) ──
-  // 1) 초기 출력 없음 (2분): resume 깨짐/크래시 감지
+  // 1) 초기 출력 없음 (5분): resume 깨짐/크래시 감지
   // 2) tool_use 진행 중 stall (30분): Bash 도구가 npm build/pkg 빌드 등 장시간 실행 중
-  // 3) 일반 stall (5분): Claude 모델이 응답 생성 중 멈춤
-  const INITIAL_IDLE_MS = 120_000;       // 2분
+  // 3) 일반 stall (10분): Claude 모델이 응답 생성 중 멈춤
+  const INITIAL_IDLE_MS = 300_000;       // 5분
   const TOOL_RUNNING_STALL_MS = 1_800_000; // 30분 (도구 실행 중)
-  const IDLE_STALL_MS = 300_000;           // 5분 (일반 응답 대기)
+  const IDLE_STALL_MS = 600_000;           // 10분 (일반 응답 대기)
 
   let pendingToolUse = false;  // 마지막으로 본 이벤트가 tool_use인데 아직 결과 못 받음
   let idleTimer = setTimeout(() => {
