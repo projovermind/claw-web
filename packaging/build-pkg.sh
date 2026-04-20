@@ -35,42 +35,98 @@ rm -rf "$STAGING"
 mkdir -p "$STAGING"
 
 # ── 의존성 설치 및 클라이언트 빌드 (번들링) ──────────────────
-echo "→ 서버 의존성 설치..."
-npm --prefix "$REPO_ROOT" install --loglevel=error
+# 주의: dev deps (tsc, vite) 가 빌드에 필요하므로 --include=dev 로 설치.
+# 최종 pkg 에는 서버 쪽만 prod 의존성으로 남기고, client 는 dist 만 포함 (node_modules 불필요).
+echo "→ 서버 의존성 설치 (dev 포함, 빌드용)..."
+NODE_ENV=development npm --prefix "$REPO_ROOT" install --include=dev --loglevel=error
 
-echo "→ 클라이언트 의존성 설치..."
-npm --prefix "$REPO_ROOT/client" install --loglevel=error
+echo "→ 클라이언트 의존성 설치 (dev 포함)..."
+NODE_ENV=development npm --prefix "$REPO_ROOT/client" install --include=dev --loglevel=error
 
-echo "→ 클라이언트 빌드..."
-npm --prefix "$REPO_ROOT" run build
+echo "→ 클라이언트 빌드 (tsc + vite)..."
+NODE_ENV=development npm --prefix "$REPO_ROOT" run build
 
-echo "✓ 번들 준비 완료"
+echo "→ 서버 의존성 prod 모드로 정리..."
+npm --prefix "$REPO_ROOT" prune --omit=dev --loglevel=error
 
-# ── 앱 파일 복사 (node_modules·dist 포함, 로컬데이터 제외) ───
-rsync -a \
-  --exclude='.git/' \
-  --exclude='.github/' \
-  --exclude='client/node_modules/.cache/' \
-  --exclude='packaging/' \
-  --exclude='*.pkg' \
-  --exclude='sessions.json' \
-  --exclude='web-metadata.json' \
-  --exclude='secrets.json' \
-  --exclude='backends.json' \
-  --exclude='agents-config.json' \
-  --exclude='hooks.json' \
-  --exclude='schedules.json' \
-  --exclude='projects.json' \
-  --exclude='skills.json' \
-  --exclude='logs/' \
-  --exclude='uploads/' \
-  --exclude='backups/' \
-  --exclude='.migration-done' \
-  --exclude='*.backup.*' \
-  --exclude='.DS_Store' \
-  "$REPO_ROOT/" "$STAGING/"
+echo "✓ 번들 준비 완료 (서버: prod only, 클라이언트: dist)"
 
-echo "✓ 파일 복사 완료 (node_modules + client/dist 포함)"
+# ── 앱 파일 복사 (화이트리스트 방식 — 허용된 것만 복사) ──────
+# 보안상 블랙리스트 방식 금지. 명시된 것만 staging 으로 복사한다.
+echo "→ 화이트리스트 방식으로 파일 복사..."
+
+# 필수 디렉토리 복사 (있는 것만)
+for dir in server client/dist node_modules client/public deploy; do
+  if [ -d "$REPO_ROOT/$dir" ]; then
+    mkdir -p "$STAGING/$(dirname $dir)"
+    rsync -a \
+      --exclude='.DS_Store' \
+      --exclude='*.log' \
+      --exclude='*.backup-*' \
+      --exclude='*.backup.*' \
+      "$REPO_ROOT/$dir/" "$STAGING/$dir/"
+  fi
+done
+
+# 필수 파일 복사 (있는 것만)
+for f in package.json package-lock.json install.sh README.md CLAUDE.md .gitignore vitest.config.js client/package.json client/package-lock.json client/vite.config.ts client/tsconfig.json client/tsconfig.node.json client/index.html client/tailwind.config.js client/postcss.config.js; do
+  if [ -f "$REPO_ROOT/$f" ]; then
+    mkdir -p "$STAGING/$(dirname $f)"
+    cp "$REPO_ROOT/$f" "$STAGING/$f"
+  fi
+done
+
+echo "✓ 화이트리스트 복사 완료"
+
+# ── 민감 파일 감지 검증 (빌드 실패 조건) ───────────────────
+echo "→ 민감 파일 감지 검증..."
+LEAK_PATTERNS=(
+  'sessions.json'
+  'web-metadata.json'
+  'secrets.json'
+  'backends.json'
+  'agents-config.json'
+  'hooks.json'
+  'schedules.json'
+  'projects.json'
+  'skills.json'
+  'web-config.json'
+  'push-subscriptions.json'
+  '.env'
+  '.env.local'
+  '.claude'
+  '.vercel'
+  '.playwright-mcp'
+  'snapshot*.md'
+  'snapshot*.txt'
+  'test-*.png'
+  'notion-*.png'
+  '*.backup-*'
+  '*.backup.*'
+  '.migration-backup-*'
+  '.migration-done'
+  'logs'
+  'uploads'
+  'backups'
+)
+LEAKS_FOUND=0
+for pattern in "${LEAK_PATTERNS[@]}"; do
+  matches=$(find "$STAGING" -name "$pattern" 2>/dev/null | grep -v node_modules)
+  if [ -n "$matches" ]; then
+    echo "  ⚠️ 민감 파일 발견 ($pattern):"
+    echo "$matches" | sed 's/^/     /'
+    LEAKS_FOUND=$((LEAKS_FOUND + 1))
+  fi
+done
+
+if [ "$LEAKS_FOUND" -gt 0 ]; then
+  echo ""
+  echo "✗ 빌드 중단: $LEAKS_FOUND 개 민감 패턴 감지. staging 검토 필요." >&2
+  echo "  staging: $STAGING" >&2
+  exit 1
+fi
+
+echo "✓ 민감 파일 없음 — 안전 확인"
 
 # ── 스크립트 실행 권한 부여 ────────────────────────────────
 chmod +x "$SCRIPT_DIR/scripts/preinstall"
