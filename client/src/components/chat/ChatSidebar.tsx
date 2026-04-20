@@ -18,13 +18,18 @@ function ModelBadge({ agent, backends }: { agent: Agent; backends?: BackendsStat
       ? (backends.backends[bid] ? [backends.backends[bid]] : [])
       : Object.values(backends.backends);
     for (const b of pool) {
-      const found = Object.entries(b?.models ?? {}).find(([, v]) => v === agent.model);
+      const models = b?.type !== 'claude-cli' ? b?.models : {};
+      const found = Object.entries(models ?? {}).find(([, v]) => v === agent.model);
       if (found) { shortKey = found[0]; break; }
     }
   }
+  // backend 라벨 — 긴 ID 대신 사람 읽기 편한 label 사용. 없으면 ID 앞 6자만.
+  const backendLabel = bid && bid !== 'claude'
+    ? (backends?.backends?.[bid]?.label ?? bid.slice(0, 6))
+    : null;
   return (
     <span className="px-1 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]">
-      {bid && bid !== 'claude' && <span className="text-emerald-400 mr-1">{bid}</span>}
+      {backendLabel && <span className="text-emerald-400 mr-1">{backendLabel}</span>}
       {shortKey}
     </span>
   );

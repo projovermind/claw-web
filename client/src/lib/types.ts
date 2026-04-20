@@ -10,7 +10,7 @@ export interface Agent {
   planMode?: boolean;
   thinkingEffort?: 'auto' | 'low' | 'medium' | 'high' | 'max';
   backendId?: string | null;
-  accountId?: string | null;
+  accountId?: string | null; // deprecated: use backendId
   // web-metadata overlay
   projectId?: string | null;
   tier?: 'main' | 'project' | 'addon' | null;
@@ -93,7 +93,8 @@ export interface Project {
   defaultSkillIds?: string[];
   defaultAllowedTools?: string[];
   defaultDisallowedTools?: string[];
-  accountId?: string | null;
+  accountId?: string | null; // deprecated: use backendId
+  backendId?: string | null;
   dashboard?: ProjectDashboard;
 }
 
@@ -124,19 +125,41 @@ export interface WebSettings {
   auth: { enabled: boolean; token: string | null };
 }
 
-export interface BackendPublic {
-  id: string;
-  type: 'claude-cli' | 'openai-compatible' | 'anthropic-compatible';
-  label: string;
-  baseURL: string | null;
-  envKey: string | null;
-  envStatus: 'set' | 'unset' | 'n/a';
-  /** 'managed' = stored in secrets.json (UI-editable); 'shell' = pre-existing
-   * process.env from shell; 'none' = not set */
-  secretSource?: 'managed' | 'shell' | 'none';
-  models: Record<string, string>;
-  fallback?: string | null;
-}
+export type BackendPublic =
+  | {
+      type: 'openai-compatible' | 'anthropic-compatible';
+      id: string;
+      label: string;
+      baseURL: string | null;
+      envKey: string | null;
+      envStatus: 'set' | 'unset' | 'n/a';
+      /** 'managed' = stored in secrets.json; 'shell' = pre-existing env; 'none' = not set */
+      secretSource?: 'managed' | 'shell' | 'none';
+      hasSecret?: boolean;
+      secretTooShort?: boolean;
+      models: Record<string, string>;
+      active?: boolean;
+      austerity?: boolean;
+      fallback?: string | null;
+    }
+  | {
+      type: 'claude-cli';
+      id: string;
+      label: string;
+      configDir: string;
+      models: Record<string, string>;
+      status: 'active' | 'cooldown' | 'disabled';
+      lastUsedAt: number;
+      usage?: { windowStart: string | null; messagesUsed: number };
+      priority: number;
+      cooldownUntil?: number | null;
+      cooldownRemaining?: number;
+      /** 'ok' = configDir exists, 'missing' = not found */
+      envStatus: 'ok' | 'missing';
+    };
+
+export type ClaudeCliBackend = Extract<BackendPublic, { type: 'claude-cli' }>;
+export type Backend = BackendPublic;
 
 export interface ActivityEntry {
   ts: string;

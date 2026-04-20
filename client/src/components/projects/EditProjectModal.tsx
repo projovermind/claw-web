@@ -2,10 +2,9 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, AlertTriangle, Sparkles, FileText, Save, FolderOpen, Wrench, UserCircle2 } from 'lucide-react';
-import type { Account } from '../../lib/types';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
-import type { Project } from '../../lib/types';
+import type { Project, ClaudeCliBackend } from '../../lib/types';
 import SkillPicker from '../common/SkillPicker';
 import PathPicker from '../common/PathPicker';
 import ToolPicker from '../common/ToolPicker';
@@ -48,7 +47,7 @@ export function EditProjectModal({
     defaultSkillIds: project.defaultSkillIds ?? []
   });
   const { data: skills } = useQuery({ queryKey: ['skills'], queryFn: api.skills });
-  const { data: accounts = [] } = useQuery<Account[]>({ queryKey: ['accounts'], queryFn: api.listAccounts });
+  const { data: backendsState } = useQuery({ queryKey: ['backends'], queryFn: api.backends });
   const pathChanged = form.path !== project.path;
   const valid = form.name.trim() && form.path.trim();
 
@@ -318,20 +317,23 @@ export function EditProjectModal({
             <div className="border-t border-zinc-800 pt-3">
               <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1 flex items-center gap-1.5">
                 <UserCircle2 size={11} className="text-indigo-400" />
-                프로젝트 계정 (Account)
+                Claude 백엔드 (Backend)
               </div>
               <p className="text-[11px] text-zinc-600 leading-snug mb-2">
-                이 프로젝트 에이전트에 우선 사용할 Claude 계정. 미선택 시 스케줄러가 자동 분배합니다.
+                이 프로젝트 에이전트에 우선 사용할 Claude CLI 백엔드. 미선택 시 스케줄러가 자동 분배합니다.
               </p>
               <select
-                value={form.accountId ?? ''}
-                onChange={(e) => setForm({ ...form, accountId: e.target.value || null })}
+                value={form.backendId ?? ''}
+                onChange={(e) => setForm({ ...form, backendId: e.target.value || null })}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
               >
                 <option value="">자동 (스케줄러 분배)</option>
-                {accounts.filter(a => a.status !== 'disabled').map(a => (
-                  <option key={a.id} value={a.id}>{a.label} ({a.id})</option>
-                ))}
+                {Object.values(backendsState?.backends ?? {})
+                  .filter((b): b is ClaudeCliBackend => b.type === 'claude-cli')
+                  .filter((b) => b.status !== 'disabled')
+                  .map((b) => (
+                    <option key={b.id} value={b.id}>{b.label} ({b.id})</option>
+                  ))}
               </select>
             </div>
 
@@ -371,7 +373,7 @@ export function EditProjectModal({
                     defaultSkillIds: form.defaultSkillIds,
                     defaultAllowedTools: form.defaultAllowedTools,
                     defaultDisallowedTools: form.defaultDisallowedTools,
-                    accountId: form.accountId ?? null,
+                    backendId: form.backendId ?? null,
                   })
                 }
                 className="px-4 py-2 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-sm"

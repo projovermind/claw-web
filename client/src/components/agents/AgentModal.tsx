@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { api } from '../../lib/api';
-import type { Agent, Account } from '../../lib/types';
+import type { Agent } from '../../lib/types';
 import SkillPicker from '../common/SkillPicker';
 import ToolPicker from '../common/ToolPicker';
 import { useT } from '../../lib/i18n';
@@ -13,7 +13,7 @@ export interface AgentFormState {
   avatar: string;
   model: string;
   backend: string;
-  accountId: string;
+  backendId: string;
   systemPrompt: string;
   skillIds: string[];
   allowedTools: string[];
@@ -26,7 +26,7 @@ export const emptyAgentForm = (): AgentFormState => ({
   avatar: '🤖',
   model: 'sonnet',
   backend: 'claude',
-  accountId: '',
+  backendId: '',
   systemPrompt: '',
   skillIds: [],
   allowedTools: [],
@@ -68,8 +68,11 @@ export function AgentModal({
   const { data: backendsState } = useQuery({ queryKey: ['backends'], queryFn: api.backends });
   const { data: skills } = useQuery({ queryKey: ['skills'], queryFn: api.skills });
   const { data: projects } = useQuery({ queryKey: ['projects'], queryFn: api.projects });
-  const { data: accounts = [] } = useQuery<Account[]>({ queryKey: ['accounts'], queryFn: api.listAccounts });
   const backendList = useMemo(() => Object.values(backendsState?.backends ?? {}), [backendsState]);
+  const claudeCliBackends = useMemo(
+    () => backendList.filter((b) => b.type === 'claude-cli' && b.status !== 'disabled'),
+    [backendList]
+  );
 
   // Inherited skills / tools = defaults from the project this agent is in
   const inheritedProject = useMemo(() => {
@@ -87,7 +90,7 @@ export function AgentModal({
           avatar: agent.avatar ?? '🤖',
           model: agent.model ?? 'sonnet',
           backend: agent.backendId ?? 'claude',
-          accountId: agent.accountId ?? '',
+          backendId: agent.backendId ?? agent.accountId ?? '',
           systemPrompt: agent.systemPrompt ?? '',
           skillIds: agent.skillIds ?? [],
           allowedTools: agent.allowedTools ?? [],
@@ -99,16 +102,25 @@ export function AgentModal({
   useEffect(() => {
     if (!backendsState) return;
     const b = backendsState.backends?.[form.backend];
-    if (!b?.models) return;
+    if (!b || !b.models) return;
     const alias = Object.entries(b.models).find(([, v]) => v === form.model)?.[0];
     if (alias && alias !== form.model) setForm((f) => ({ ...f, model: alias }));
   }, [backendsState, form.backend]);
 
   // Models available for the currently selected backend
+  // claude-cli 포함 모든 백엔드: models 딕셔너리 사용, 없으면 기본 3종 제공
   const availableModels = useMemo(() => {
     const b = backendsState?.backends?.[form.backend];
-    if (!b) return [];
-    return Object.entries(b.models).map(([alias, modelId]) => ({
+    const entries = b ? Object.entries(b.models ?? {}) : [];
+    if (entries.length === 0) {
+      // models 미설정 백엔드(기본 claude 포함) → opus/sonnet/haiku 폴백
+      return [
+        { value: 'opus',   label: 'opus' },
+        { value: 'sonnet', label: 'sonnet' },
+        { value: 'haiku',  label: 'haiku' },
+      ];
+    }
+    return entries.map(([alias, modelId]) => ({
       value: alias,
       label: alias === modelId ? alias : `${alias}  →  ${modelId}`
     }));
@@ -169,9 +181,9 @@ export function AgentModal({
                 value={form.backend}
                 onChange={(e) => {
                   const newBackend = e.target.value;
-                  // Reset model to first available in new backend
                   const b = backendsState?.backends?.[newBackend];
-                  const firstModel = b ? Object.keys(b.models)[0] ?? 'sonnet' : 'sonnet';
+                  const modelKeys = b ? Object.keys(b.models ?? {}) : [];
+                  const firstModel = modelKeys[0] ?? 'sonnet';
                   setForm({ ...form, backend: newBackend, model: firstModel });
                 }}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
@@ -202,16 +214,16 @@ export function AgentModal({
               </select>
             </Field>
           </div>
-          {accounts.length > 0 && (
-            <Field label="계정" help="이 에이전트에 사용할 Claude 계정 (설정 > 계정에서 등록)">
+          {claudeCliBackends.length > 0 && (
+            <Field label="Claude 백엔드" help="이 에이전트에 사용할 Claude CLI 백엔드 (설정 > 백엔드에서 등록)">
               <select
-                value={form.accountId}
-                onChange={(e) => setForm({ ...form, accountId: e.target.value })}
+                value={form.backendId}
+                onChange={(e) => setForm({ ...form, backendId: e.target.value })}
                 className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
               >
-                <option value="">기본 계정</option>
-                {accounts.filter((a) => a.status !== 'disabled').map((a) => (
-                  <option key={a.id} value={a.id}>{a.label}</option>
+                <option value="">기본 (스케줄러 자동 배정)</option>
+                {claudeCliBackends.map((b) => (
+                  <option key={b.id} value={b.id}>{b.label}</option>
                 ))}
               </select>
             </Field>

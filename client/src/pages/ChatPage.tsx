@@ -63,12 +63,6 @@ export default function ChatPage() {
     }
   }, [agentsQ.data, currentAgentId, setCurrentAgent]);
 
-  // 채팅 페이지 진입 시 모든 unread 클리어 (채팅 탭 파란 점 잔존 버그 방지)
-  const clearAllUnread = useChatStore((s) => s.clearAllUnread);
-  useEffect(() => {
-    clearAllUnread();
-  }, [clearAllUnread]);
-
   // 현재 세션 열려있으면 자동으로 읽음 처리 (새로고침/탭 복귀/visibility)
   const markRead = useChatStore((s) => s.markRead);
   useEffect(() => {

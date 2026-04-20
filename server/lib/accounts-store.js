@@ -56,19 +56,19 @@ export async function createAccountsStore(_filePath, { backendsStore } = {}) {
       return toAccount(id, b);
     },
 
-    async create({ label, configDir, priority = 50 }) {
+    async create({ label, configDir, priority = 50, models = {}, status = 'disabled' }) {
       const id = newId();
       const now = new Date().toISOString();
       await backendsStore.createBackend(id, {
         type: 'claude-cli',
         label,
         configDir: configDir ?? null,
-        status: 'active',
+        status,  // 기본 disabled — 로그인 후 수동 활성화
         lastUsedAt: null,
         usage: { windowStart: null, messagesUsed: 0 },
         priority,
         cooldownUntil: null,
-        models: {},
+        models: models ?? {},
         createdAt: now,
         updatedAt: now,
       });

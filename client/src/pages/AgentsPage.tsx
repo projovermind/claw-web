@@ -32,11 +32,11 @@ export default function AgentsPage() {
         allowedTools: form.allowedTools,
         disallowedTools: form.disallowedTools
       });
-      // skillIds / backendId / accountId 는 metadata overlay — create 후 PATCH 로 적용
+      // skillIds / backendId 는 metadata overlay — create 후 PATCH 로 적용
       const patch: Record<string, unknown> = {};
       if (form.skillIds.length > 0) patch.skillIds = form.skillIds;
       if (form.backend && form.backend !== 'claude') patch.backendId = form.backend;
-      if (form.accountId) patch.accountId = form.accountId;
+      if (form.backendId) patch.backendId = form.backendId;
       if (Object.keys(patch).length > 0) {
         await api.patchAgent(form.id, patch);
       }
@@ -62,8 +62,7 @@ export default function AgentsPage() {
           name: form.name,
           avatar: form.avatar,
           model: form.model,
-          backendId: form.backend === 'claude' ? null : form.backend,
-          accountId: form.accountId || null,
+          backendId: form.backendId || (form.backend === 'claude' ? null : form.backend),
           systemPrompt: form.systemPrompt,
           skillIds: form.skillIds,
           allowedTools: form.allowedTools,

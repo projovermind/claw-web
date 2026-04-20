@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Server, KeyRound, ToggleRight, Webhook, Plug, Clock, Palette, Bell, ChevronRight, Users } from 'lucide-react';
+import { Server, KeyRound, ToggleRight, Webhook, Plug, Clock, Palette, Bell, ChevronRight } from 'lucide-react';
 import { BackendsTab } from '../components/settings/BackendsTab';
 import { AccessTab } from '../components/settings/AccessTab';
 import { FeaturesTab } from '../components/settings/FeaturesTab';
@@ -8,10 +8,9 @@ import { McpServersTab } from '../components/settings/McpServersTab';
 import { SchedulesTab } from '../components/settings/SchedulesTab';
 import { AppearanceTab } from '../components/settings/AppearanceTab';
 import { NotificationsTab } from '../components/settings/NotificationsTab';
-import { AccountsTab } from '../components/settings/AccountsTab';
 import { useT } from '../lib/i18n';
 
-type Tab = 'appearance' | 'backends' | 'access' | 'features' | 'hooks' | 'mcp' | 'schedules' | 'notifications' | 'accounts';
+type Tab = 'appearance' | 'backends' | 'access' | 'features' | 'hooks' | 'mcp' | 'schedules' | 'notifications';
 
 export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>('appearance');
@@ -43,7 +42,6 @@ export default function SettingsPage() {
         <TabButton label={t('settings.tab.mcp')} icon={<Plug size={14} />} active={tab === 'mcp'} onClick={() => setTab('mcp')} />
         <TabButton label={t('settings.tab.schedules')} icon={<Clock size={14} />} active={tab === 'schedules'} onClick={() => setTab('schedules')} />
         <TabButton label="알림" icon={<Bell size={14} />} active={tab === 'notifications'} onClick={() => setTab('notifications')} />
-        <TabButton label="계정" icon={<Users size={14} />} active={tab === 'accounts'} onClick={() => setTab('accounts')} />
       </div>
       {/* 오른쪽 더 있음 표시 — 모바일에서만 */}
       {canScrollRight && (
@@ -62,7 +60,6 @@ export default function SettingsPage() {
         {tab === 'mcp' && <McpServersTab />}
         {tab === 'schedules' && <SchedulesTab />}
         {tab === 'notifications' && <NotificationsTab />}
-        {tab === 'accounts' && <AccountsTab />}
       </div>
     </div>
   );

@@ -32,7 +32,6 @@ export default function Sidebar() {
   const settingsQ = useQuery({ queryKey: ['settings-appearance'], queryFn: api.getSettings, staleTime: 30_000 });
   const appName = (settingsQ.data as { appearance?: { appName?: string } } | undefined)?.appearance?.appName ?? DEFAULT_APPEARANCE.appName;
   const currentSessionId = useChatStore((s) => s.currentSessionId);
-  const isChatActive = location.pathname.startsWith('/chat');
   const { data: sessionsData } = useQuery({
     queryKey: ['sessions-all'],
     queryFn: api.allSessions,
@@ -41,7 +40,6 @@ export default function Sidebar() {
   // 유효한 unread 만 카운트: (존재하는 세션) ∧ (현재 열린 세션 아님)
   // 이 필터 없으면 삭제된 세션 / 열고 있는 세션의 유령 unread 로 파란점 상시 점등
   const validUnreadCount = (() => {
-    if (isChatActive) return 0; // 채팅 탭에 있으면 숨김
     const sessions = sessionsData?.sessions ?? [];
     if (sessions.length === 0) return 0;
     const valid = new Set(sessions.map((s) => s.id));
@@ -52,8 +50,14 @@ export default function Sidebar() {
     return n;
   })();
   const hasUnread = validUnreadCount > 0;
+  const hasError = (() => {
+    const sessions = sessionsData?.sessions ?? [];
+    if (sessions.length === 0) return false;
+    const valid = new Set(sessions.map((s) => s.id));
+    return Object.entries(unread).some(([id, u]) => u?.isError && valid.has(id) && id !== currentSessionId);
+  })();
   const hasRunning = (sessionsData?.sessions ?? []).some((s) => isSessionRunning(s, runtime));
-  const chatDotColor = hasUnread ? 'bg-sky-400' : hasRunning ? 'bg-amber-400' : null;
+  const chatDotColor = hasError ? 'bg-red-400' : hasUnread ? 'bg-sky-400' : hasRunning ? 'bg-amber-400' : null;
 
   // Close drawer on route change (mobile)
   useEffect(() => {
@@ -148,7 +152,7 @@ export default function Sidebar() {
                   <Icon size={16} />
                   <span className="flex-1">{label}</span>
                   {showChatDot && (
-                    <span className={`w-2 h-2 rounded-full ${chatDotColor} ${hasUnread ? 'animate-pulse' : hasRunning ? 'animate-pulse' : ''}`} />
+                    <span className={`w-2 h-2 rounded-full ${chatDotColor} ${hasError || hasUnread || hasRunning ? 'animate-pulse' : ''}`} />
                   )}
                 </NavLink>
               );

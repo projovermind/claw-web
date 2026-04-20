@@ -1,3 +1,6 @@
+import fssync from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import { logger } from './logger.js';
 
 const RATE_LIMIT_PATTERNS = [
@@ -25,6 +28,38 @@ export function parseRateLimitExpiry(text) {
 
   // Default: 5 hours
   return Date.now() + 5 * 3_600_000;
+}
+
+/**
+ * configDir에 로그인된 계정이 있는지 확인.
+ * Claude CLI 인증 방식 2가지를 모두 지원:
+ *   - 구형: .credentials.json
+ *   - 신형: .claude.json 안의 oauthAccount 필드
+ * configDir이 null/빈 문자열이면 기본 ~/.claude/ 사용 → 항상 통과.
+ */
+function hasCredentials(configDir) {
+  if (!configDir) return true; // 기본 claude 계정 — 별도 configDir 없음
+  try {
+    // 구형 credentials 파일
+    if (fssync.existsSync(path.join(configDir, '.credentials.json'))) return true;
+    // 신형 .claude.json + oauthAccount
+    const claudeJson = path.join(configDir, '.claude.json');
+    if (fssync.existsSync(claudeJson)) {
+      const raw = fssync.readFileSync(claudeJson, 'utf8');
+      const data = JSON.parse(raw);
+      if (data?.oauthAccount?.accountUuid) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 기본 Claude CLI 계정(~/.claude/) 존재 여부 확인.
+ */
+function defaultClaudeHasCredentials() {
+  return hasCredentials(path.join(os.homedir(), '.claude'));
 }
 
 export function createAccountScheduler({ accountsStore, backendsStore }) {
@@ -82,19 +117,61 @@ export function createAccountScheduler({ accountsStore, backendsStore }) {
   function pickAccount(agent) {
     autoRestoreCooldowns().catch(() => {});
 
+    // 1. 에이전트 명시 accountId
     if (agent.accountId) {
       const acc = accountsStore.getById(agent.accountId);
-      if (acc && acc.status !== 'disabled') return acc;
+      if (acc && acc.status !== 'disabled' && hasCredentials(acc.configDir)) return acc;
     }
 
+    // 2. backendId가 claude-cli 타입 계정이면 해당 계정 직접 사용
+    //    (AgentModal "AI 회사" 드롭다운에서 서브계정 선택한 경우)
+    //    ⚠️ disabled 상태여도 사용 — disabled는 "자동선택 제외"이지 "사용 금지"가 아님.
+    //       에이전트가 명시적으로 지정한 경우 반드시 해당 계정을 사용해야 함.
+    if (agent.backendId && backendsStore) {
+      const b = backendsStore.getBackend(agent.backendId);
+      if (b?.type === 'claude-cli') {
+        if (hasCredentials(b.configDir)) {
+          // accountsStore 에서 찾거나 직접 configDir 포함 객체 반환
+          const acc = accountsStore.getById(agent.backendId);
+          logger.info(
+            { agentId: agent.id, backendId: agent.backendId, status: b.status, configDir: b.configDir },
+            '[scheduler] using explicitly specified claude-cli backend'
+          );
+          return acc ?? { id: agent.backendId, configDir: b.configDir ?? null };
+        } else {
+          logger.warn(
+            { agentId: agent.id, backendId: agent.backendId, configDir: b.configDir },
+            '[scheduler] selected claude-cli backend has no credentials — falling back to default'
+          );
+          // credentials 없으면 fallback: configDir 없이 기본 계정 사용
+          return { id: agent.backendId, configDir: null };
+        }
+      }
+    }
+
+    // 3. 프로젝트 레벨 accountId
     if (agent.projectAccountId) {
       const acc = accountsStore.getById(agent.projectAccountId);
-      if (acc && acc.status !== 'disabled') return acc;
+      if (acc && acc.status !== 'disabled' && hasCredentials(acc.configDir)) return acc;
     }
 
     const active = accountsStore
       .getAll()
-      .filter((a) => a.status === 'active')
+      .filter((a) => {
+        if (a.status !== 'active') return false;
+        // configDir이 있는 서브계정은 credentials.json 있어야 사용 가능
+        if (a.configDir && !hasCredentials(a.configDir)) {
+          logger.warn({ accountId: a.id, configDir: a.configDir },
+            '[scheduler] skipping account — no .credentials.json (run /login first)');
+          return false;
+        }
+        // 기본 claude 계정(configDir 없음)도 credentials 확인
+        if (!a.configDir && !defaultClaudeHasCredentials()) {
+          logger.warn({ accountId: a.id }, '[scheduler] skipping default claude — no .credentials.json');
+          return false;
+        }
+        return true;
+      })
       .sort((a, b) => {
         if (!a.lastUsedAt) return -1;
         if (!b.lastUsedAt) return 1;

@@ -166,12 +166,13 @@ export const api = {
   backends: () => get<BackendsState>('/backends'),
   createBackend: (data: {
     id: string;
-    type: 'openai-compatible';
+    type: 'openai-compatible' | 'claude-cli';
     label: string;
-    baseURL: string;
-    envKey: string;
-    models: Record<string, string>;
+    baseURL?: string;
+    envKey?: string;
+    models?: Record<string, string>;
     secret?: string;
+    priority?: number;
   }) => post<BackendPublic>('/backends', data),
   patchBackend: (id: string, data: Partial<BackendPublic>) => patch<BackendPublic>(`/backends/${id}`, data),
   setBackendSecret: (id: string, value: string | null) =>
@@ -311,14 +312,16 @@ export const api = {
   // Accounts (multi-account)
   listAccounts: () =>
     get<{ accounts: import('./types').Account[] }>('/accounts').then((r) => r.accounts),
-  createAccount: (data: { label: string; configDir?: string; priority?: number }) =>
+  createAccount: (data: { label: string; configDir?: string; priority?: number; models?: Record<string, string> }) =>
     post<import('./types').Account>('/accounts', data),
-  patchAccount: (id: string, data: { label?: string; configDir?: string; status?: string; priority?: number }) =>
+  patchAccount: (id: string, data: { label?: string; configDir?: string; status?: string; priority?: number; models?: Record<string, string> }) =>
     patch<import('./types').Account>(`/accounts/${id}`, data),
   deleteAccount: (id: string) =>
     del<void>(`/accounts/${id}`),
   testAccount: (id: string) =>
     post<{ ok: boolean; configDir: string; output?: string; error?: string }>(`/accounts/${id}/test`, {}),
+  loginAccount: (id: string) =>
+    post<{ ok: boolean; message?: string; command?: string; error?: string; manual?: boolean }>(`/accounts/${id}/login`, {}),
 
   uploadFile: async (file: File): Promise<{
     id: string;

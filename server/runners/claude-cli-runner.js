@@ -94,10 +94,19 @@ export function startClaudeRun({
     const pickedAcc = accountScheduler.pickAccount(agent);
     if (pickedAcc) {
       pickedAccountId = pickedAcc.id;
-      cleanEnv.CLAUDE_CONFIG_DIR = pickedAcc.configDir;
+      if (pickedAcc.configDir) {
+        // configDir이 실제 경로일 때만 설정
+        cleanEnv.CLAUDE_CONFIG_DIR = pickedAcc.configDir;
+      } else {
+        // null이면 기본 ~/.claude/ 사용 — 이전 값 완전히 제거
+        delete cleanEnv.CLAUDE_CONFIG_DIR;
+      }
     }
   } else if (agent.configDir) {
     cleanEnv.CLAUDE_CONFIG_DIR = agent.configDir;
+  } else {
+    // configDir 미지정 시 혹시 남아있을 수 있는 값 제거
+    delete cleanEnv.CLAUDE_CONFIG_DIR;
   }
 
   // 백엔드 스케줄러: backendsStore 기반 pickBackend 지원
@@ -274,9 +283,11 @@ export function startClaudeRun({
   // 3) 일반 stall (10분): Claude 모델이 응답 생성 중 멈춤
   const INITIAL_IDLE_MS = 300_000;       // 5분
   const TOOL_RUNNING_STALL_MS = 1_800_000; // 30분 (도구 실행 중)
-  const IDLE_STALL_MS = 600_000;           // 10분 (일반 응답 대기)
+  const IDLE_STALL_MS = 1_200_000;         // 20분 (일반 응답 대기) — 이미지 분석/큰 컨텍스트 thinking 보호
+  const POST_TOOL_THINKING_MS = 60_000;    // 60초: tool_result 직후 모델 thinking 보호 구간
 
   let pendingToolUse = false;  // 마지막으로 본 이벤트가 tool_use인데 아직 결과 못 받음
+  let postToolThinkingTimer = null; // tool_result 직후 pendingToolUse 를 잠시 더 유지시키는 타이머
   let idleTimer = setTimeout(() => {
     if (!gotAnyOutput) {
       logger.warn({ agent: agent.id, cwd }, 'runner: claude CLI idle timeout (no output) — killing');
@@ -309,8 +320,17 @@ export function startClaudeRun({
       pendingToolUse = true;
       onToolUse?.({ name: event.content_block.name, input: event.content_block.input || {} });
     } else if (event.type === 'user') {
-      // tool_result 가 담겨서 오는 이벤트 — 도구 실행 완료
-      pendingToolUse = false;
+      // tool_result 가 담겨서 오는 이벤트 — 도구 실행 완료.
+      // 단, 직후 60초간은 모델이 다음 행동(특히 이미지/대용량 분석 thinking)을 결정하는
+      // 구간이라 stdout이 잠시 비는데, 이때 IDLE_STALL_MS 가 발동하면 부당하게 kill 됨.
+      // → POST_TOOL_THINKING_MS 동안은 pendingToolUse=true 로 유지해 TOOL_RUNNING_STALL 적용.
+      pendingToolUse = true;
+      if (postToolThinkingTimer) clearTimeout(postToolThinkingTimer);
+      postToolThinkingTimer = setTimeout(() => {
+        pendingToolUse = false;
+        postToolThinkingTimer = null;
+        scheduleStallTimer();
+      }, POST_TOOL_THINKING_MS);
     } else if (event.type === 'assistant') {
       if (!resultModel) resultModel = event.message?.model || event.model || null;
       const content = event.message?.content || event.content || [];
@@ -333,6 +353,8 @@ export function startClaudeRun({
     } else if (event.type === 'result') {
       pendingToolUse = false;
       resultText = event.result ?? null;
+      // 실제 rate-limit 오류만 감지 — is_error: true 인 result 이벤트에서만 체크
+      if (event.is_error && resultText) handleRateLimit(resultText);
       resultSessionId = event.session_id || null;
       if (!resultModel) resultModel = event.model || null;
       if (event.usage) {
@@ -354,7 +376,6 @@ export function startClaudeRun({
     buffer = lines.pop() || '';
     for (const line of lines) {
       if (!line.trim()) continue;
-      handleRateLimit(line);
       try { handleEvent(JSON.parse(line)); } catch { /* ignore non-JSON */ }
     }
     // 이벤트 파싱 후 pendingToolUse 상태 반영하여 타이머 재설정
@@ -366,6 +387,8 @@ export function startClaudeRun({
     const chunk = d.toString();
     stderrChunks.push(chunk);
     handleRateLimit(chunk);
+    // stderr activity (debug logs, warnings) 도 활동 신호로 간주 → idle timeout 리셋
+    resetIdleTimer();
   });
 
   proc.on('close', (code) => {

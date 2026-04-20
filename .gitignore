@@ -30,3 +30,4 @@ dist/*.pkg
 .vercel
 .playwright-mcp/
 notion-*.png
+null/

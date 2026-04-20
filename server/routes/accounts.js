@@ -13,6 +13,7 @@ const createSchema = z.object({
   label: z.string().min(1).max(80),
   configDir: z.string().max(500).optional(),
   priority: z.number().int().min(0).max(999).optional(),
+  models: z.record(z.string().max(200)).optional(),
 }).strict();
 
 const updateSchema = z.object({
@@ -20,6 +21,7 @@ const updateSchema = z.object({
   configDir: z.string().max(500).optional(),
   status: z.enum(['active', 'cooldown', 'disabled']).optional(),
   priority: z.number().int().min(0).max(999).optional(),
+  models: z.record(z.string().max(200)).optional(),
 }).strict();
 
 function findClaudeBin() {
@@ -59,6 +61,7 @@ export function createAccountsRouter({ accountsStore, eventBus }) {
         label: data.label,
         configDir: data.configDir ?? '',  // placeholder, updated below
         priority: data.priority ?? 0,
+        models: data.models ?? {},
       });
 
       // Resolve final configDir
@@ -103,6 +106,32 @@ export function createAccountsRouter({ accountsStore, eventBus }) {
     } catch (err) {
       if (err.code === 'NOT_FOUND') return next(new HttpError(404, err.message, 'NOT_FOUND'));
       next(err);
+    }
+  });
+
+  // POST /:id/login — Terminal.app 에서 `CLAUDE_CONFIG_DIR=... claude login` 실행
+  // macOS 전용 (osascript). 비-macOS 에서는 login 명령어만 반환.
+  router.post('/:id/login', async (req, res, next) => {
+    try {
+      const acc = accountsStore.getById(req.params.id);
+      if (!acc) return next(new HttpError(404, 'Account not found', 'NOT_FOUND'));
+      if (!acc.configDir) return res.status(400).json({ error: 'configDir이 아직 설정되지 않았습니다' });
+
+      const loginCmd = `CLAUDE_CONFIG_DIR=${acc.configDir} ${CLAUDE_BIN} login`;
+
+      if (process.platform !== 'darwin') {
+        return res.json({ ok: false, manual: true, command: loginCmd, message: 'macOS가 아니면 직접 실행하세요' });
+      }
+
+      const script = `tell application "Terminal" to do script "${loginCmd}"`;
+      await execFileAsync('osascript', [
+        '-e', script,
+        '-e', 'tell application "Terminal" to activate'
+      ], { timeout: 5000 });
+
+      res.json({ ok: true, message: 'Terminal을 통해 로그인 창을 열었습니다', command: loginCmd });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
     }
   });
 

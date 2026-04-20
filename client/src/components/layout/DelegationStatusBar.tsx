@@ -16,7 +16,10 @@ function DelegationItem({ entry }: { entry: DelegationEntry }) {
   const [isStuck, setIsStuck] = useState(false);
 
   useEffect(() => {
-    if (isDone) return;
+    if (isDone) {
+      setIsStuck(false);
+      return;
+    }
 
     const check = async () => {
       try {
@@ -56,7 +59,7 @@ function DelegationItem({ entry }: { entry: DelegationEntry }) {
 
   const handleResume = async () => {
     try { await api.abortChat(entry.targetSessionId); } catch { /* 이미 종료 */ }
-    await api.sendMessage(entry.targetSessionId, '이전 작업을 이어서 완료해줘.', []);
+    await api.sendMessage(entry.originSessionId, '이전 위임 결과를 바탕으로 다음 단계를 진행해주세요.', []);
     fail(entry.id);
   };
 
@@ -92,7 +95,17 @@ function DelegationItem({ entry }: { entry: DelegationEntry }) {
       </span>
 
       {/* 뱃지 or stuck 버튼 */}
-      {isStuck ? (
+      {isDone ? (
+        <span
+          className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${
+            entry.status === 'failed'
+              ? 'bg-red-900/60 text-red-400'
+              : 'bg-emerald-900/60 text-emerald-400'
+          }`}
+        >
+          {entry.status === 'failed' ? '실패' : '완료'}
+        </span>
+      ) : isStuck ? (
         <div className="pointer-events-auto flex items-center gap-1">
           <button
             onClick={handleResume}
@@ -108,16 +121,8 @@ function DelegationItem({ entry }: { entry: DelegationEntry }) {
           </button>
         </div>
       ) : (
-        <span
-          className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${
-            isDone
-              ? entry.status === 'failed'
-                ? 'bg-red-900/60 text-red-400'
-                : 'bg-emerald-900/60 text-emerald-400'
-              : 'bg-blue-900/60 text-blue-300'
-          }`}
-        >
-          {isDone ? (entry.status === 'failed' ? '실패' : '완료') : '진행 중'}
+        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-blue-900/60 text-blue-300">
+          진행 중
         </span>
       )}
     </div>

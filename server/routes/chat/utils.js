@@ -6,6 +6,10 @@ import { logger } from '../../lib/logger.js';
  */
 export function classifyError(errMsg = '') {
   const msg = errMsg.toLowerCase();
+  // 쿨다운 선제 차단 메시지 (runner pre-spawn) — 재시도 불가, 사용자에게 바로 표시
+  if (msg.includes('사용량 한도 도달') || msg.includes('자동 복구됩니다')) {
+    return { canRetry: false, delay: 0, label: 'rate_limit_cooldown' };
+  }
   if (msg.includes('rate limit') || msg.includes('429')) {
     return { canRetry: true, delay: 60000, label: 'rate_limit' };
   }
@@ -124,6 +128,43 @@ export function resolveAgent(agentId, { configStore, metadataStore, projectsStor
   if (deny.length) agent.disallowedTools = deny;
   const envOverrides = buildBackendEnv(agent, backendsStore);
   const { backendId, backendType, backendObj } = resolveBackend(agent, backendsStore);
+
+  // ── 모델 별칭 해석 ──
+  // 백엔드 models 딕셔너리: { "opus sub": "claude-opus-4-5", ... }
+  // agent.model이 별칭(예: "opus sub")이면 실제 모델 ID로 교체.
+  // 1차: 선택된 백엔드에서 해석 시도
+  if (backendObj?.models && agent.model) {
+    const resolvedId = backendObj.models[agent.model];
+    if (resolvedId) {
+      agent.model = resolvedId;
+    }
+  }
+  // 2차: 여전히 별칭이 남아있으면 agent.backendId 원본 백엔드에서 시도
+  if (!backendObj?.models?.[agent.model] && backendsStore && agent.backendId) {
+    const originalBackend = backendsStore.getBackend(agent.backendId);
+    if (originalBackend?.models && agent.model) {
+      const resolvedId = originalBackend.models[agent.model];
+      if (resolvedId) agent.model = resolvedId;
+    }
+  }
+  // 3차: backendId 없는 에이전트가 서브계정 별칭(e.g. "sonnet sub")을 사용하는 경우
+  // → 모든 백엔드를 스캔해서 해당 별칭을 가진 첫 번째 백엔드로 해석
+  if (backendsStore && agent.model) {
+    const raw = backendsStore.getRaw();
+    const allBackends = Object.values(raw?.backends ?? {});
+    const isRawModelId = agent.model.startsWith('claude-') || agent.model.startsWith('glm-');
+    if (!isRawModelId) {
+      for (const b of allBackends) {
+        if (b.models?.[agent.model]) {
+          const resolvedId = b.models[agent.model];
+          logger.info({ agentId: agent.id, alias: agent.model, resolvedId }, 'resolveAgent: alias resolved via global backend scan');
+          agent.model = resolvedId;
+          break;
+        }
+      }
+    }
+  }
+
   return {
     agent, envOverrides, backendType,
     backendConfig: { backendName: backendId, fallbackId: backendObj?.fallback || null }

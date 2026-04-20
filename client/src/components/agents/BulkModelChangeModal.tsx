@@ -30,9 +30,8 @@ export function BulkModelChangeModal({ onClose }: { onClose: () => void }) {
     const b = backends?.backends ?? {};
     for (const cfg of Object.values(b)) {
       const models = (cfg as { models?: Record<string, string> }).models ?? {};
-      for (const [alias, id] of Object.entries(models)) {
+      for (const alias of Object.keys(models)) {
         set.add(alias);
-        if (id !== alias) set.add(id);
       }
     }
     // 기본 aliases
@@ -200,7 +199,6 @@ export function BulkModelChangeModal({ onClose }: { onClose: () => void }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <span className="font-semibold truncate">{a.name || a.id}</span>
-                      <span className="text-[11px] text-zinc-500 font-mono">{a.id}</span>
                     </div>
                     <div className="text-[11px] text-zinc-500 flex items-center gap-1.5">
                       {a.projectId && <span>{a.projectId}</span>}

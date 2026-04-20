@@ -8,6 +8,8 @@ import { ModelRow } from './ModelRow';
 import { SecretInput } from './SecretInput';
 import { useT } from '../../lib/i18n';
 
+type ApiBackend = Extract<BackendPublic, { type: 'openai-compatible' | 'anthropic-compatible' }>;
+
 export function BackendCard({
   backend,
   isActive,
@@ -15,10 +17,10 @@ export function BackendCard({
   allBackends,
   onDelete
 }: {
-  backend: BackendPublic;
+  backend: ApiBackend;
   isActive: boolean;
   isAusterity: boolean;
-  allBackends: BackendPublic[];
+  allBackends: ApiBackend[];
   onDelete: () => void;
 }) {
   const qc = useQueryClient();
@@ -85,45 +87,36 @@ export function BackendCard({
               </span>
             )}
           </div>
-          <div className="text-[11px] text-zinc-500 font-mono">{backend.id}</div>
         </div>
-        {backend.type !== 'claude-cli' && (
-          <button
-            onClick={onDelete}
-            className="p-1 rounded hover:bg-red-900/40 text-zinc-500 hover:text-red-400"
-            title={t('backendCard.delete')}
-          >
-            <Trash2 size={14} />
-          </button>
-        )}
+        <button
+          onClick={onDelete}
+          className="p-1 rounded hover:bg-red-900/40 text-zinc-500 hover:text-red-400"
+          title={t('backendCard.delete')}
+        >
+          <Trash2 size={14} />
+        </button>
       </div>
       <div className="text-[11px] text-zinc-500 space-y-1">
         <div>
           <span className="text-zinc-600">Type:</span> {backend.type}
         </div>
-        {backend.type !== 'claude-cli' && (
-          <div className="flex items-center gap-1.5 font-mono">
-            <span className="text-zinc-600 shrink-0">URL:</span>
-            <InlineEditText
-              value={backend.baseURL ?? ''}
-              onSave={(v) => patchField.mutate({ baseURL: v })}
-              className="text-zinc-400 flex-1 truncate"
-              placeholder="https://api.example.com/v1/"
-            />
-          </div>
-        )}
+        <div className="flex items-center gap-1.5 font-mono">
+          <span className="text-zinc-600 shrink-0">URL:</span>
+          <InlineEditText
+            value={backend.baseURL ?? ''}
+            onSave={(v) => patchField.mutate({ baseURL: v })}
+            className="text-zinc-400 flex-1 truncate"
+            placeholder="https://api.example.com/v1/"
+          />
+        </div>
         <div className="flex items-center gap-1.5">
           <span className="text-zinc-600 shrink-0">Env:</span>
-          {backend.type === 'claude-cli' ? (
-            <span className="font-mono text-zinc-400">{backend.envKey ?? 'ANTHROPIC_API_KEY'}</span>
-          ) : (
-            <InlineEditText
-              value={backend.envKey ?? ''}
-              onSave={(v) => patchField.mutate({ envKey: v })}
-              className="font-mono text-zinc-400"
-              placeholder="MY_API_KEY"
-            />
-          )}
+          <InlineEditText
+            value={backend.envKey ?? ''}
+            onSave={(v) => patchField.mutate({ envKey: v })}
+            className="font-mono text-zinc-400"
+            placeholder="MY_API_KEY"
+          />
           {backend.envStatus?.startsWith('set') ? (
             <span className="flex items-center gap-0.5 text-emerald-400">
               <Check size={10} /> {backend.envStatus}
@@ -138,45 +131,27 @@ export function BackendCard({
             </span>
           )}
         </div>
-        {backend.type === 'claude-cli' && (
-          <div className="text-[11px] text-zinc-600">
-            {t('backendCard.claudeOauthHint')}
-          </div>
-        )}
       </div>
-      {/* Fallback 설정 */}
-      {backend.type !== 'claude-cli' && (
-        <div className="flex items-center gap-1.5 text-[11px]">
-          <span className="text-zinc-600 shrink-0">{t('backendCard.fallbackLabel')}</span>
-          <select
-            value={backend.fallback ?? ''}
-            onChange={(e) => patchField.mutate({ fallback: e.target.value || null } as Partial<BackendPublic>)}
-            className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] text-zinc-400 font-mono"
-          >
-            <option value="">{t('backendCard.fallbackNone')}</option>
-            {allBackends.filter(b => b.id !== backend.id).map(b => (
-              <option key={b.id} value={b.id}>{b.label} ({b.id})</option>
-            ))}
-          </select>
-          <span className="text-zinc-600">{t('backendCard.fallbackHint')}</span>
-        </div>
-      )}
+      <div className="flex items-center gap-1.5 text-[11px]">
+        <span className="text-zinc-600 shrink-0">{t('backendCard.fallbackLabel')}</span>
+        <select
+          value={backend.fallback ?? ''}
+          onChange={(e) => patchField.mutate({ fallback: e.target.value || null })}
+          className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] text-zinc-400 font-mono"
+        >
+          <option value="">{t('backendCard.fallbackNone')}</option>
+          {allBackends.filter(b => b.id !== backend.id).map(b => (
+            <option key={b.id} value={b.id}>{b.label} ({b.id})</option>
+          ))}
+        </select>
+        <span className="text-zinc-600">{t('backendCard.fallbackHint')}</span>
+      </div>
 
       {backend.envKey && (
         <SecretInput
           backendId={backend.id}
           envKey={backend.envKey}
           source={backend.secretSource ?? 'none'}
-        />
-      )}
-      {/* Claude CLI: OAuth 토큰도 별도 입력 */}
-      {backend.type === 'claude-cli' && (
-        <SecretInput
-          backendId={`${backend.id}_oauth`}
-          envKey="CLAUDE_CODE_OAUTH_TOKEN"
-          source="none"
-          label={t('backendCard.oauthTokenLabel')}
-          hint={t('backendCard.oauthTokenHint')}
         />
       )}
       <div className="border-t border-zinc-800 pt-2">
