@@ -4,7 +4,7 @@ import { useWsStore } from '../store/ws-store';
 import { useChatStore } from '../store/chat-store';
 import { useToastStore } from '../store/toast-store';
 import { useDelegationStore } from '../store/delegation-store';
-import { getAuthToken } from '../lib/api';
+import { getAuthToken, api } from '../lib/api';
 import { useT } from '../lib/i18n';
 import { playDing, playWarn } from '../lib/sound';
 
@@ -68,9 +68,11 @@ export function useWebSocket() {
 
       ws.onopen = () => {
         setState('open');
-        // 재연결 시 서버 재시작으로 완료 이벤트를 못 받은 running 항목 정리
+        // 재연결 시 서버에서 active 목록 다시 로드 (새로고침 후 hydrate)
         if (retryRef.current > 0) {
-          useDelegationStore.getState().clearStale();
+          api.delegations()
+            .then((entries) => useDelegationStore.getState().hydrate(entries))
+            .catch(() => useDelegationStore.getState().clearStale());
         }
         retryRef.current = 0;
       };

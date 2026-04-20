@@ -131,7 +131,13 @@ function DelegationItem({ entry }: { entry: DelegationEntry }) {
 
 export default function DelegationStatusBar() {
   const delegations = useDelegationStore((s) => s.delegations);
+  const hydrate = useDelegationStore((s) => s.hydrate);
   const removeRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // 새로고침 시 서버에서 active 위임 목록 복원
+  useEffect(() => {
+    api.delegations().then(hydrate).catch(() => {/* 무시 */});
+  }, [hydrate]);
 
   useEffect(() => {
     const timers = removeRef.current;

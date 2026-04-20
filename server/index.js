@@ -50,6 +50,7 @@ import { createLspRouter } from './routes/lsp.js';
 import { createTerraformRouter } from './routes/terraform.js';
 import { createUndoRouter } from './routes/undo.js';
 import { createExportImportRouter } from './routes/export-import.js';
+import { createDelegationsRouter } from './routes/delegations.js';
 import { createHooksStore } from './lib/hooks-store.js';
 import { createScheduler } from './lib/scheduler.js';
 import { createDelegationTracker } from './lib/delegation-tracker.js';
@@ -367,6 +368,7 @@ async function main() {
   app.use('/api/lsp', createLspRouter({ projectsStore }));
   app.use('/api/terraform', createTerraformRouter({ projectsStore, configStore, metadataStore, eventBus }));
   app.use('/api/undo', createUndoRouter({ configStore, metadataStore, sessionsStore, eventBus }));
+  app.use('/api/delegations', createDelegationsRouter({ delegationTracker }));
   app.use('/api/export-import', createExportImportRouter({ skillsStore, configStore }));
 
   const distPath = path.join(REPO_ROOT, 'client', 'dist');

@@ -186,3 +186,16 @@ export interface BackendsState {
   austerityBackend: string;
   backends: Record<string, BackendPublic>;
 }
+
+export interface DelegationEntry {
+  id: string;
+  originSessionId: string;
+  targetSessionId: string;
+  targetAgentId: string;
+  task: string;
+  loop: boolean;
+  status: 'running' | 'completed' | 'failed';
+  createdAt: string;
+  completedAt: string | null;
+  result: string | null;
+}

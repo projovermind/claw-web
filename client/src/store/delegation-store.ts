@@ -16,6 +16,7 @@ interface DelegationState {
   complete: (id: string) => void;
   fail: (id: string) => void;
   clearStale: () => void;
+  hydrate: (entries: Omit<DelegationEntry, 'startedAt'>[]) => void;
 }
 
 export const useDelegationStore = create<DelegationState>((set) => ({
@@ -43,5 +44,10 @@ export const useDelegationStore = create<DelegationState>((set) => ({
   clearStale: () =>
     set((s) => ({
       delegations: s.delegations.filter((d) => d.status !== 'running')
+    })),
+  // 서버에서 가져온 active 목록으로 상태 복원 (새로고침 시 사용)
+  hydrate: (entries) =>
+    set(() => ({
+      delegations: entries.map((e) => ({ ...e, startedAt: Date.now() }))
     }))
 }));

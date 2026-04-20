@@ -323,6 +323,8 @@ export const api = {
   loginAccount: (id: string) =>
     post<{ ok: boolean; message?: string; command?: string; error?: string; manual?: boolean }>(`/accounts/${id}/login`, {}),
 
+  delegations: () => get<{ delegations: import('./types').DelegationEntry[] }>('/delegations').then(r => r.delegations),
+
   uploadFile: async (file: File): Promise<{
     id: string;
     filename: string;

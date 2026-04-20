@@ -112,6 +112,8 @@ export function createDelegationTracker() {
     /** For debugging */
     activeCount() {
       return active.size;
-    }
+    },
+
+    list() { return [...active.values()]; }
   };
 }

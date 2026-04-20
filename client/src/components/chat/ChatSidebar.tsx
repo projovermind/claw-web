@@ -8,7 +8,7 @@ import { useProgressToastStore } from '../../store/progress-toast-store';
 import type { Session, Agent, Project, BackendsState } from '../../lib/types';
 import { isSessionRunning } from '../../lib/visibility';
 
-/** 에이전트 모델 단축명 뱃지 — 풀네임/단축명 모두 단축명으로 표시 */
+/** 에이전트 모델 단축명 뱃지 — 모델명만 표시 (백엔드명 제외) */
 function ModelBadge({ agent, backends }: { agent: Agent; backends?: BackendsState | null }) {
   const bid = (agent as { backendId?: string }).backendId;
   // backendId 있으면 해당 백엔드만, 없으면 전체 백엔드에서 역방향 조회
@@ -23,13 +23,8 @@ function ModelBadge({ agent, backends }: { agent: Agent; backends?: BackendsStat
       if (found) { shortKey = found[0]; break; }
     }
   }
-  // backend 라벨 — 긴 ID 대신 사람 읽기 편한 label 사용. 없으면 ID 앞 6자만.
-  const backendLabel = bid && bid !== 'claude'
-    ? (backends?.backends?.[bid]?.label ?? bid.slice(0, 6))
-    : null;
   return (
     <span className="px-1 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]">
-      {backendLabel && <span className="text-emerald-400 mr-1">{backendLabel}</span>}
       {shortKey}
     </span>
   );
