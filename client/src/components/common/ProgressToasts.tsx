@@ -1,4 +1,4 @@
-import { X, CheckCircle2 } from 'lucide-react';
+import { X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import { useProgressToastStore, type ProgressTask } from '../../store/progress-toast-store';
 
 const STYLES = `
@@ -23,25 +23,34 @@ const STYLES = `
 function TaskToast({ task }: { task: ProgressTask }) {
   const { dismissTask } = useProgressToastStore();
   const isDone = task.status === 'complete';
+  const isFailed = task.status === 'failed';
+  const isActive = task.status === 'active';
   const hasDeterminate = typeof task.progress === 'number';
+  const displayTitle = isFailed
+    ? (task.failMessage || task.title)
+    : (isDone && task.completeMessage)
+      ? task.completeMessage
+      : task.title;
 
   return (
     <div
       className={`
         w-64 rounded-lg border shadow-xl px-3 py-2.5 text-sm transition-all duration-300
-        ${isDone
-          ? 'border-emerald-700 bg-zinc-900'
-          : 'border-zinc-700 bg-zinc-900'}
+        ${isFailed ? 'border-red-800 bg-zinc-900' : isDone ? 'border-emerald-700 bg-zinc-900' : 'border-zinc-700 bg-zinc-900'}
       `}
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
           {isDone ? (
             <CheckCircle2 size={14} className="text-emerald-400 shrink-0 check-pop-in" />
+          ) : isFailed ? (
+            <AlertCircle size={14} className="text-red-400 shrink-0" />
           ) : (
-            <span className="w-3.5 h-3.5 rounded-full border-2 border-zinc-500 border-t-emerald-400 animate-spin shrink-0" />
+            <Loader2 size={14} className="animate-spin shrink-0 text-emerald-400" />
           )}
-          <span className="truncate text-zinc-200 text-[13px] font-medium">{task.title}</span>
+          <span className={`truncate text-[13px] font-medium ${isFailed ? 'text-red-300' : 'text-zinc-200'}`}>
+            {displayTitle}
+          </span>
         </div>
         <button
           onClick={() => dismissTask(task.id)}
@@ -51,11 +60,11 @@ function TaskToast({ task }: { task: ProgressTask }) {
         </button>
       </div>
 
-      {task.step && !isDone && (
+      {task.step && isActive && (
         <p className="mt-1 text-[11px] text-zinc-500 truncate pl-5">{task.step}</p>
       )}
 
-      {!isDone && (
+      {isActive && (
         <div className="mt-2 h-1 rounded-full bg-zinc-800 overflow-hidden">
           {hasDeterminate ? (
             <div
@@ -84,8 +93,10 @@ function MinimizedBadge({ task }: { task: ProgressTask }) {
     >
       {isDone ? (
         <CheckCircle2 size={11} className="text-emerald-400 check-pop-in" />
+      ) : task.status === 'failed' ? (
+        <AlertCircle size={11} className="text-red-400" />
       ) : (
-        <span className="w-2.5 h-2.5 rounded-full border-2 border-zinc-600 border-t-emerald-400 animate-spin" />
+        <Loader2 size={11} className="animate-spin text-emerald-400" />
       )}
       <span className="max-w-[80px] truncate">{task.title}</span>
       <button onClick={() => dismissTask(task.id)} className="hover:text-zinc-200">
@@ -98,7 +109,7 @@ function MinimizedBadge({ task }: { task: ProgressTask }) {
 export default function ProgressToasts() {
   const tasks = useProgressToastStore((s) => s.tasks);
 
-  const active = tasks.filter((t) => t.status === 'active' || t.status === 'complete');
+  const active = tasks.filter((t) => t.status === 'active' || t.status === 'complete' || t.status === 'failed');
   const minimized = tasks.filter((t) => t.status === 'minimized');
 
   return (

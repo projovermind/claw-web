@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Plus,
   X,
@@ -13,6 +13,7 @@ import { useT } from '../lib/i18n';
 import type { Skill, Agent } from '../lib/types';
 import { SkillDetail } from '../components/skills/SkillDetail';
 import { BulkAssignModal } from '../components/skills/BulkAssignModal';
+import { useProgressMutation } from '../lib/useProgressMutation';
 
 const emptyDraft = () => ({ name: '', description: '', content: '' });
 
@@ -28,19 +29,22 @@ export default function SkillsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [assignModal, setAssignModal] = useState<{ skill: Skill; mode: 'assign' | 'unassign' } | null>(null);
 
-  const create = useMutation({
-    mutationFn: (d: { name: string; description: string; content: string }) => api.createSkill(d),
-    onSuccess: (s) => {
-      qc.invalidateQueries({ queryKey: ['skills'] });
+  const create = useProgressMutation<Skill, Error, { name: string; description: string; content: string }>({
+    title: '스킬 생성 중...',
+    successMessage: '생성 완료',
+    invalidateKeys: [['skills']],
+    mutationFn: (d) => api.createSkill(d),
+    onSuccess: async (s) => {
       setDraft(emptyDraft());
       setSelectedId(s.id);
     }
   });
-  const update = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: Partial<Omit<Skill, 'id'>> }) =>
-      api.patchSkill(id, patch),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['skills'] });
+  const update = useProgressMutation<Skill, Error, { id: string; patch: Partial<Omit<Skill, 'id'>> }>({
+    title: '스킬 저장 중...',
+    successMessage: '저장 완료',
+    invalidateKeys: [['skills']],
+    mutationFn: ({ id, patch }) => api.patchSkill(id, patch),
+    onSuccess: async () => {
       setEditing(null);
     }
   });
@@ -62,10 +66,12 @@ export default function SkillsPage() {
   const customFiltered = useMemo(() => filterFn(custom), [custom, search]);
   const systemFiltered = useMemo(() => filterFn(system), [system, search]);
 
-  const refreshSystem = useMutation({
+  const refreshSystem = useProgressMutation<unknown, Error, void>({
+    title: '시스템 스킬 새로고침 중...',
+    successMessage: '새로고침 완료',
+    invalidateKeys: [['skills']],
     mutationFn: () =>
-      fetch('/api/skills/system/refresh', { method: 'POST' }).then((r) => r.json()),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['skills'] })
+      fetch('/api/skills/system/refresh', { method: 'POST' }).then((r) => r.json())
   });
 
   const selected = (data ?? []).find((s) => s.id === selectedId) ?? null;

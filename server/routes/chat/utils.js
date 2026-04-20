@@ -92,11 +92,19 @@ export function buildBackendEnv(agent, backendsStore) {
 /**
  * Resolve an agent with full inheritance (skills, tools, backend).
  */
-export function resolveAgent(agentId, { configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore }) {
+export function resolveAgent(agentId, { configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore, accountsStore }) {
   const agentConfig = configStore.getAgent(agentId);
   if (!agentConfig) return null;
   const meta = metadataStore?.getAgent(agentId) ?? {};
   const agent = { id: agentId, ...agentConfig, ...meta };
+
+  // 멀티 계정: accountId 지정 시 configDir 주입 → runner에서 CLAUDE_CONFIG_DIR로 사용
+  if (agent.accountId && accountsStore) {
+    const acc = accountsStore.getById(agent.accountId);
+    if (acc?.configDir && acc.status !== 'disabled') {
+      agent.configDir = acc.configDir;
+    }
+  }
   const project = meta.projectId && projectsStore
     ? projectsStore.getById(meta.projectId)
     : null;

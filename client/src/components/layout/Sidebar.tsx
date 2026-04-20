@@ -17,6 +17,7 @@ import { useI18nStore, useT } from '../../lib/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { useChatStore } from '../../store/chat-store';
+import { isSessionRunning } from '../../lib/visibility';
 import { DEFAULT_APPEARANCE } from '../../hooks/useAppearance';
 
 export default function Sidebar() {
@@ -26,6 +27,7 @@ export default function Sidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const unread = useChatStore((s) => s.unread);
+  const runtime = useChatStore((s) => s.runtime);
   // appName — settings 에서 커스텀 가능 (App 최상위 useAppearance 가 react-query 캐시에 적재)
   const settingsQ = useQuery({ queryKey: ['settings-appearance'], queryFn: api.getSettings, staleTime: 30_000 });
   const appName = (settingsQ.data as { appearance?: { appName?: string } } | undefined)?.appearance?.appName ?? DEFAULT_APPEARANCE.appName;
@@ -50,7 +52,7 @@ export default function Sidebar() {
     return n;
   })();
   const hasUnread = validUnreadCount > 0;
-  const hasRunning = (sessionsData?.sessions ?? []).some((s) => s.isRunning);
+  const hasRunning = (sessionsData?.sessions ?? []).some((s) => isSessionRunning(s, runtime));
   const chatDotColor = hasUnread ? 'bg-sky-400' : hasRunning ? 'bg-amber-400' : null;
 
   // Close drawer on route change (mobile)

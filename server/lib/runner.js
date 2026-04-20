@@ -13,7 +13,7 @@ import { startClaudeRun } from '../runners/claude-cli-runner.js';
 import { runAgent as runOpenAIAgent } from '../runners/openai-runner.js';
 import { logger } from './logger.js';
 
-export function createRunner({ processTracker } = {}) {
+export function createRunner({ processTracker, accountScheduler } = {}) {
   const active = new Map();
 
   function cleanup(sessionId) {
@@ -50,6 +50,7 @@ export function createRunner({ processTracker } = {}) {
         message,
         claudeSessionId,
         envOverrides,
+        accountScheduler,
         callbacks: {
           ...callbacks,
           onExit: (info) => {

@@ -6,6 +6,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { logger } from '../lib/logger.js';
+import { isRateLimitText, parseRateLimitExpiry } from '../lib/account-scheduler.js';
 
 // Claude CLI 경로 (봇과 동일한 탐지 로직)
 function findClaudeBin() {
@@ -65,7 +66,8 @@ export function startClaudeRun({
   claudeSessionId,
   envOverrides = {},
   callbacks = {},
-  spawn = nodeSpawn
+  spawn = nodeSpawn,
+  accountScheduler = null,
 }) {
   const { onText, onToolUse, onResult, onError, onExit } = callbacks;
 
@@ -84,6 +86,18 @@ export function startClaudeRun({
   // 백엔드 env 주입 (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN 등)
   for (const [k, v] of Object.entries(envOverrides)) {
     if (v !== undefined && v !== null) cleanEnv[k] = String(v);
+  }
+
+  // 멀티 계정: 스케줄러 우선 → 없으면 agent.configDir 직접 지정 fallback
+  let pickedAccountId = null;
+  if (accountScheduler) {
+    const pickedAcc = accountScheduler.pickAccount(agent);
+    if (pickedAcc) {
+      pickedAccountId = pickedAcc.id;
+      cleanEnv.CLAUDE_CONFIG_DIR = pickedAcc.configDir;
+    }
+  } else if (agent.configDir) {
+    cleanEnv.CLAUDE_CONFIG_DIR = agent.configDir;
   }
 
   // ── 모델 결정 (봇 bot.js 라인 2391-2410 동일) ──
@@ -195,6 +209,11 @@ export function startClaudeRun({
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
+  // spawn 직후 사용 기록
+  if (accountScheduler && pickedAccountId) {
+    accountScheduler.markUsed(pickedAccountId).catch(() => {});
+  }
+
   let buffer = '';
   const assistantTexts = [];
   let resultText = null;
@@ -202,6 +221,19 @@ export function startClaudeRun({
   let resultModel = null;
   let resultUsage = null;
   let gotAnyOutput = false;
+  let rateLimitDetected = false;
+
+  function handleRateLimit(text) {
+    if (rateLimitDetected || !accountScheduler || !pickedAccountId) return;
+    if (!isRateLimitText(text)) return;
+    rateLimitDetected = true;
+    const expiresAt = new Date(parseRateLimitExpiry(text)).toISOString();
+    logger.warn(
+      { accountId: pickedAccountId, expiresAt },
+      `[scheduler] account ${pickedAccountId} cooldown until ${expiresAt}`
+    );
+    accountScheduler.setCooldown(pickedAccountId, expiresAt).catch(() => {});
+  }
 
   // ── 타임아웃 전략 (상태별 차등) ──
   // 1) 초기 출력 없음 (5분): resume 깨짐/크래시 감지
@@ -283,11 +315,13 @@ export function startClaudeRun({
 
   proc.stdout.on('data', (d) => {
     gotAnyOutput = true;
-    buffer += d.toString();
+    const chunk = d.toString();
+    buffer += chunk;
     const lines = buffer.split('\n');
     buffer = lines.pop() || '';
     for (const line of lines) {
       if (!line.trim()) continue;
+      handleRateLimit(line);
       try { handleEvent(JSON.parse(line)); } catch { /* ignore non-JSON */ }
     }
     // 이벤트 파싱 후 pendingToolUse 상태 반영하여 타이머 재설정
@@ -295,7 +329,11 @@ export function startClaudeRun({
   });
 
   const stderrChunks = [];
-  proc.stderr.on('data', (d) => stderrChunks.push(d.toString()));
+  proc.stderr.on('data', (d) => {
+    const chunk = d.toString();
+    stderrChunks.push(chunk);
+    handleRateLimit(chunk);
+  });
 
   proc.on('close', (code) => {
     clearTimeout(idleTimer);

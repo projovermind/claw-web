@@ -18,6 +18,7 @@ export function createMessageSender(ctx) {
     systemSkillsStore,
     projectsStore,
     backendsStore,
+    accountsStore,
     runner,
     eventBus,
     delegationTracker,
@@ -31,7 +32,7 @@ export function createMessageSender(ctx) {
     const session = sessionsStore.get(sessionId);
     if (!session) return;
     const resolved = resolveAgent(session.agentId, {
-      configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore
+      configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore, accountsStore
     });
     if (!resolved) return;
     const { agent, envOverrides, backendType, backendConfig } = resolved;

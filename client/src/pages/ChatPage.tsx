@@ -7,7 +7,9 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import type { Session, ChatMessage, Agent, Project } from '../lib/types';
+import { isSessionRunning } from '../lib/visibility';
 import { useChatStore } from '../store/chat-store';
+import { useProgressToastStore } from '../store/progress-toast-store';
 import { useT } from '../lib/i18n';
 import MessageList from '../components/chat/MessageList';
 import StreamingMessage from '../components/chat/StreamingMessage';
@@ -29,6 +31,7 @@ export default function ChatPage() {
   const runtime = useChatStore((s) => (currentSessionId ? s.runtime[currentSessionId] : undefined));
   const startRun = useChatStore((s) => s.startRun);
   const finishRun = useChatStore((s) => s.finishRun);
+  const { startTask, completeTask, failTask } = useProgressToastStore();
 
   useEffect(() => {
     const agentParam = searchParams.get('agent');
@@ -87,20 +90,42 @@ export default function ChatPage() {
 
   const createSession = useMutation({
     mutationFn: () => api.createSession(currentAgentId!),
-    onSuccess: (session) => {
-      qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
+    onMutate: () => {
+      startTask({ id: 'create-session', title: '세션 생성 중...' });
+    },
+    onSuccess: async (session) => {
+      await qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
       setCurrentSession(session.id);
+      requestAnimationFrame(() => completeTask('create-session', '세션 생성 완료'));
+    },
+    onError: (err) => {
+      failTask('create-session', (err as Error).message);
     }
   });
 
   const deleteSession = useMutation({
     mutationFn: (id: string) => api.deleteSession(id),
-    onSuccess: (_res, deletedId) => {
-      qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
-      qc.invalidateQueries({ queryKey: ['sessions-all'] });
+    onMutate: async (id) => {
+      const taskId = `delete-session-${id}`;
+      startTask({ id: taskId, title: '세션 삭제 중...' });
+      await qc.cancelQueries({ queryKey: ['sessions', currentAgentId] });
+      const prev = qc.getQueryData(['sessions', currentAgentId]);
+      qc.setQueryData(['sessions', currentAgentId], (old: unknown) =>
+        Array.isArray(old) ? old.filter((s: { id: string }) => s.id !== id) : old
+      );
+      return { taskId, prev };
+    },
+    onSuccess: async (_res, deletedId, ctx) => {
+      await qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
+      await qc.invalidateQueries({ queryKey: ['sessions-all'] });
       // 삭제된 세션이 unread 에 남아 유령점이 되는 문제 방지
       markRead(deletedId);
       if (sessionQ.data?.id === currentSessionId) setCurrentSession(null);
+      requestAnimationFrame(() => completeTask(ctx!.taskId, '삭제 완료'));
+    },
+    onError: (_err, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['sessions', currentAgentId], ctx.prev);
+      if (ctx?.taskId) failTask(ctx.taskId, (_err as Error).message);
     }
   });
 
@@ -131,17 +156,32 @@ export default function ChatPage() {
 
   const renameSession = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) => api.renameSession(id, title),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['session', currentSessionId] });
-      qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
+    onMutate: () => {
+      startTask({ id: 'rename-session', title: '세션 이름 변경 중...' });
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['session', currentSessionId] });
+      await qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
+      requestAnimationFrame(() => completeTask('rename-session', '이름 변경 완료'));
+    },
+    onError: (err) => {
+      failTask('rename-session', (err as Error).message);
     }
   });
 
   const pinSession = useMutation({
     mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) => api.pinSession(id, pinned),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
-      qc.invalidateQueries({ queryKey: ['session', currentSessionId] });
+    onMutate: ({ pinned }) => {
+      startTask({ id: 'pin-session', title: pinned ? '세션 고정 중...' : '고정 해제 중...' });
+      return { pinned };
+    },
+    onSuccess: async (_res, vars) => {
+      await qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
+      await qc.invalidateQueries({ queryKey: ['session', currentSessionId] });
+      requestAnimationFrame(() => completeTask('pin-session', vars.pinned ? '고정 완료' : '해제 완료'));
+    },
+    onError: (err) => {
+      failTask('pin-session', (err as Error).message);
     }
   });
 
@@ -525,6 +565,7 @@ function MobileHeader({
   const projRef = useRef<HTMLDivElement>(null);
   const sessRef = useRef<HTMLDivElement>(null);
   const unread = useChatStore((s) => s.unread);
+  const runtimeAll = useChatStore((s) => s.runtime);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -553,10 +594,10 @@ function MobileHeader({
       if (s.title?.startsWith('[위임]')) continue;
       if (!byAgent[s.agentId]) byAgent[s.agentId] = { unread: false, running: false };
       if (unread[s.id] && s.id !== currentSessionId) byAgent[s.agentId].unread = true;
-      if (s.isRunning) byAgent[s.agentId].running = true;
+      if (isSessionRunning(s, runtimeAll)) byAgent[s.agentId].running = true;
     }
     return byAgent;
-  }, [allSessionsQ.data, unread, currentSessionId]);
+  }, [allSessionsQ.data, unread, currentSessionId, runtimeAll]);
   // 프로젝트별 상태 집계
   const projectStatus = useMemo(() => {
     const byProject: Record<string, { unread: boolean; running: boolean }> = {};
@@ -575,8 +616,8 @@ function MobileHeader({
   const isHiddenDelegation = (s: Session) => s.title?.startsWith('[위임]');
   const runningSessions = useMemo(() => {
     const all = allSessionsQ.data?.sessions ?? [];
-    return all.filter((s: Session) => s.isRunning && !isHiddenDelegation(s));
-  }, [allSessionsQ.data]);
+    return all.filter((s: Session) => isSessionRunning(s, runtimeAll) && !isHiddenDelegation(s));
+  }, [allSessionsQ.data, runtimeAll]);
   const unreadSessions = useMemo(() => {
     const all = allSessionsQ.data?.sessions ?? [];
     return all.filter((s: Session) =>
@@ -714,7 +755,7 @@ function MobileHeader({
           {/* 다른 세션 running/unread 상태 점 */}
           <StatusDot
             unread={sessions.some(s => sessionUnread(s.id))}
-            running={sessions.some(s => s.isRunning && s.id !== currentSessionId)}
+            running={sessions.some(s => isSessionRunning(s, runtimeAll) && s.id !== currentSessionId)}
           />
         </button>
         {sessOpen && (
@@ -731,7 +772,7 @@ function MobileHeader({
                 className={`w-full text-left px-3 py-2 text-xs flex items-center gap-1.5 ${currentSessionId === s.id ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'}`}>
                 {s.pinned && <Pin size={10} className="text-amber-400 shrink-0" />}
                 <span className="truncate flex-1">{s.title}</span>
-                <StatusDot unread={sessionUnread(s.id)} running={!!s.isRunning} />
+                <StatusDot unread={sessionUnread(s.id)} running={isSessionRunning(s, runtimeAll)} />
               </button>
             ))}
             {sessions.length === 0 && (

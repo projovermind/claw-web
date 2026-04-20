@@ -10,6 +10,7 @@ export interface Agent {
   planMode?: boolean;
   thinkingEffort?: 'auto' | 'low' | 'medium' | 'high' | 'max';
   backendId?: string | null;
+  accountId?: string | null;
   // web-metadata overlay
   projectId?: string | null;
   tier?: 'main' | 'project' | 'addon' | null;
@@ -140,6 +141,19 @@ export interface ActivityEntry {
   ts: string;
   topic: string;
   [key: string]: unknown;
+}
+
+export interface Account {
+  id: string;
+  label: string;
+  configDir: string;
+  status: 'active' | 'cooldown' | 'disabled';
+  priority: number;
+  lastUsedAt: string | null;
+  usage: { windowStart: string | null; messagesUsed: number };
+  cooldownRemaining?: number | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface BackendsState {

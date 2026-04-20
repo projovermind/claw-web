@@ -12,13 +12,13 @@ import {
   rectIntersection
 } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Boxes } from 'lucide-react';
 import { api } from '../../../lib/api';
 import type { Agent, Project } from '../../../lib/types';
 import { buildHierarchy, isUnassignedAgent } from '../../../lib/visibility';
 import { useT } from '../../../lib/i18n';
-import { useProgressToastStore } from '../../../store/progress-toast-store';
+import { useProgressMutation } from '../../../lib/useProgressMutation';
 import { decodeDrop, targetToPatch } from './types';
 import { SectionLabel } from './SectionLabel';
 import { Palette } from './Palette';
@@ -41,8 +41,6 @@ export default function AgentHierarchy({
   splitLayout = false
 }: HierarchyProps = {}) {
   const t = useT();
-  const qc = useQueryClient();
-  const { startTask, completeTask } = useProgressToastStore();
   const agentsQ = useQuery({ queryKey: ['agents'], queryFn: api.agents });
   const projectsQ = useQuery({ queryKey: ['projects'], queryFn: api.projects });
   const [search, setSearch] = useState('');
@@ -64,51 +62,32 @@ export default function AgentHierarchy({
     setCtxMenu({ x: e.clientX, y: e.clientY, agent });
   };
 
-  const mutate = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: Partial<Agent> }) => {
-      startTask({ id: `move_${id}`, title: t('hier.moving') });
-      return api.patchAgent(id, patch);
+  const mutate = useProgressMutation<Agent, Error, { id: string; patch: Partial<Agent> }, { prev?: Agent[] }>({
+    title: '항목 이동 중...',
+    successMessage: '이동 완료',
+    invalidateKeys: [['agents']],
+    optimistic: {
+      queryKey: ['agents'],
+      updater: (old: Agent[] | undefined, vars: { id: string; patch: Partial<Agent> }) =>
+        ((old ?? []).map((a) => (a.id === vars.id ? { ...a, ...vars.patch } : a))) as Agent[]
     },
-    onMutate: async ({ id, patch }) => {
-      await qc.cancelQueries({ queryKey: ['agents'] });
-      const prev = qc.getQueryData<Agent[]>(['agents']);
-      qc.setQueryData<Agent[]>(['agents'], (old) =>
-        (old ?? []).map((a) => (a.id === id ? { ...a, ...patch } : a))
-      );
-      return { prev };
-    },
-    onError: (_e, vars, ctx) => {
-      ctx?.prev && qc.setQueryData(['agents'], ctx.prev);
-      completeTask(`move_${vars.id}`);
-    },
-    onSuccess: async (_d, vars) => {
-      await qc.invalidateQueries({ queryKey: ['agents'] });
-      requestAnimationFrame(() => completeTask(`move_${vars.id}`));
-    }
+    mutationFn: ({ id, patch }) => api.patchAgent(id, patch)
   });
 
   // Bulk reorder (used for addon reorder within a project)
-  const reorder = useMutation({
-    mutationFn: async (orders: { id: string; order: number }[]) => {
-      startTask({ id: 'reorder', title: t('hier.reordering') });
+  const reorder = useProgressMutation<void, Error, { id: string; order: number }[], { prev?: Agent[] }>({
+    title: '순서 변경 중...',
+    successMessage: '순서 저장 완료',
+    invalidateKeys: [['agents']],
+    optimistic: {
+      queryKey: ['agents'],
+      updater: (old: Agent[] | undefined, orders: { id: string; order: number }[]) => {
+        const orderMap = new Map(orders.map((o) => [o.id, o.order]));
+        return ((old ?? []).map((a) => (orderMap.has(a.id) ? { ...a, order: orderMap.get(a.id)! } : a))) as Agent[];
+      }
+    },
+    mutationFn: async (orders) => {
       await Promise.all(orders.map((o) => api.patchAgent(o.id, { order: o.order })));
-    },
-    onMutate: async (orders) => {
-      await qc.cancelQueries({ queryKey: ['agents'] });
-      const prev = qc.getQueryData<Agent[]>(['agents']);
-      const orderMap = new Map(orders.map((o) => [o.id, o.order]));
-      qc.setQueryData<Agent[]>(['agents'], (old) =>
-        (old ?? []).map((a) => (orderMap.has(a.id) ? { ...a, order: orderMap.get(a.id)! } : a))
-      );
-      return { prev };
-    },
-    onError: (_e, _v, ctx) => {
-      ctx?.prev && qc.setQueryData(['agents'], ctx.prev);
-      completeTask('reorder');
-    },
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ['agents'] });
-      requestAnimationFrame(() => completeTask('reorder'));
     }
   });
 

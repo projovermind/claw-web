@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { DndContext, DragEndEvent, PointerSensor, TouchSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
 import { arrayMove, SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { api } from '../lib/api';
@@ -12,6 +12,7 @@ import { EditProjectModal } from '../components/projects/EditProjectModal';
 import { SortableProjectCard } from '../components/projects/SortableProjectCard';
 import { ProjectDashboard } from '../components/projects/ProjectDashboard';
 import { countPlaced, countUnassigned, countMain } from '../lib/visibility';
+import { useProgressMutation } from '../lib/useProgressMutation';
 
 function LabeledField({
   label,
@@ -44,7 +45,6 @@ const emptyDraft = (): Project => ({ id: '', name: '', path: '', color: '#7bcce0
 
 export default function ProjectsPage() {
   const t = useT();
-  const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ['projects'], queryFn: api.projects });
   const { data: agents } = useQuery({ queryKey: ['agents'], queryFn: api.agents });
   const [draft, setDraft] = useState<Project>(emptyDraft());
@@ -53,48 +53,38 @@ export default function ProjectsPage() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const selectedProject = (data ?? []).find(p => p.id === selectedProjectId) ?? null;
 
-  const create = useMutation({
+  const create = useProgressMutation<Project, Error, Project>({
+    title: '프로젝트 생성 중...',
+    successMessage: '생성 완료',
+    invalidateKeys: [['projects']],
     mutationFn: (p: Project) => api.createProject(p),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['projects'] });
+    onSuccess: async () => {
       setDraft(emptyDraft());
     }
   });
-  const update = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: Partial<Project> }) =>
-      api.patchProject(id, patch),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['projects'] });
-      qc.invalidateQueries({ queryKey: ['agents'] });
+  const update = useProgressMutation<Project, Error, { id: string; patch: Partial<Project> }>({
+    title: '프로젝트 저장 중...',
+    successMessage: '저장 완료',
+    invalidateKeys: [['projects'], ['agents']],
+    mutationFn: ({ id, patch }) => api.patchProject(id, patch),
+    onSuccess: async () => {
       setEditing(null);
     }
   });
-  const remove = useMutation({
-    mutationFn: (id: string) => api.deleteProject(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['projects'] });
-      qc.invalidateQueries({ queryKey: ['agents'] });
-    }
+  const remove = useProgressMutation<void, Error, string>({
+    title: '프로젝트 삭제 중...',
+    successMessage: '삭제 완료',
+    invalidateKeys: [['projects'], ['agents']],
+    mutationFn: (id: string) => api.deleteProject(id)
   });
 
-  const reorder = useMutation({
+  const reorder = useProgressMutation<void, Error, { id: string; order: number }[]>({
+    title: '프로젝트 순서 변경 중...',
+    successMessage: '순서 저장 완료',
+    invalidateKeys: [['projects']],
     mutationFn: async (orders: { id: string; order: number }[]) => {
       await Promise.all(orders.map((o) => api.patchProject(o.id, { order: o.order })));
-    },
-    onMutate: async (orders) => {
-      await qc.cancelQueries({ queryKey: ['projects'] });
-      const prev = qc.getQueryData<Project[]>(['projects']);
-      const map = new Map(orders.map((o) => [o.id, o.order]));
-      qc.setQueryData<Project[]>(['projects'], (old) =>
-        (old ?? [])
-          .map((p) => (map.has(p.id) ? { ...p, order: map.get(p.id)! } : p))
-          .slice()
-          .sort((a, b) => (a.order ?? 9999) - (b.order ?? 9999))
-      );
-      return { prev };
-    },
-    onError: (_e, _v, ctx) => ctx?.prev && qc.setQueryData(['projects'], ctx.prev),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['projects'] })
+    }
   });
 
   const sensors = useSensors(

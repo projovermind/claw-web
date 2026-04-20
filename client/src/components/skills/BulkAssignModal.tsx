@@ -1,9 +1,9 @@
 import { useState, useMemo } from 'react';
-import { useMutation } from '@tanstack/react-query';
 import { X, Search } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { Skill, Agent, Project } from '../../lib/types';
 import { useT } from '../../lib/i18n';
+import { useProgressMutation } from '../../lib/useProgressMutation';
 
 export function BulkAssignModal({
   skill,
@@ -62,12 +62,14 @@ export function BulkAssignModal({
   const selectAll = () => setSelectedIds(candidates.map((a) => a.id));
   const clearAll = () => setSelectedIds([]);
 
-  const mutate = useMutation({
+  const mutate = useProgressMutation<void, Error, void>({
+    title: mode === 'assign' ? '스킬 일괄 적용 중...' : '스킬 일괄 해제 중...',
+    successMessage: mode === 'assign' ? '적용 완료' : '해제 완료',
     mutationFn: async () => {
       if (mode === 'assign') await api.assignSkillToAgents(skill.id, selectedIds);
       else await api.unassignSkillFromAgents(skill.id, selectedIds);
     },
-    onSuccess: () => onDone()
+    onSuccess: async () => onDone()
   });
 
   const projectById = useMemo(

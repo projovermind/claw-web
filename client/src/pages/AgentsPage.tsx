@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Plus, Layers } from 'lucide-react';
 import { api } from '../lib/api';
 import type { Agent } from '../lib/types';
@@ -8,20 +8,21 @@ import { useT } from '../lib/i18n';
 import { AgentModal, emptyAgentForm } from '../components/agents/AgentModal';
 import type { AgentFormState } from '../components/agents/AgentModal';
 import { BulkModelChangeModal } from '../components/agents/BulkModelChangeModal';
-import { useProgressToastStore } from '../store/progress-toast-store';
+import { useProgressMutation } from '../lib/useProgressMutation';
 
 export default function AgentsPage() {
   const t = useT();
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ['agents'], queryFn: api.agents });
-  const { startTask, completeTask } = useProgressToastStore();
   const [modal, setModal] = useState<{ mode: 'create' | 'edit'; agent?: Agent } | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [quickForm, setQuickForm] = useState<AgentFormState>(emptyAgentForm());
 
-  const createAgent = useMutation({
+  const createAgent = useProgressMutation<Agent, Error, AgentFormState>({
+    title: '에이전트 생성 중...',
+    successMessage: '생성 완료',
+    invalidateKeys: [['agents']],
     mutationFn: async (form: AgentFormState) => {
-      startTask({ id: `create_${form.id}`, title: t('agents.modal.create') });
       const created = await api.createAgent({
         id: form.id,
         name: form.name,
@@ -31,60 +32,49 @@ export default function AgentsPage() {
         allowedTools: form.allowedTools,
         disallowedTools: form.disallowedTools
       });
-      // skillIds / backendId 는 metadata overlay — create 후 PATCH 로 적용
+      // skillIds / backendId / accountId 는 metadata overlay — create 후 PATCH 로 적용
       const patch: Record<string, unknown> = {};
       if (form.skillIds.length > 0) patch.skillIds = form.skillIds;
       if (form.backend && form.backend !== 'claude') patch.backendId = form.backend;
+      if (form.accountId) patch.accountId = form.accountId;
       if (Object.keys(patch).length > 0) {
         await api.patchAgent(form.id, patch);
       }
       return created;
     },
-    onSuccess: async (_d, form) => {
-      await qc.invalidateQueries({ queryKey: ['agents'] });
-      requestAnimationFrame(() => completeTask(`create_${form.id}`));
+    onSuccess: async () => {
       setModal(null);
       setQuickForm(emptyAgentForm());
     },
-    onError: (err: Error, form) => {
-      completeTask(`create_${form.id}`);
+    onError: (err: Error) => {
       alert(`${t('agents.saveFailed')}: ${err.message}`);
     }
   });
 
-  const updateAgent = useMutation({
-    mutationFn: ({
-      id,
-      form,
-      ifMatchUpdatedAt
-    }: {
-      id: string;
-      form: AgentFormState;
-      ifMatchUpdatedAt?: string;
-    }) => {
-      startTask({ id: `update_${id}`, title: t('agents.modal.edit') });
-      return api.patchAgent(
+  const updateAgent = useProgressMutation<Agent, Error, { id: string; form: AgentFormState; ifMatchUpdatedAt?: string }>({
+    title: '에이전트 저장 중...',
+    successMessage: '저장 완료',
+    invalidateKeys: [['agents']],
+    mutationFn: ({ id, form, ifMatchUpdatedAt }) =>
+      api.patchAgent(
         id,
         {
           name: form.name,
           avatar: form.avatar,
           model: form.model,
           backendId: form.backend === 'claude' ? null : form.backend,
+          accountId: form.accountId || null,
           systemPrompt: form.systemPrompt,
           skillIds: form.skillIds,
           allowedTools: form.allowedTools,
           disallowedTools: form.disallowedTools
         },
         { ifMatchUpdatedAt }
-      );
-    },
-    onSuccess: async (_d, vars) => {
-      await qc.invalidateQueries({ queryKey: ['agents'] });
-      requestAnimationFrame(() => completeTask(`update_${vars.id}`));
+      ),
+    onSuccess: async () => {
       setModal(null);
     },
     onError: (err: Error, vars) => {
-      completeTask(`update_${vars.id}`);
       if (/UPDATEDAT_CONFLICT|modified by another session|409/.test(err.message)) {
         if (confirm(t('agents.conflictConfirm'))) {
           updateAgent.mutate({ id: vars.id, form: vars.form });
@@ -98,22 +88,18 @@ export default function AgentsPage() {
     }
   });
 
-  const deleteAgent = useMutation({
-    mutationFn: (id: string) => {
-      startTask({ id: `delete_${id}`, title: t('agents.confirm.delete', { name: id }) });
-      return api.deleteAgent(id);
-    },
-    onSuccess: async (_d, id) => {
-      await qc.invalidateQueries({ queryKey: ['agents'] });
-      requestAnimationFrame(() => completeTask(`delete_${id}`));
-    },
-    onError: (_e, id) => completeTask(`delete_${id}`)
+  const deleteAgent = useProgressMutation<void, Error, string>({
+    title: '에이전트 삭제 중...',
+    successMessage: '삭제 완료',
+    invalidateKeys: [['agents']],
+    mutationFn: (id: string) => api.deleteAgent(id)
   });
 
-  const cloneAgent = useMutation({
-    mutationFn: ({ id, newId, newName }: { id: string; newId: string; newName?: string }) =>
-      api.cloneAgent(id, newId, newName),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] })
+  const cloneAgent = useProgressMutation<Agent, Error, { id: string; newId: string; newName?: string }>({
+    title: '에이전트 복제 중...',
+    successMessage: '복제 완료',
+    invalidateKeys: [['agents']],
+    mutationFn: ({ id, newId, newName }) => api.cloneAgent(id, newId, newName)
   });
 
   const handleClone = (agent: Agent) => {

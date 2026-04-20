@@ -4,7 +4,9 @@ import { Plus, Trash2, Star, Download, CheckSquare, Square, X, ChevronDown, Chev
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 import { useChatStore } from '../../store/chat-store';
+import { useProgressToastStore } from '../../store/progress-toast-store';
 import type { Session, Agent, Project, BackendsState } from '../../lib/types';
+import { isSessionRunning } from '../../lib/visibility';
 
 /** 에이전트 모델 단축명 뱃지 — 풀네임/단축명 모두 단축명으로 표시 */
 function ModelBadge({ agent, backends }: { agent: Agent; backends?: BackendsState | null }) {
@@ -60,6 +62,7 @@ export function ChatSidebar({
 }) {
   const qc = useQueryClient();
   const t = useT();
+  const { startTask, completeTask, failTask } = useProgressToastStore();
   const unread = useChatStore((s) => s.unread);
   const runtime = useChatStore((s) => s.runtime);
   const { data: backendsState } = useQuery({ queryKey: ['backends'], queryFn: api.backends });
@@ -75,7 +78,7 @@ export function ChatSidebar({
   const isHiddenDelegation = (s: Session) => s.title?.startsWith('[위임]');
   const runningSessions = useMemo(() => {
     const all = allSessionsData?.sessions ?? [];
-    return all.filter((s: Session) => s.isRunning && !isHiddenDelegation(s));
+    return all.filter((s: Session) => isSessionRunning(s, runtime) && !isHiddenDelegation(s));
   }, [allSessionsData]);
 
   const unreadSessions = useMemo(() => {
@@ -93,7 +96,7 @@ export function ChatSidebar({
     for (const s of all) {
       if (!byAgent[s.agentId]) byAgent[s.agentId] = { unread: false, running: false };
       // running 체크: 위임 세션도 포함 (ovm_pipeline 등 서브 에이전트가 실행 중이면 반영)
-      if (s.isRunning || runtime[s.id]?.running) byAgent[s.agentId].running = true;
+      if (isSessionRunning(s, runtime)) byAgent[s.agentId].running = true;
       // unread/error 체크: 위임 세션 제외 (사용자가 직접 본 적 없는 세션)
       if (isHiddenDelegation(s)) continue;
       if (unread[s.id] && s.id !== currentSessionId) {
@@ -211,18 +214,42 @@ export function ChatSidebar({
   const pinSession = useMutation({
     mutationFn: ({ id, pinned }: { id: string; pinned: boolean }) =>
       api.pinSession(id, pinned),
-    onSuccess: () =>
-      qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] })
+    onMutate: ({ id, pinned }) => {
+      const taskId = `pin-session-${id}`;
+      startTask({ id: taskId, title: pinned ? '세션 고정 중...' : '고정 해제 중...' });
+      return { taskId, pinned };
+    },
+    onSuccess: async (_res, _vars, ctx) => {
+      await qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
+      requestAnimationFrame(() => completeTask(ctx!.taskId, ctx!.pinned ? '고정 완료' : '해제 완료'));
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.taskId) failTask(ctx.taskId, (_err as Error).message);
+    }
   });
 
   const bulkDelete = useMutation({
     mutationFn: (ids: string[]) => api.bulkDeleteSessions(ids),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
-      if (currentSessionId && selectedIds.has(currentSessionId))
-        setCurrentSession(null);
+    onMutate: async (ids) => {
+      const taskId = 'bulk-delete-sessions';
+      startTask({ id: taskId, title: `${ids.length}개 세션 삭제 중...` });
+      await qc.cancelQueries({ queryKey: ['sessions', currentAgentId] });
+      const prev = qc.getQueryData(['sessions', currentAgentId]);
+      qc.setQueryData(['sessions', currentAgentId], (old: unknown) =>
+        Array.isArray(old) ? old.filter((s: Session) => !ids.includes(s.id)) : old
+      );
+      return { taskId, prev };
+    },
+    onSuccess: async (_res, ids, ctx) => {
+      if (currentSessionId && ids.includes(currentSessionId)) setCurrentSession(null);
+      await qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
       setSelectMode(false);
       setSelectedIds(new Set());
+      requestAnimationFrame(() => completeTask(ctx!.taskId, `${ids.length}개 삭제 완료`));
+    },
+    onError: (_err, _ids, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['sessions', currentAgentId], ctx.prev);
+      if (ctx?.taskId) failTask(ctx.taskId, (_err as Error).message);
     }
   });
 
@@ -586,7 +613,7 @@ export function ChatSidebar({
                 {!selectMode && isUnread && (
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 animate-pulse ${unread[s.id]?.isError ? 'bg-red-400' : 'bg-sky-400'}`} title={t('chat.session.unread')} />
                 )}
-                {!selectMode && (s.isRunning || runtime[s.id]?.running) && (
+                {!selectMode && isSessionRunning(s, runtime) && (
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title={t('chat.session.running')} />
                 )}
                 {!selectMode && s.pinned && (
@@ -673,7 +700,7 @@ export function ChatSidebar({
                   title={`${agent?.name ?? s.agentId} — ${s.title}`}
                 >
                   {isUnreadRecent && <span className={`w-1.5 h-1.5 rounded-full shrink-0 animate-pulse ${unread[s.id]?.isError ? 'bg-red-400' : 'bg-sky-400'}`} />}
-                  {!isUnreadRecent && (s.isRunning || runtime[s.id]?.running) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" />}
+                  {!isUnreadRecent && isSessionRunning(s, runtime) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" />}
                   <span className="shrink-0">{agent?.avatar ?? '🤖'}</span>
                   <span className="flex-1 truncate">{s.title}</span>
                   <span className="text-zinc-600 text-[10px] shrink-0 truncate max-w-[60px]">

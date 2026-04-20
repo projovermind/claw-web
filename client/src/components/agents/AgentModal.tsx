@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { api } from '../../lib/api';
-import type { Agent } from '../../lib/types';
+import type { Agent, Account } from '../../lib/types';
 import SkillPicker from '../common/SkillPicker';
 import ToolPicker from '../common/ToolPicker';
 import { useT } from '../../lib/i18n';
@@ -13,6 +13,7 @@ export interface AgentFormState {
   avatar: string;
   model: string;
   backend: string;
+  accountId: string;
   systemPrompt: string;
   skillIds: string[];
   allowedTools: string[];
@@ -25,6 +26,7 @@ export const emptyAgentForm = (): AgentFormState => ({
   avatar: '🤖',
   model: 'sonnet',
   backend: 'claude',
+  accountId: '',
   systemPrompt: '',
   skillIds: [],
   allowedTools: [],
@@ -66,6 +68,7 @@ export function AgentModal({
   const { data: backendsState } = useQuery({ queryKey: ['backends'], queryFn: api.backends });
   const { data: skills } = useQuery({ queryKey: ['skills'], queryFn: api.skills });
   const { data: projects } = useQuery({ queryKey: ['projects'], queryFn: api.projects });
+  const { data: accounts = [] } = useQuery<Account[]>({ queryKey: ['accounts'], queryFn: api.listAccounts });
   const backendList = useMemo(() => Object.values(backendsState?.backends ?? {}), [backendsState]);
 
   // Inherited skills / tools = defaults from the project this agent is in
@@ -84,6 +87,7 @@ export function AgentModal({
           avatar: agent.avatar ?? '🤖',
           model: agent.model ?? 'sonnet',
           backend: agent.backendId ?? 'claude',
+          accountId: agent.accountId ?? '',
           systemPrompt: agent.systemPrompt ?? '',
           skillIds: agent.skillIds ?? [],
           allowedTools: agent.allowedTools ?? [],
@@ -198,6 +202,21 @@ export function AgentModal({
               </select>
             </Field>
           </div>
+          {accounts.length > 0 && (
+            <Field label="계정" help="이 에이전트에 사용할 Claude 계정 (설정 > 계정에서 등록)">
+              <select
+                value={form.accountId}
+                onChange={(e) => setForm({ ...form, accountId: e.target.value })}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
+              >
+                <option value="">기본 계정</option>
+                {accounts.filter((a) => a.status !== 'disabled').map((a) => (
+                  <option key={a.id} value={a.id}>{a.label}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+
           <Field label={t('agents.field.systemPrompt')} help={t('agents.help.systemPrompt')}>
             <textarea
               value={form.systemPrompt}

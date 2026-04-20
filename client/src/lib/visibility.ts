@@ -1,4 +1,12 @@
-import type { Agent } from './types';
+import type { Agent, Session } from './types';
+
+/** 세션 running 여부 — 서버 DB(isRunning)와 클라이언트 runtime 양쪽 확인 */
+export function isSessionRunning(
+  session: Session,
+  runtime: Record<string, { running: boolean } | undefined>
+): boolean {
+  return !!(session.isRunning || runtime[session.id]?.running);
+}
 
 const byOrder = (a: Agent, b: Agent) => {
   const ao = typeof a.order === 'number' ? a.order : Number.MAX_SAFE_INTEGER;

@@ -1,9 +1,10 @@
 import { useState, useMemo } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { X, Check, Search } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { Agent, BackendsState } from '../../lib/types';
 import { useT } from '../../lib/i18n';
+import { useProgressMutation } from '../../lib/useProgressMutation';
 
 /**
  * 에이전트 모델 일괄 변경 모달
@@ -11,7 +12,6 @@ import { useT } from '../../lib/i18n';
  * - 체크박스로 선택 후 새 모델 선택 → 병렬 PATCH
  */
 export function BulkModelChangeModal({ onClose }: { onClose: () => void }) {
-  const qc = useQueryClient();
   const t = useT();
   const { data: agents = [] } = useQuery<Agent[]>({ queryKey: ['agents'], queryFn: api.agents });
   const { data: backends } = useQuery<BackendsState>({ queryKey: ['backends'], queryFn: api.backends });
@@ -77,7 +77,10 @@ export function BulkModelChangeModal({ onClose }: { onClose: () => void }) {
   };
   const clearAll = () => setSelectedIds(new Set());
 
-  const bulkMutation = useMutation({
+  const bulkMutation = useProgressMutation<{ done: number; failed: number }, Error, void>({
+    title: '모델 일괄 변경 중...',
+    successMessage: '변경 완료',
+    invalidateKeys: [['agents']],
     mutationFn: async () => {
       const ids = Array.from(selectedIds);
       setProgress({ done: 0, total: ids.length });
@@ -103,9 +106,6 @@ export function BulkModelChangeModal({ onClose }: { onClose: () => void }) {
       }
       setErrors(failed);
       return { done, failed: failed.length };
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['agents'] });
     }
   });
 

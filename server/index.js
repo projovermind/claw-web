@@ -55,6 +55,9 @@ import { createScheduler } from './lib/scheduler.js';
 import { createDelegationTracker } from './lib/delegation-tracker.js';
 import { createPushStore } from './lib/push-store.js';
 import { createPushRouter } from './routes/push.js';
+import { createAccountsStore } from './lib/accounts-store.js';
+import { createAccountsRouter } from './routes/accounts.js';
+import { createAccountScheduler } from './lib/account-scheduler.js';
 import { createSessionAnalyzer } from './lib/session-analyzer.js';
 import { cleanupLegacyCloudflared } from './lib/legacy-cleanup.js';
 
@@ -173,6 +176,7 @@ const METADATA_PATH = path.join(REPO_ROOT, 'web-metadata.json');
 const PROJECTS_PATH = path.join(REPO_ROOT, 'projects.json');
 const SESSIONS_PATH = path.join(REPO_ROOT, 'sessions.json');
 const BACKENDS_PATH = path.join(REPO_ROOT, 'backends.json');
+const ACCOUNTS_PATH = path.join(REPO_ROOT, 'accounts.json');
 const SECRETS_PATH = path.join(REPO_ROOT, 'secrets.json');
 const UPLOADS_DIR = path.join(REPO_ROOT, 'uploads');
 const SKILLS_PATH = path.join(REPO_ROOT, 'skills.json');
@@ -242,6 +246,7 @@ async function main() {
   const sessionsStore = await createSessionsStore(SESSIONS_PATH);
   const secretsStore = await createSecretsStore({ filePath: SECRETS_PATH });
   const backendsStore = await createBackendsStore(BACKENDS_PATH, { secretsStore });
+  const accountsStore = await createAccountsStore(ACCOUNTS_PATH);
   const skillsStore = await createSkillsStore(SKILLS_PATH);
   const systemSkillsStore = createSystemSkillsStore();
   try {
@@ -274,7 +279,8 @@ async function main() {
   } catch (err) {
     logger.warn({ err }, 'runner: reapOrphans failed (non-fatal)');
   }
-  const runner = createRunner({ processTracker });
+  const accountScheduler = createAccountScheduler({ accountsStore });
+  const runner = createRunner({ processTracker, accountScheduler });
   const delegationTracker = createDelegationTracker();
   const pushStore = createPushStore({ webConfig, webConfigPath: WEB_CONFIG_PATH });
   pushStore.setRunnerRef(runner); // 작업 중 알림 억제
@@ -330,6 +336,7 @@ async function main() {
     systemSkillsStore,
     projectsStore,
     backendsStore,
+    accountsStore,
     runner,
     eventBus,
     delegationTracker,
@@ -338,6 +345,7 @@ async function main() {
   });
   app.use('/api/chat', chatRouter);
   app.use('/api/backends', createBackendsRouter({ backendsStore, eventBus }));
+  app.use('/api/accounts', createAccountsRouter({ accountsStore, eventBus }));
   app.use('/api/uploads', createUploadsRouter({ uploadsDir: UPLOADS_DIR, eventBus }));
   app.use(
     '/api/skills',

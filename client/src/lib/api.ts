@@ -308,6 +308,18 @@ export const api = {
   pushSaveSettings: (data: { enabled?: boolean; idleThreshold?: number }) =>
     req<unknown>('/settings', { method: 'PATCH', body: JSON.stringify({ push: data }) }),
 
+  // Accounts (multi-account)
+  listAccounts: () =>
+    get<{ accounts: import('./types').Account[] }>('/accounts').then((r) => r.accounts),
+  createAccount: (data: { label: string; configDir?: string; priority?: number }) =>
+    post<import('./types').Account>('/accounts', data),
+  patchAccount: (id: string, data: { label?: string; configDir?: string; status?: string; priority?: number }) =>
+    patch<import('./types').Account>(`/accounts/${id}`, data),
+  deleteAccount: (id: string) =>
+    del<void>(`/accounts/${id}`),
+  testAccount: (id: string) =>
+    post<{ ok: boolean; configDir: string; output?: string; error?: string }>(`/accounts/${id}/test`, {}),
+
   uploadFile: async (file: File): Promise<{
     id: string;
     filename: string;

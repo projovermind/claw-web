@@ -6,14 +6,17 @@ export interface ProgressTask {
   steps?: number;
   progress?: number;
   step?: string;
-  status: 'active' | 'complete' | 'minimized';
+  status: 'active' | 'complete' | 'failed' | 'minimized';
+  completeMessage?: string;
+  failMessage?: string;
 }
 
 interface ProgressToastState {
   tasks: ProgressTask[];
   startTask: (opts: { id: string; title: string; steps?: number }) => void;
   updateTask: (id: string, patch: { progress?: number; step?: string }) => void;
-  completeTask: (id: string) => void;
+  completeTask: (id: string, message?: string) => void;
+  failTask: (id: string, message?: string) => void;
   dismissTask: (id: string) => void;
 }
 
@@ -40,19 +43,32 @@ export const useProgressToastStore = create<ProgressToastState>((set, get) => ({
     }));
   },
 
-  completeTask: (id) => {
+  completeTask: (id, message) => {
     set((s) => ({
-      tasks: s.tasks.map((t) => (t.id === id ? { ...t, status: 'complete', progress: 100 } : t))
+      tasks: s.tasks.map((t) =>
+        t.id === id ? { ...t, status: 'complete', progress: 100, completeMessage: message } : t
+      )
     }));
     setTimeout(() => {
       set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) }));
     }, 1500);
   },
 
+  failTask: (id, message) => {
+    set((s) => ({
+      tasks: s.tasks.map((t) =>
+        t.id === id ? { ...t, status: 'failed', failMessage: message } : t
+      )
+    }));
+    setTimeout(() => {
+      set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) }));
+    }, 2500);
+  },
+
   dismissTask: (id) => {
     const task = get().tasks.find((t) => t.id === id);
     if (!task) return;
-    if (task.status === 'complete') {
+    if (task.status === 'complete' || task.status === 'failed') {
       set((s) => ({ tasks: s.tasks.filter((t) => t.id !== id) }));
     } else {
       set((s) => ({
