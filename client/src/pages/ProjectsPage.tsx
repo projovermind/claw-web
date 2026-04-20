@@ -75,13 +75,24 @@ export default function ProjectsPage() {
     title: '프로젝트 삭제 중...',
     successMessage: '삭제 완료',
     invalidateKeys: [['projects'], ['agents']],
+    optimistic: {
+      queryKey: ['projects'],
+      updater: (old: Project[], id: string) => (old ?? []).filter((p) => p.id !== id),
+    },
     mutationFn: (id: string) => api.deleteProject(id)
   });
 
   const reorder = useProgressMutation<void, Error, { id: string; order: number }[]>({
-    title: '프로젝트 순서 변경 중...',
-    successMessage: '순서 저장 완료',
+    title: '순서 변경 중...',
+    successMessage: '변경 완료',
     invalidateKeys: [['projects']],
+    optimistic: {
+      queryKey: ['projects'],
+      updater: (old: Project[], vars: { id: string; order: number }[]) => {
+        const orderMap = new Map(vars.map((o) => [o.id, o.order]));
+        return (old ?? []).slice().sort((a, b) => (orderMap.get(a.id) ?? 9999) - (orderMap.get(b.id) ?? 9999));
+      },
+    },
     mutationFn: async (orders: { id: string; order: number }[]) => {
       await Promise.all(orders.map((o) => api.patchProject(o.id, { order: o.order })));
     }

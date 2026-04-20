@@ -93,6 +93,7 @@ export interface Project {
   defaultSkillIds?: string[];
   defaultAllowedTools?: string[];
   defaultDisallowedTools?: string[];
+  accountId?: string | null;
   dashboard?: ProjectDashboard;
 }
 

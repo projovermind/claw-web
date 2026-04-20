@@ -1,51 +1,109 @@
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { Account } from '../../lib/types';
+import { useProgressMutation } from '../../lib/useProgressMutation';
+import { useProgressToastStore } from '../../store/progress-toast-store';
 
+function relativeTime(iso: string | null): string {
+  if (!iso) return '없음';
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return '방금';
+  if (mins < 60) return `${mins}분 전`;
+  const h = Math.floor(mins / 60);
+  if (h < 24) return `${h}시간 전`;
+  return `${Math.floor(h / 24)}일 전`;
+}
+
+function fmtSeconds(s: number): string {
+  if (s <= 0) return '0s';
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+}
+
+const STATUS_BADGE: Record<Account['status'], string> = {
+  active: 'bg-emerald-900/60 text-emerald-300 border border-emerald-800',
+  cooldown: 'bg-amber-900/60 text-amber-300 border border-amber-800',
+  disabled: 'bg-zinc-800 text-zinc-500 border border-zinc-700',
+};
 const STATUS_LABEL: Record<Account['status'], string> = {
   active: '활성',
   cooldown: '쿨다운',
   disabled: '비활성',
 };
-const STATUS_COLOR: Record<Account['status'], string> = {
-  active: 'text-emerald-400',
-  cooldown: 'text-amber-400',
-  disabled: 'text-zinc-500',
-};
 
 export function AccountsTab() {
-  const qc = useQueryClient();
-  const { data: accounts = [] } = useQuery<Account[]>({
+  const { data: accounts = [], isLoading } = useQuery<Account[]>({
     queryKey: ['accounts'],
     queryFn: api.listAccounts,
+    refetchInterval: 5000,
   });
 
   const [showCreate, setShowCreate] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [newConfigDir, setNewConfigDir] = useState('');
+  const [loginHint, setLoginHint] = useState<{ configDir: string } | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
 
-  const createMut = useMutation({
-    mutationFn: () => api.createAccount({ label: newLabel.trim(), configDir: newConfigDir.trim() || undefined }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['accounts'] });
+  // Cooldown countdown — seeded from polled data, ticks every second
+  const [countdowns, setCountdowns] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    setCountdowns((prev) => {
+      const next = { ...prev };
+      accounts.forEach((acc) => {
+        if (acc.status === 'cooldown' && acc.cooldownRemaining != null) {
+          next[acc.id] = acc.cooldownRemaining;
+        } else if (acc.status !== 'cooldown') {
+          delete next[acc.id];
+        }
+      });
+      return next;
+    });
+  }, [accounts]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCountdowns((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        for (const id in next) {
+          if (next[id] > 0) { next[id]--; changed = true; }
+        }
+        return changed ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const createMut = useProgressMutation<Account, Error, { label: string; configDir?: string }>({
+    title: '계정 생성 중...',
+    successMessage: '계정이 생성되었습니다',
+    invalidateKeys: [['accounts']],
+    mutationFn: ({ label, configDir }) => api.createAccount({ label, configDir }),
+    onSuccess: (account) => {
       setShowCreate(false);
       setNewLabel('');
       setNewConfigDir('');
+      setLoginHint({ configDir: account.configDir });
     },
   });
 
-  const patchMut = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: Account['status'] }) =>
-      api.patchAccount(id, { status }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }),
+  const patchMut = useProgressMutation<Account, Error, { id: string; status: Account['status'] }>({
+    title: '상태 변경 중...',
+    successMessage: '상태가 변경되었습니다',
+    invalidateKeys: [['accounts']],
+    mutationFn: ({ id, status }) => api.patchAccount(id, { status }),
   });
 
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => api.deleteAccount(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['accounts'] }),
+  const deleteMut = useProgressMutation<void, Error, string>({
+    title: '계정 삭제 중...',
+    successMessage: '계정이 삭제되었습니다',
+    invalidateKeys: [['accounts']],
+    mutationFn: (id) => api.deleteAccount(id),
   });
 
   const testMut = useMutation({
@@ -62,11 +120,11 @@ export function AccountsTab() {
     <div className="max-w-2xl space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-[11px] text-zinc-500">
-          Claude 계정(CLAUDE_CONFIG_DIR)을 여러 개 등록해 에이전트별로 할당할 수 있습니다.
+          Claude 계정(CLAUDE_CONFIG_DIR)을 여러 개 등록해 에이전트별로 할당하거나 스케줄러가 자동 분배합니다.
         </p>
         <button
           onClick={() => setShowCreate(!showCreate)}
-          className="flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300"
+          className="flex items-center gap-1 text-xs text-emerald-400 hover:text-emerald-300 shrink-0 ml-3"
         >
           <Plus size={13} /> 추가
         </button>
@@ -96,7 +154,7 @@ export function AccountsTab() {
             </button>
             <button
               disabled={!newLabel.trim() || createMut.isPending}
-              onClick={() => createMut.mutate()}
+              onClick={() => createMut.mutate({ label: newLabel.trim(), configDir: newConfigDir.trim() || undefined })}
               className="px-3 py-1 text-xs rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40"
             >
               생성
@@ -105,12 +163,17 @@ export function AccountsTab() {
         </div>
       )}
 
-      {accounts.length === 0 && !showCreate && (
+      {loginHint && (
+        <LoginHintBanner configDir={loginHint.configDir} onClose={() => setLoginHint(null)} />
+      )}
+
+      {!isLoading && accounts.length === 0 && !showCreate && (
         <p className="text-sm text-zinc-600 text-center py-6">등록된 계정이 없습니다.</p>
       )}
 
       {accounts.map((acc) => {
         const testRes = testResults[acc.id];
+        const countdown = countdowns[acc.id];
         return (
           <div
             key={acc.id}
@@ -118,8 +181,11 @@ export function AccountsTab() {
           >
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
-                <span className={`text-xs font-medium shrink-0 ${STATUS_COLOR[acc.status]}`}>
+                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0 ${STATUS_BADGE[acc.status]}`}>
                   {STATUS_LABEL[acc.status]}
+                  {acc.status === 'cooldown' && countdown != null && countdown > 0 && (
+                    <span className="ml-1 opacity-70">{fmtSeconds(countdown)}</span>
+                  )}
                 </span>
                 <span className="font-medium text-sm truncate">{acc.label}</span>
                 <span className="text-[10px] text-zinc-600 font-mono shrink-0">{acc.id}</span>
@@ -133,17 +199,19 @@ export function AccountsTab() {
                 >
                   <Play size={13} />
                 </button>
-                <select
-                  value={acc.status}
-                  onChange={(e) => patchMut.mutate({ id: acc.id, status: e.target.value as Account['status'] })}
-                  className="bg-zinc-950 border border-zinc-800 rounded px-1.5 py-0.5 text-xs"
+                <button
+                  title={acc.status === 'disabled' ? '활성화' : '비활성화'}
+                  onClick={() =>
+                    patchMut.mutate({ id: acc.id, status: acc.status === 'disabled' ? 'active' : 'disabled' })
+                  }
+                  disabled={patchMut.isPending}
+                  className="px-2 py-0.5 text-xs rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200"
                 >
-                  <option value="active">활성</option>
-                  <option value="cooldown">쿨다운</option>
-                  <option value="disabled">비활성</option>
-                </select>
+                  {acc.status === 'disabled' ? '활성화' : '비활성화'}
+                </button>
                 <button
                   onClick={() => deleteMut.mutate(acc.id)}
+                  disabled={deleteMut.isPending}
                   className="p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-red-400"
                 >
                   <Trash2 size={13} />
@@ -153,15 +221,17 @@ export function AccountsTab() {
 
             <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
               <Folder size={11} className="shrink-0" />
-              <span className="font-mono truncate">{acc.configDir || '—'}</span>
+              <span className="font-mono truncate flex-1">{acc.configDir || '—'}</span>
+              {acc.configDir && (
+                <CopyLoginCmd configDir={acc.configDir} />
+              )}
             </div>
 
-            {acc.lastUsedAt && (
-              <div className="text-[10px] text-zinc-600">
-                마지막 사용: {new Date(acc.lastUsedAt).toLocaleString('ko-KR')}
-                {' · '}이번 시간 {acc.usage.messagesUsed}건
-              </div>
-            )}
+            <div className="flex items-center gap-3 text-[10px] text-zinc-600">
+              <span>마지막 사용: {relativeTime(acc.lastUsedAt)}</span>
+              <span>이번 시간 {acc.usage.messagesUsed}건</span>
+              <span>우선순위 {acc.priority}</span>
+            </div>
 
             {testRes && (
               <div className={`flex items-start gap-1.5 text-[11px] rounded px-2 py-1 ${testRes.ok ? 'bg-emerald-950/40 text-emerald-300' : 'bg-red-950/40 text-red-300'}`}>
@@ -173,5 +243,53 @@ export function AccountsTab() {
         );
       })}
     </div>
+  );
+}
+
+function LoginHintBanner({ configDir, onClose }: { configDir: string; onClose: () => void }) {
+  const cmd = `CLAUDE_CONFIG_DIR=${configDir} claude login`;
+  const [copied, setCopied] = useState(false);
+
+  const copy = () => {
+    navigator.clipboard.writeText(cmd).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <div className="border border-emerald-800 bg-emerald-950/30 rounded-lg p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-emerald-400">로그인 필요</span>
+        <button onClick={onClose} className="text-[10px] text-zinc-500 hover:text-zinc-300">닫기</button>
+      </div>
+      <p className="text-[11px] text-zinc-400">아래 명령으로 새 계정에 로그인하세요:</p>
+      <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5">
+        <code className="text-[11px] text-emerald-300 font-mono flex-1 break-all">{cmd}</code>
+        <button onClick={copy} className="shrink-0 text-zinc-500 hover:text-zinc-200">
+          {copied ? <CheckCircle2 size={13} className="text-emerald-400" /> : <Copy size={13} />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CopyLoginCmd({ configDir }: { configDir: string }) {
+  const [copied, setCopied] = useState(false);
+  const { startTask, completeTask } = useProgressToastStore();
+  const copy = () => {
+    const cmd = `CLAUDE_CONFIG_DIR=${configDir} claude login`;
+    navigator.clipboard.writeText(cmd).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      const id = `copy-${Date.now()}`;
+      startTask({ id, title: '클립보드 복사됨' });
+      setTimeout(() => completeTask(id, 'claude login 명령이 복사되었습니다'), 50);
+    });
+  };
+  return (
+    <button onClick={copy} title="claude login 명령 복사" className="text-zinc-600 hover:text-zinc-300 shrink-0">
+      {copied ? <CheckCircle2 size={11} className="text-emerald-400" /> : <Copy size={11} />}
+    </button>
   );
 }

@@ -69,7 +69,7 @@ export function startClaudeRun({
   spawn = nodeSpawn,
   accountScheduler = null,
 }) {
-  const { onText, onToolUse, onResult, onError, onExit } = callbacks;
+  const { onText, onToolUse, onResult, onError, onExit, onRateLimit } = callbacks;
 
   // ── 환경변수 설정 (봇 bot.js 라인 2325-2349 동일) ──
   const cleanEnv = { ...process.env };
@@ -214,6 +214,13 @@ export function startClaudeRun({
     accountScheduler.markUsed(pickedAccountId).catch(() => {});
   }
 
+  // MOCK_RATE_LIMIT=1: 테스트용 강제 rate-limit 트리거 (0.5초 후)
+  if (process.env.MOCK_RATE_LIMIT === '1') {
+    setTimeout(() => {
+      handleRateLimit('rate limit exceeded, try again in 5 hours');
+    }, 500);
+  }
+
   let buffer = '';
   const assistantTexts = [];
   let resultText = null;
@@ -222,17 +229,31 @@ export function startClaudeRun({
   let resultUsage = null;
   let gotAnyOutput = false;
   let rateLimitDetected = false;
+  let rateLimitRestartDone = false;
 
   function handleRateLimit(text) {
     if (rateLimitDetected || !accountScheduler || !pickedAccountId) return;
     if (!isRateLimitText(text)) return;
     rateLimitDetected = true;
     const expiresAt = new Date(parseRateLimitExpiry(text)).toISOString();
-    logger.warn(
-      { accountId: pickedAccountId, expiresAt },
-      `[scheduler] account ${pickedAccountId} cooldown until ${expiresAt}`
-    );
     accountScheduler.setCooldown(pickedAccountId, expiresAt).catch(() => {});
+
+    // Find next account synchronously (before async cooldown persists)
+    const nextAcc = accountScheduler.pickNextAccount?.(pickedAccountId);
+    const nextAccountId = nextAcc?.id ?? null;
+    logger.warn(
+      { accountId: pickedAccountId, expiresAt, nextAccountId },
+      `[scheduler] account ${pickedAccountId} rate-limited → next: ${nextAccountId ?? 'none'}`
+    );
+    onRateLimit?.({ accountId: pickedAccountId, nextAccountId });
+
+    // Kill process so caller can restart with new account (max 1 restart enforced by caller)
+    if (!rateLimitRestartDone) {
+      rateLimitRestartDone = true;
+      setTimeout(() => {
+        try { proc.kill('SIGTERM'); } catch { /* ignore */ }
+      }, 200);
+    }
   }
 
   // ── 타임아웃 전략 (상태별 차등) ──

@@ -108,6 +108,8 @@ export function resolveAgent(agentId, { configStore, metadataStore, projectsStor
   const project = meta.projectId && projectsStore
     ? projectsStore.getById(meta.projectId)
     : null;
+  // 프로젝트 레벨 accountId → 스케줄러가 priority 2로 사용
+  if (project?.accountId) agent.projectAccountId = project.accountId;
   const pSkills = Array.isArray(project?.defaultSkillIds) ? project.defaultSkillIds : [];
   const aSkills = Array.isArray(meta.skillIds) ? meta.skillIds : [];
   const mergedSkills = [...new Set([...pSkills, ...aSkills])];

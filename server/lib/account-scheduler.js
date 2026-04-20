@@ -94,5 +94,21 @@ export function createAccountScheduler({ accountsStore }) {
     }
   }
 
-  return { pickAccount, markUsed, setCooldown, isRateLimitText, parseRateLimitExpiry };
+  /**
+   * Pick the next available account excluding the given one.
+   * Used immediately after rate-limit detection (before async cooldown persists).
+   */
+  function pickNextAccount(excludeId) {
+    const active = accountsStore
+      .getAll()
+      .filter((a) => a.status === 'active' && a.id !== excludeId)
+      .sort((a, b) => {
+        if (!a.lastUsedAt) return -1;
+        if (!b.lastUsedAt) return 1;
+        return new Date(a.lastUsedAt) - new Date(b.lastUsedAt);
+      });
+    return active.length > 0 ? active[0] : null;
+  }
+
+  return { pickAccount, pickNextAccount, markUsed, setCooldown, isRateLimitText, parseRateLimitExpiry };
 }

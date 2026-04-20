@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { X, AlertTriangle, Sparkles, FileText, Save, FolderOpen, Wrench } from 'lucide-react';
+import { X, AlertTriangle, Sparkles, FileText, Save, FolderOpen, Wrench, UserCircle2 } from 'lucide-react';
+import type { Account } from '../../lib/types';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 import type { Project } from '../../lib/types';
@@ -47,6 +48,7 @@ export function EditProjectModal({
     defaultSkillIds: project.defaultSkillIds ?? []
   });
   const { data: skills } = useQuery({ queryKey: ['skills'], queryFn: api.skills });
+  const { data: accounts = [] } = useQuery<Account[]>({ queryKey: ['accounts'], queryFn: api.listAccounts });
   const pathChanged = form.path !== project.path;
   const valid = form.name.trim() && form.path.trim();
 
@@ -313,6 +315,26 @@ export function EditProjectModal({
               />
             </div>
 
+            <div className="border-t border-zinc-800 pt-3">
+              <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1 flex items-center gap-1.5">
+                <UserCircle2 size={11} className="text-indigo-400" />
+                프로젝트 계정 (Account)
+              </div>
+              <p className="text-[11px] text-zinc-600 leading-snug mb-2">
+                이 프로젝트 에이전트에 우선 사용할 Claude 계정. 미선택 시 스케줄러가 자동 분배합니다.
+              </p>
+              <select
+                value={form.accountId ?? ''}
+                onChange={(e) => setForm({ ...form, accountId: e.target.value || null })}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
+              >
+                <option value="">자동 (스케줄러 분배)</option>
+                {accounts.filter(a => a.status !== 'disabled').map(a => (
+                  <option key={a.id} value={a.id}>{a.label} ({a.id})</option>
+                ))}
+              </select>
+            </div>
+
             {pathChanged && placedCount > 0 && (
               <div className="rounded bg-amber-900/20 border border-amber-900/40 p-3 text-[11px] text-amber-200 flex items-start gap-2">
                 <AlertTriangle size={14} className="shrink-0 mt-0.5" />
@@ -348,7 +370,8 @@ export function EditProjectModal({
                     color: form.color,
                     defaultSkillIds: form.defaultSkillIds,
                     defaultAllowedTools: form.defaultAllowedTools,
-                    defaultDisallowedTools: form.defaultDisallowedTools
+                    defaultDisallowedTools: form.defaultDisallowedTools,
+                    accountId: form.accountId ?? null,
                   })
                 }
                 className="px-4 py-2 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-sm"

@@ -114,6 +114,10 @@ export function createMessageSender(ctx) {
           toolCalls.push(tool);
           eventBus.publish('chat.tool', { sessionId, tool });
         },
+        onRateLimit({ accountId, nextAccountId }) {
+          eventBus.publish('chat.account-ratelimit', { sessionId, accountId, nextAccountId });
+          logger.info({ sessionId, accountId, nextAccountId }, 'chat: account rate-limited, broadcasting switch');
+        },
         async onResult(result) {
           retryCounters.delete(sessionId);
           try {
