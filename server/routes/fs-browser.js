@@ -96,7 +96,11 @@ export function createFsBrowserRouter({ webConfig }) {
       }
       res.status(201).json({ path: newPath, name });
     } catch (err) {
-      if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
+      if (err.name === 'ZodError') {
+        const first = err.issues?.[0];
+        const msg = first ? `${first.path.join('.') || 'field'}: ${first.message}` : 'Invalid body';
+        return next(new HttpError(400, msg, 'INVALID_BODY'));
+      }
       next(err);
     }
   });

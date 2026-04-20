@@ -205,13 +205,18 @@ export default function ProjectsPage() {
                   <code className="text-xs text-zinc-500 font-mono">{draft.color}</code>
                 </div>
               </LabeledField>
-              <button
-                disabled={!draft.id || !draft.name || !draft.path}
-                onClick={() => create.mutate(draft)}
-                className="flex-1 self-end rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 text-sm flex items-center justify-center gap-2"
-              >
-                <Plus size={14} /> {t('projects.create')}
-              </button>
+              <div className="flex-1 self-end flex flex-col gap-1">
+                <button
+                  disabled={!draft.id || !draft.name || !draft.path || create.isPending}
+                  onClick={() => create.mutate(draft)}
+                  className="w-full rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-4 py-2 text-sm flex items-center justify-center gap-2"
+                >
+                  <Plus size={14} /> {t('projects.create')}
+                </button>
+                {create.error && (
+                  <p className="text-[11px] text-red-400 leading-snug">{create.error.message}</p>
+                )}
+              </div>
             </div>
           </div>
 

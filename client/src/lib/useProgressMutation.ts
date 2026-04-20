@@ -25,11 +25,14 @@ export function useProgressMutation<TData = unknown, _TError = Error, TVariables
 ): UseMutationResult<TData, Error, TVariables> {
   const qc = useQueryClient();
 
-  return useMutation<TData, Error, TVariables, { taskId: string; prev?: unknown }>({
+  const MIN_DISPLAY_MS = 500;
+
+  return useMutation<TData, Error, TVariables, { taskId: string; prev?: unknown; startedAt: number }>({
     mutationFn: options.mutationFn,
 
     onMutate: async (vars) => {
       const taskId = crypto.randomUUID();
+      const startedAt = Date.now();
       useProgressToastStore.getState().startTask({ id: taskId, title: options.title });
 
       if (options.optimistic) {
@@ -39,10 +42,10 @@ export function useProgressMutation<TData = unknown, _TError = Error, TVariables
           options.optimistic.queryKey,
           (old: unknown) => options.optimistic!.updater(old, vars)
         );
-        return { taskId, prev };
+        return { taskId, prev, startedAt };
       }
 
-      return { taskId };
+      return { taskId, startedAt };
     },
 
     onSuccess: async (data, vars, context) => {
@@ -50,9 +53,13 @@ export function useProgressMutation<TData = unknown, _TError = Error, TVariables
       await Promise.all(
         keys.map((k) => qc.invalidateQueries({ queryKey: k }))
       );
-      requestAnimationFrame(() => {
-        useProgressToastStore.getState().completeTask(context!.taskId, options.successMessage);
-      });
+      const elapsed = Date.now() - context!.startedAt;
+      const delay = Math.max(0, MIN_DISPLAY_MS - elapsed);
+      setTimeout(() => {
+        requestAnimationFrame(() => {
+          useProgressToastStore.getState().completeTask(context!.taskId, options.successMessage);
+        });
+      }, delay);
       if (options.onSuccess) {
         await options.onSuccess(data, vars, context);
       }

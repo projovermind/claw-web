@@ -12,11 +12,22 @@ const STYLES = `
   70% { transform: scale(1.15); opacity: 1; }
   100% { transform: scale(1); opacity: 1; }
 }
+@keyframes toast-enter {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+@keyframes toast-exit {
+  from { opacity: 1; transform: translateY(0)   scale(1);    max-height: 80px; }
+  to   { opacity: 0; transform: translateY(4px) scale(0.97); max-height: 0;    }
+}
 .progress-indeterminate {
   animation: progress-slide 1.4s ease-in-out infinite;
 }
 .check-pop-in {
   animation: check-pop 0.2s ease-out forwards;
+}
+.toast-enter {
+  animation: toast-enter 0.18s ease-out forwards;
 }
 `;
 
@@ -35,7 +46,7 @@ function TaskToast({ task }: { task: ProgressTask }) {
   return (
     <div
       className={`
-        w-64 rounded-lg border shadow-xl px-3 py-2.5 text-sm transition-all duration-300
+        w-64 rounded-lg border shadow-xl px-3 py-2.5 text-sm transition-colors duration-300 toast-enter
         ${isFailed ? 'border-red-800 bg-zinc-900' : isDone ? 'border-emerald-700 bg-zinc-900' : 'border-zinc-700 bg-zinc-900'}
       `}
     >

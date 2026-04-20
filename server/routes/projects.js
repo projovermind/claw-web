@@ -16,7 +16,11 @@ export function createProjectsRouter({ projectsStore, configStore, metadataStore
       if (eventBus) eventBus.publish('project.created', { project: created });
       res.status(201).json(created);
     } catch (err) {
-      if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid project', 'INVALID_PROJECT'));
+      if (err.name === 'ZodError') {
+        const first = err.issues?.[0];
+        const msg = first ? `${first.path.join('.') || 'field'}: ${first.message}` : 'Invalid project';
+        return next(new HttpError(400, msg, 'INVALID_PROJECT'));
+      }
       if (err.code === 'DUPLICATE') return next(new HttpError(409, err.message, 'DUPLICATE'));
       next(err);
     }
@@ -46,7 +50,11 @@ export function createProjectsRouter({ projectsStore, configStore, metadataStore
       if (eventBus) eventBus.publish('project.updated', { project: updated });
       res.json(updated);
     } catch (err) {
-      if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid patch', 'INVALID_PATCH'));
+      if (err.name === 'ZodError') {
+        const first = err.issues?.[0];
+        const msg = first ? `${first.path.join('.') || 'field'}: ${first.message}` : 'Invalid patch';
+        return next(new HttpError(400, msg, 'INVALID_PATCH'));
+      }
       next(err);
     }
   });

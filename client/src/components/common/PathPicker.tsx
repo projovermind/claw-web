@@ -31,7 +31,9 @@ export default function PathPicker({
   const qc = useQueryClient();
   const t = useT();
   const [currentPath, setCurrentPath] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [lsError, setLsError] = useState<string | null>(null);
+  const [mkdirError, setMkdirError] = useState<string | null>(null);
+  const error = mkdirError ?? lsError;
   // New-folder inline prompt state
   const [newFolderMode, setNewFolderMode] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -57,28 +59,29 @@ export default function PathPicker({
       qc.invalidateQueries({ queryKey: ['fs-ls', currentPath] });
       setNewFolderMode(false);
       setNewFolderName('');
-      setError(null);
+      setMkdirError(null);
       setCurrentPath(created.path);
     },
     onError: (err: Error) => {
-      setError(err.message);
+      setMkdirError(err.message);
     }
   });
 
   // Reset on open
   useEffect(() => {
     if (open) {
-      setError(null);
+      setLsError(null);
+      setMkdirError(null);
       setNewFolderMode(false);
       setNewFolderName('');
       setCurrentPath(initialPath ?? null);
     }
   }, [open, initialPath]);
 
-  // Translate fetch errors into UI error state
+  // Translate fetch errors into UI error state (independent from mkdir errors)
   useEffect(() => {
-    if (lsQ.error) setError((lsQ.error as Error).message);
-    else setError(null);
+    if (lsQ.error) setLsError((lsQ.error as Error).message);
+    else setLsError(null);
   }, [lsQ.error]);
 
   if (!open) return null;
@@ -134,7 +137,7 @@ export default function PathPicker({
               onClick={() => {
                 setNewFolderMode(true);
                 setNewFolderName('');
-                setError(null);
+                setMkdirError(null);
               }}
               disabled={newFolderMode}
               className="p-1 rounded hover:bg-zinc-800 text-emerald-400 disabled:opacity-40 shrink-0"
