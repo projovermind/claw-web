@@ -16,8 +16,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Boxes } from 'lucide-react';
 import { api } from '../../../lib/api';
 import type { Agent, Project } from '../../../lib/types';
-import { buildHierarchy } from '../../../lib/visibility';
+import { buildHierarchy, isUnassignedAgent } from '../../../lib/visibility';
 import { useT } from '../../../lib/i18n';
+import { useProgressToastStore } from '../../../store/progress-toast-store';
 import { decodeDrop, targetToPatch } from './types';
 import { SectionLabel } from './SectionLabel';
 import { Palette } from './Palette';
@@ -41,6 +42,7 @@ export default function AgentHierarchy({
 }: HierarchyProps = {}) {
   const t = useT();
   const qc = useQueryClient();
+  const { startTask, completeTask } = useProgressToastStore();
   const agentsQ = useQuery({ queryKey: ['agents'], queryFn: api.agents });
   const projectsQ = useQuery({ queryKey: ['projects'], queryFn: api.projects });
   const [search, setSearch] = useState('');
@@ -63,8 +65,10 @@ export default function AgentHierarchy({
   };
 
   const mutate = useMutation({
-    mutationFn: ({ id, patch }: { id: string; patch: Partial<Agent> }) =>
-      api.patchAgent(id, patch),
+    mutationFn: ({ id, patch }: { id: string; patch: Partial<Agent> }) => {
+      startTask({ id: `move_${id}`, title: t('hier.moving') });
+      return api.patchAgent(id, patch);
+    },
     onMutate: async ({ id, patch }) => {
       await qc.cancelQueries({ queryKey: ['agents'] });
       const prev = qc.getQueryData<Agent[]>(['agents']);
@@ -73,13 +77,20 @@ export default function AgentHierarchy({
       );
       return { prev };
     },
-    onError: (_e, _v, ctx) => ctx?.prev && qc.setQueryData(['agents'], ctx.prev),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['agents'] })
+    onError: (_e, vars, ctx) => {
+      ctx?.prev && qc.setQueryData(['agents'], ctx.prev);
+      completeTask(`move_${vars.id}`);
+    },
+    onSuccess: async (_d, vars) => {
+      await qc.invalidateQueries({ queryKey: ['agents'] });
+      requestAnimationFrame(() => completeTask(`move_${vars.id}`));
+    }
   });
 
   // Bulk reorder (used for addon reorder within a project)
   const reorder = useMutation({
     mutationFn: async (orders: { id: string; order: number }[]) => {
+      startTask({ id: 'reorder', title: t('hier.reordering') });
       await Promise.all(orders.map((o) => api.patchAgent(o.id, { order: o.order })));
     },
     onMutate: async (orders) => {
@@ -91,8 +102,14 @@ export default function AgentHierarchy({
       );
       return { prev };
     },
-    onError: (_e, _v, ctx) => ctx?.prev && qc.setQueryData(['agents'], ctx.prev),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['agents'] })
+    onError: (_e, _v, ctx) => {
+      ctx?.prev && qc.setQueryData(['agents'], ctx.prev);
+      completeTask('reorder');
+    },
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ['agents'] });
+      requestAnimationFrame(() => completeTask('reorder'));
+    }
   });
 
   // Pointer for desktop/mouse, Touch for mobile. Touch uses a long-press
@@ -107,9 +124,9 @@ export default function AgentHierarchy({
   const projects: Project[] = useMemo(() => projectsQ.data ?? [], [projectsQ.data]);
   const hierarchy = useMemo(() => buildHierarchy(agents, projects), [agents, projects]);
 
-  // Palette = unassigned agents only
+  // Palette = unassigned agents only (visibility.ts 헬퍼 사용)
   const unassigned = useMemo(
-    () => agents.filter((a) => !a.tier || (a.tier !== 'main' && a.tier !== 'project' && a.tier !== 'addon')),
+    () => agents.filter(isUnassignedAgent),
     [agents]
   );
 

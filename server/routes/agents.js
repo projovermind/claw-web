@@ -22,7 +22,7 @@ const cloneSchema = z.object({
   copyMetadata: z.boolean().optional() // default: true (preserve tier/projectId/skillIds)
 }).strict();
 
-export function createAgentsRouter({ configStore, metadataStore, projectsStore, skillsStore, eventBus }) {
+export function createAgentsRouter({ configStore, metadataStore, projectsStore, skillsStore, sessionsStore, eventBus }) {
   const router = Router();
 
   function merge(id, configAgent) {
@@ -182,9 +182,13 @@ export function createAgentsRouter({ configStore, metadataStore, projectsStore, 
   router.delete('/:id', async (req, res, next) => {
     try {
       const id = req.params.id;
-      if (!configStore.getAgent(id)) {
+      const agentConfig = configStore.getAgent(id);
+      if (!agentConfig) {
         throw new HttpError(404, `Agent ${id} not found`, 'AGENT_NOT_FOUND');
       }
+      const metaBefore = metadataStore?.getAgent(id) ?? {};
+      const sessionsBefore = sessionsStore ? await sessionsStore.archiveByAgent(id) : [];
+      pushUndo({ agentId: id, configBefore: agentConfig, metaBefore, configPatch: {}, metaPatch: {}, sessionsBefore, action: 'delete' });
       await configStore.deleteAgent(id);
       if (metadataStore) await metadataStore.deleteAgent(id);
       if (eventBus) eventBus.publish('agent.deleted', { agentId: id });

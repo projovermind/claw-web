@@ -50,7 +50,7 @@ export default function Sidebar() {
     return n;
   })();
   const hasUnread = validUnreadCount > 0;
-  const hasRunning = !isChatActive && (sessionsData?.sessions ?? []).some((s) => s.isRunning);
+  const hasRunning = (sessionsData?.sessions ?? []).some((s) => s.isRunning);
   const chatDotColor = hasUnread ? 'bg-sky-400' : hasRunning ? 'bg-amber-400' : null;
 
   // Close drawer on route change (mobile)

@@ -52,6 +52,29 @@ export function visibleFrom(agent: Agent, all: Agent[]): Set<string> {
   return visible;
 }
 
+const PLACED_TIERS = new Set<string>(['project', 'addon']);
+const ALL_TIERS = new Set<string>(['main', 'project', 'addon']);
+
+/** tier가 'main'|'project'|'addon' 중 어느 것도 아니면 미배치 */
+export function isUnassignedAgent(a: Agent): boolean {
+  return !a.tier || !ALL_TIERS.has(a.tier);
+}
+
+/** tier='project' 또는 'addon'인 에이전트 수 (프로젝트에 배치된 에이전트) */
+export function countPlaced(agents: Agent[]): number {
+  return agents.filter((a) => a.tier != null && PLACED_TIERS.has(a.tier)).length;
+}
+
+/** tier가 'main'|'project'|'addon' 중 하나가 아닌 에이전트 수 */
+export function countUnassigned(agents: Agent[]): number {
+  return agents.filter(isUnassignedAgent).length;
+}
+
+/** tier='main'인 전역 에이전트 수 */
+export function countMain(agents: Agent[]): number {
+  return agents.filter((a) => a.tier === 'main').length;
+}
+
 export interface Hierarchy {
   main: Agent[]; // usually 1 (hivemind)
   projects: Array<{ project: { id: string; name?: string; color?: string } | null; lead: Agent | null; addons: Agent[] }>;

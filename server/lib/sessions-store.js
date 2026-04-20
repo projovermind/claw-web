@@ -39,9 +39,10 @@ export async function createSessionsStore(filePath) {
   }
 
   return {
-    list(agentId) {
+    list(agentId, { includeArchived = false } = {}) {
       const all = Object.values(cache.sessions ?? {});
-      return agentId ? all.filter((s) => s.agentId === agentId) : all;
+      const active = includeArchived ? all : all.filter((s) => !s._archived);
+      return agentId ? active.filter((s) => s.agentId === agentId) : active;
     },
     get: (id) => cache.sessions?.[id] ?? null,
     onChange: (cb) => emitter.on('change', cb),
@@ -91,6 +92,29 @@ export async function createSessionsStore(filePath) {
     async remove(id) {
       await writeWithLock((current) => {
         if (current.sessions) delete current.sessions[id];
+        return current;
+      });
+    },
+
+    async archiveByAgent(agentId) {
+      const snapshot = Object.values(cache.sessions ?? {})
+        .filter((s) => s.agentId === agentId && !s._archived);
+      if (snapshot.length === 0) return [];
+      await writeWithLock((current) => {
+        for (const s of snapshot) {
+          if (current.sessions[s.id]) current.sessions[s.id]._archived = true;
+        }
+        return current;
+      });
+      return snapshot;
+    },
+
+    async unarchiveSessions(sessions) {
+      if (!sessions || sessions.length === 0) return;
+      await writeWithLock((current) => {
+        for (const s of sessions) {
+          current.sessions[s.id] = { ...s, _archived: false };
+        }
         return current;
       });
     },

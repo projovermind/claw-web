@@ -11,6 +11,7 @@ import PathPicker from '../components/common/PathPicker';
 import { EditProjectModal } from '../components/projects/EditProjectModal';
 import { SortableProjectCard } from '../components/projects/SortableProjectCard';
 import { ProjectDashboard } from '../components/projects/ProjectDashboard';
+import { countPlaced, countUnassigned, countMain } from '../lib/visibility';
 
 function LabeledField({
   label,
@@ -248,16 +249,11 @@ export default function ProjectsPage() {
           ) : (
             <div className="space-y-4">
               <div className="text-base font-semibold text-zinc-200">{t('projects.dashboard')}</div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <StatMini label={t('projects.statProjects')} value={(data ?? []).length} />
-                <StatMini
-                  label={t('projects.statPlaced')}
-                  value={(agents ?? []).filter((a: Agent) => a.projectId).length}
-                />
-                <StatMini
-                  label={t('projects.statUnassigned')}
-                  value={(agents ?? []).filter((a: Agent) => !a.projectId).length}
-                />
+                <StatMini label={t('projects.statMain')} value={countMain(agents ?? [])} />
+                <StatMini label={t('projects.statPlaced')} value={countPlaced(agents ?? [])} />
+                <StatMini label={t('projects.statUnassigned')} value={countUnassigned(agents ?? [])} />
               </div>
               <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-6 text-center">
                 <FolderOpen size={24} className="mx-auto text-zinc-600 mb-2" />

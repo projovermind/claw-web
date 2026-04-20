@@ -22,20 +22,10 @@ export function createStatsRouter({ sessionsStore, configStore }) {
       });
     }
 
-    // Accumulate stats from sessions
+    // Accumulate stats from sessions — archived 세션 및 configStore에 없는 agentId 제외
     for (const session of allSessions) {
       const aid = session.agentId;
-      if (!agentMap.has(aid)) {
-        agentMap.set(aid, {
-          id: aid,
-          name: aid,
-          sessionCount: 0,
-          messageCount: 0,
-          totalInputTokens: 0,
-          totalOutputTokens: 0,
-          lastActive: null,
-        });
-      }
+      if (!agentMap.has(aid)) continue; // 삭제된 에이전트 세션은 스킵
       const entry = agentMap.get(aid);
       entry.sessionCount += 1;
       const msgs = session.messages ?? [];

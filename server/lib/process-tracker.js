@@ -73,16 +73,32 @@ export function createProcessTracker({ filePath }) {
     /**
      * On boot: for every tracked PID still alive, send SIGTERM then clear
      * the file. Returns the count of orphans killed.
+     *
+     * @param {Object} [opts]
+     * @param {Set<string>|Array<string>} [opts.preserveSessionIds] - 이어가기 예정 세션 ID 들은 kill 하지 않음.
+     *   soft-restart 로 autoResume=true 상태라면 pending-resume.json 의 ID들을 넘겨 중복 spawn 을 방지.
      */
-    async reapOrphans() {
+    async reapOrphans(opts = {}) {
+      const preserve = opts.preserveSessionIds instanceof Set
+        ? opts.preserveSessionIds
+        : new Set(Array.isArray(opts.preserveSessionIds) ? opts.preserveSessionIds : []);
       const entries = Object.entries(state.sessions);
       let killed = 0;
+      let preserved = 0;
       for (const [sessionId, info] of entries) {
         if (!info?.pid) continue;
         try {
           // Signal 0 = liveness probe
           process.kill(info.pid, 0);
-          // Alive → kill it
+          // Alive
+          if (preserve.has(sessionId)) {
+            preserved += 1;
+            logger.info(
+              { sessionId, pid: info.pid, startedAt: info.startedAt },
+              'process-tracker: preserving live Claude CLI (pending resume will reuse)'
+            );
+            continue;
+          }
           try {
             process.kill(info.pid, 'SIGTERM');
             killed += 1;
@@ -100,9 +116,14 @@ export function createProcessTracker({ filePath }) {
           // Not alive — already gone, nothing to do
         }
       }
-      state = { sessions: {} };
+      // preserve 된 엔트리만 살리고 나머지는 제거
+      const next = { sessions: {} };
+      for (const [sid, info] of Object.entries(state.sessions)) {
+        if (preserve.has(sid)) next.sessions[sid] = info;
+      }
+      state = next;
       await flush();
-      return killed;
+      return { killed, preserved };
     },
 
     /** For tests + observability */

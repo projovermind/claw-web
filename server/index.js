@@ -33,7 +33,7 @@ import { createUploadsRouter } from './routes/uploads.js';
 import { createSkillsRouter } from './routes/skills.js';
 import { createActivityRouter } from './routes/activity.js';
 import { createFsBrowserRouter } from './routes/fs-browser.js';
-import { createTunnelRouter, autoStartQuickTunnel } from './routes/tunnel.js';
+import { createTunnelRouter, autoStartQuickTunnel, stopQuickTunnel } from './routes/tunnel.js';
 import { createAdminRouter } from './routes/admin.js';
 import { createDomainRouter } from './routes/domain.js';
 import { attachWsHub } from './ws/hub.js';
@@ -49,6 +49,7 @@ import { createSchedulesRouter } from './routes/schedules.js';
 import { createLspRouter } from './routes/lsp.js';
 import { createTerraformRouter } from './routes/terraform.js';
 import { createUndoRouter } from './routes/undo.js';
+import { createExportImportRouter } from './routes/export-import.js';
 import { createHooksStore } from './lib/hooks-store.js';
 import { createScheduler } from './lib/scheduler.js';
 import { createDelegationTracker } from './lib/delegation-tracker.js';
@@ -251,10 +252,24 @@ async function main() {
   }
   const processTracker = createProcessTracker({ filePath: PROCESS_TRACKER_PATH });
   // Clean up any Claude CLI children that survived a previous crash.
+  // 단, soft-restart 로 이어가기 예정(pending-resume 에 있는) 세션의 자식은 보존.
   try {
-    const killed = await processTracker.reapOrphans();
+    const earlyLogsDir = path.join(REPO_ROOT, 'logs');
+    const earlyResumeFile = path.join(earlyLogsDir, 'pending-resume.json');
+    const earlySoftFlag = path.join(earlyLogsDir, '.soft-restart');
+    let preserveIds = [];
+    if (fssync.existsSync(earlySoftFlag) && fssync.existsSync(earlyResumeFile)) {
+      try {
+        const arr = JSON.parse(fssync.readFileSync(earlyResumeFile, 'utf8'));
+        if (Array.isArray(arr)) preserveIds = arr;
+      } catch { /* ignore */ }
+    }
+    const { killed, preserved } = await processTracker.reapOrphans({ preserveSessionIds: preserveIds });
     if (killed > 0) {
       logger.warn({ killed }, 'runner: reaped orphaned Claude CLI processes from previous run');
+    }
+    if (preserved > 0) {
+      logger.info({ preserved }, 'runner: preserved live Claude CLI children for soft-restart resume');
     }
   } catch (err) {
     logger.warn({ err }, 'runner: reapOrphans failed (non-fatal)');
@@ -299,7 +314,7 @@ async function main() {
   app.use('/api', createAuthMiddleware({ webConfig }));
 
   app.use('/api/health', createHealthRouter({ healthCheck }));
-  app.use('/api/agents', createAgentsRouter({ configStore, metadataStore, projectsStore, skillsStore, eventBus }));
+  app.use('/api/agents', createAgentsRouter({ configStore, metadataStore, projectsStore, skillsStore, sessionsStore, eventBus }));
   app.use(
     '/api/projects',
     createProjectsRouter({ projectsStore, configStore, metadataStore, eventBus })
@@ -343,7 +358,8 @@ async function main() {
   app.use('/api/schedules', createSchedulesRouter({ scheduler, eventBus }));
   app.use('/api/lsp', createLspRouter({ projectsStore }));
   app.use('/api/terraform', createTerraformRouter({ projectsStore, configStore, metadataStore, eventBus }));
-  app.use('/api/undo', createUndoRouter({ configStore, metadataStore, eventBus }));
+  app.use('/api/undo', createUndoRouter({ configStore, metadataStore, sessionsStore, eventBus }));
+  app.use('/api/export-import', createExportImportRouter({ skillsStore, configStore }));
 
   const distPath = path.join(REPO_ROOT, 'client', 'dist');
   app.use(express.static(distPath));
@@ -402,23 +418,76 @@ async function main() {
   });
 
   // ── 재시작 시 중단 세션 처리 ──
-  // 이전엔 자동 재개했으나:
-  //   (a) crash-loop 중이면 매 재기동마다 N개 세션 spawn → 악화
-  //   (b) delegation 루프에 빠진 에이전트가 재시작할 때마다 또 시작 → 영원히 안 끝남
-  // 기본은 **자동 재개 OFF**. pending-resume 에 ID만 남기고 각 세션에 "재기동됨 — 수동으로 재개"
-  // 알림 메시지 append. 옵션(webConfig.autoResume === true) 으로 다시 켤 수 있음.
-  const resumeFile = path.join(path.dirname(WEB_CONFIG_PATH), 'logs', 'pending-resume.json');
+  // 기본값: autoResume=false — crash-loop / delegation 루프 재발 방지.
+  // 단 Settings 에서 **소프트 재시작** 을 사용자가 명시적으로 눌렀을 때는
+  // `.soft-restart` 플래그가 찍혀 있어 이번 한 번만 autoResume=true 로 강제.
+  // 이게 없으면 소프트 재시작 = 강제 재시작과 동일해 "(응답 중단)" 만 찍힘.
+  const logsDir = path.join(path.dirname(WEB_CONFIG_PATH), 'logs');
+  const resumeFile = path.join(logsDir, 'pending-resume.json');
+  const softRestartFlag = path.join(logsDir, '.soft-restart');
+
+  let autoResume = webConfig.autoResume === true; // 기본 false
+  let softRestartReason = null;
+  if (fssync.existsSync(softRestartFlag)) {
+    autoResume = true;
+    try {
+      softRestartReason = JSON.parse(fssync.readFileSync(softRestartFlag, 'utf8'));
+      fssync.unlinkSync(softRestartFlag);
+    } catch { /* ignore */ }
+    logger.info({ reason: softRestartReason }, 'soft-restart detected — auto-resume enabled for this boot');
+  }
+
+  // delegation/agent 루프 감지: source 힌트 있으면 autoResume 강제 off
+  const _resumeSource = softRestartReason?.source ?? '';
+  if (autoResume && (_resumeSource === 'delegation-cli' || _resumeSource === 'agent-triggered')) {
+    autoResume = false;
+    logger.warn({ source: _resumeSource }, 'soft-restart triggered by agent/delegation — auto-resume suppressed to prevent loop');
+  }
+
+  // 쿨다운 상수
+  const RESUME_COOLDOWN_MS = 60 * 1000;        // 60초 내 재재개 차단
+  const RESUME_MAX_ATTEMPTS = 3;               // 10분 내 최대 3회
+  const RESUME_WINDOW_MS = 10 * 60 * 1000;    // 10분 윈도우
+
   try {
     if (fssync.existsSync(resumeFile)) {
       const raw = await fs.readFile(resumeFile, 'utf8');
       await fs.unlink(resumeFile).catch(() => {});
-      const ids = JSON.parse(raw);
-      if (Array.isArray(ids) && ids.length > 0) {
-        const autoResume = webConfig.autoResume === true; // 기본 false
-        logger.info({ count: ids.length, autoResume }, 'interrupted sessions found');
+      let entries = JSON.parse(raw);
+      // 구 스키마(string[]) 호환
+      if (Array.isArray(entries) && typeof entries[0] === 'string') {
+        entries = entries.map(sid => ({ sid, attempts: 0, lastAt: null, queuedAt: new Date().toISOString() }));
+      }
+      if (Array.isArray(entries) && entries.length > 0) {
+        logger.info({ count: entries.length, autoResume }, 'interrupted sessions found');
         setTimeout(async () => {
-          for (const sid of ids) {
+          const now = Date.now();
+          for (const entry of entries) {
+            const { sid } = entry;
             if (autoResume) {
+              // 쿨다운 체크
+              const lastAt = entry.lastAt ? new Date(entry.lastAt).getTime() : 0;
+              const attempts = entry.attempts ?? 0;
+              const queuedAt = entry.queuedAt ? new Date(entry.queuedAt).getTime() : 0;
+              const inWindow = (now - queuedAt) < RESUME_WINDOW_MS;
+
+              if ((now - lastAt) < RESUME_COOLDOWN_MS) {
+                logger.warn({ sid, lastAt: entry.lastAt }, 'auto-resume skipped — 60s cooldown not elapsed');
+                await sessionsStore.appendMessage(sid, {
+                  role: 'assistant',
+                  content: '⚠️ **자동 재개 차단** — 60초 내 재재개 시도가 감지되어 루프를 방지합니다. 수동으로 메시지를 보내주세요.'
+                }).catch(() => {});
+                continue;
+              }
+              if (inWindow && attempts >= RESUME_MAX_ATTEMPTS) {
+                logger.warn({ sid, attempts }, 'auto-resume skipped — 3 attempts in 10min exceeded');
+                await sessionsStore.appendMessage(sid, {
+                  role: 'assistant',
+                  content: '⚠️ **자동 재개 차단** — 10분 내 3회 재개 한도를 초과했습니다. 루프 방지를 위해 수동 재개가 필요합니다.'
+                }).catch(() => {});
+                continue;
+              }
+
               try { await resumeInterruptedSession(sid); } catch (err) {
                 logger.warn({ sid, err: err.message }, 'resume failed');
               }
@@ -454,7 +523,9 @@ async function main() {
       const activeIds = runner.activeIds();
       if (activeIds.length > 0) {
         fssync.mkdirSync(path.dirname(resumeFile), { recursive: true });
-        fssync.writeFileSync(resumeFile, JSON.stringify(activeIds), 'utf8');
+        const _queuedAt = new Date().toISOString();
+        const _resumeEntries = activeIds.map(sid => ({ sid, attempts: 0, lastAt: null, queuedAt: _queuedAt }));
+        fssync.writeFileSync(resumeFile, JSON.stringify(_resumeEntries), 'utf8');
         logger.warn({ count: activeIds.length, sessions: activeIds }, 'pending-resume persisted (sync)');
         // 세션에 알림 메시지 + runner abort (async 지만 await 안 해도 append 큐에 들어감)
         for (const id of activeIds) {
@@ -468,6 +539,10 @@ async function main() {
     } catch (err) {
       logger.warn({ err: err.message }, 'failed to persist resume queue');
     }
+
+    // Phase 1.5: quick tunnel 자식 명시적 정리 — SIGKILL 이 아니라 정상 shutdown 경로.
+    // 이 경로를 안 타면 cloudflared 가 고아로 남아 다음 기동 시 중복 누적.
+    try { stopQuickTunnel(); } catch { /* ignore */ }
 
     // ───────────────────────────────────────────────────────
     // Phase 2: 나머지 cleanup — 2초 타임아웃, 초과 시 강제 exit
@@ -526,6 +601,8 @@ async function main() {
     } catch (persistErr) {
       logger.error({ err: persistErr.message }, 'emergency: failed to persist resume queue');
     }
+    // Emergency 경로에서도 quick tunnel 자식 정리 — 고아 누적 방지
+    try { stopQuickTunnel(); } catch { /* ignore */ }
     // 1초 내 강제 종료 — launchd 가 재시작
     setTimeout(() => process.exit(1), 1000);
   }

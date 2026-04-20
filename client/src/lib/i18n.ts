@@ -91,6 +91,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     'hier.lead.empty': '프로젝트 대표 에이전트 드롭',
     'hier.addons': 'Addons',
     'hier.addons.empty': '에드온 에이전트 드롭',
+    'hier.moving': '에이전트 이동 중…',
+    'hier.reordering': '순서 변경 중…',
 
     // Agents page
     'agents.title': '에이전트',
@@ -188,6 +190,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     'projects.dashboard': '프로젝트 대시보드',
     'projects.dashboardHint': '프로젝트를 클릭하면 대시보드가 열립니다',
     'projects.statProjects': '프로젝트',
+    'projects.statMain': '전역 에이전트',
     'projects.statPlaced': '배치된 에이전트',
     'projects.statUnassigned': '미배치',
     'projects.fieldId': 'ID',
@@ -313,6 +316,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.sidebar.deleteCount': '{count}개 삭제',
     'chat.sidebar.deleteCountConfirm': '{count}개 세션을 삭제할까?',
     'chat.sidebar.multiSelect': '다중 선택',
+    'chat.sidebar.selectAll': '전체 선택',
+    'chat.sidebar.deselectAll': '전체 해제',
     'chat.sidebar.deleteConfirm': '"{title}" 삭제?',
     'chat.sidebar.exportFailed': 'Export 실패',
 
@@ -880,6 +885,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     'hier.lead.empty': 'Drop project lead here',
     'hier.addons': 'Addons',
     'hier.addons.empty': 'Drop addon agents here',
+    'hier.moving': 'Moving agent…',
+    'hier.reordering': 'Reordering…',
 
     'agents.title': 'Agents',
     'agents.moveLabel': 'Move / Manage',
@@ -977,6 +984,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     'projects.dashboard': 'Project Dashboard',
     'projects.dashboardHint': 'Click a project to open its dashboard',
     'projects.statProjects': 'Projects',
+    'projects.statMain': 'Global Agents',
     'projects.statPlaced': 'Placed Agents',
     'projects.statUnassigned': 'Unassigned',
     'projects.fieldId': 'ID',
@@ -1102,6 +1110,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.sidebar.deleteCount': 'Delete {count}',
     'chat.sidebar.deleteCountConfirm': 'Delete {count} sessions?',
     'chat.sidebar.multiSelect': 'Multi-select',
+    'chat.sidebar.selectAll': 'Select all',
+    'chat.sidebar.deselectAll': 'Deselect all',
     'chat.sidebar.deleteConfirm': 'Delete "{title}"?',
     'chat.sidebar.exportFailed': 'Export failed',
 

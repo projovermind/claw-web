@@ -271,15 +271,23 @@ export function createMessageSender(ctx) {
         },
         onExit({ code } = {}) {
           eventBus.publish('chat.exit', { sessionId, code });
+          // Silent exit 감지: Claude CLI 가 exit 0 으로 나갔는데 응답 text 가 비어있음.
+          // 과거엔 자동 재시도(3회) 했으나 — 같은 조건이면 무한히 반복되며
+          // "(응답이 중단되었습니다)" + 같은 메시지 재전송 루프를 만들기만 함
+          // (세션 파일 손상/컨텍스트 초과/모델 공백 응답 등은 재시도로 안 풀림).
+          // 단 1회만 `--resume` 없이 fresh start 로 재시도 후, 실패하면
+          // 사용자에게 진단 + 선택지를 제공하고 자동 재시도는 멈춤.
           if ((code === 0 || code === null) && !accumText.trim()) {
             const counter = retryCounters.get(sessionId) ?? { count: 0, lastError: '' };
-            if (counter.count < MAX_AUTO_RETRIES) {
-              const attempt = counter.count + 1;
-              retryCounters.set(sessionId, { count: attempt, lastError: 'silent_exit' });
-              logger.warn({ sessionId, attempt }, 'chat: silent exit detected, auto-retry');
+            const session = sessionsStore.get(sessionId);
+            const hadClaudeId = !!(session?.claudeSessionId || session?.claude_session_id);
+            // 재시도는 hadClaudeId=true 일 때 1회만 (resume 을 꺼서 fresh start 로 전환)
+            if (counter.count === 0 && hadClaudeId) {
+              retryCounters.set(sessionId, { count: 1, lastError: 'silent_exit' });
+              logger.warn({ sessionId, hadClaudeId }, 'chat: silent exit — retrying once as fresh session (no --resume)');
               sessionsStore.appendMessage(sessionId, {
                 role: 'assistant',
-                content: `🔄 **자동 복구 중** (${attempt}/${MAX_AUTO_RETRIES}) — 응답 없이 종료 감지. 재시도합니다...`
+                content: '🔄 **응답이 비어 있어 세션을 새로 열어 1회 재시도합니다** — 이전 대화 컨텍스트는 유지됩니다.'
               }).catch(() => {});
               sessionsStore.update(sessionId, { claudeSessionId: null }).catch(() => {});
               setTimeout(() => {
@@ -291,13 +299,22 @@ export function createMessageSender(ctx) {
                   logger.error({ retryErr, sessionId }, 'chat: silent-exit retry failed');
                 }
               }, 2000);
-            } else {
-              retryCounters.delete(sessionId);
-              sessionsStore.appendMessage(sessionId, {
-                role: 'assistant',
-                content: `⚠️ **응답이 비어있습니다** — runner 가 응답 없이 종료됐고, 자동 복구에도 실패했습니다. 다시 시도해 주세요.`
-              }).catch(() => {});
+              return;
             }
+            // 재시도 실패 또는 처음부터 fresh session 이었던 경우 → 자동 재시도 중단 + 진단 안내
+            retryCounters.delete(sessionId);
+            logger.warn({ sessionId, retried: counter.count > 0 }, 'chat: silent exit — giving up auto-retry');
+            sessionsStore.appendMessage(sessionId, {
+              role: 'assistant',
+              content:
+                '⚠️ **응답이 비어 있습니다** — Claude CLI 가 텍스트 없이 종료했습니다.\n\n' +
+                '원인 추측:\n' +
+                '- Claude API / 외부 프록시(Z.AI 등)가 빈 응답을 반환\n' +
+                '- 대화가 너무 길어 모델 컨텍스트 한도 초과\n' +
+                '- --resume 대상 세션 파일 손상\n\n' +
+                '**다음 조치 중 선택:** 같은 메시지를 다시 보내거나, 질문을 짧게 요약해 새 메시지로 시도하세요.\n' +
+                '(자동 재시도는 중단됐습니다 — 무한 루프 방지)'
+            }).catch(() => {});
           }
         }
       }

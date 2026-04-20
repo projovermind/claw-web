@@ -8,17 +8,20 @@ import { useT } from '../lib/i18n';
 import { AgentModal, emptyAgentForm } from '../components/agents/AgentModal';
 import type { AgentFormState } from '../components/agents/AgentModal';
 import { BulkModelChangeModal } from '../components/agents/BulkModelChangeModal';
+import { useProgressToastStore } from '../store/progress-toast-store';
 
 export default function AgentsPage() {
   const t = useT();
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ['agents'], queryFn: api.agents });
+  const { startTask, completeTask } = useProgressToastStore();
   const [modal, setModal] = useState<{ mode: 'create' | 'edit'; agent?: Agent } | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [quickForm, setQuickForm] = useState<AgentFormState>(emptyAgentForm());
 
   const createAgent = useMutation({
     mutationFn: async (form: AgentFormState) => {
+      startTask({ id: `create_${form.id}`, title: t('agents.modal.create') });
       const created = await api.createAgent({
         id: form.id,
         name: form.name,
@@ -37,12 +40,14 @@ export default function AgentsPage() {
       }
       return created;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['agents'] });
+    onSuccess: async (_d, form) => {
+      await qc.invalidateQueries({ queryKey: ['agents'] });
+      requestAnimationFrame(() => completeTask(`create_${form.id}`));
       setModal(null);
       setQuickForm(emptyAgentForm());
     },
-    onError: (err: Error) => {
+    onError: (err: Error, form) => {
+      completeTask(`create_${form.id}`);
       alert(`${t('agents.saveFailed')}: ${err.message}`);
     }
   });
@@ -56,8 +61,9 @@ export default function AgentsPage() {
       id: string;
       form: AgentFormState;
       ifMatchUpdatedAt?: string;
-    }) =>
-      api.patchAgent(
+    }) => {
+      startTask({ id: `update_${id}`, title: t('agents.modal.edit') });
+      return api.patchAgent(
         id,
         {
           name: form.name,
@@ -70,16 +76,17 @@ export default function AgentsPage() {
           disallowedTools: form.disallowedTools
         },
         { ifMatchUpdatedAt }
-      ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['agents'] });
+      );
+    },
+    onSuccess: async (_d, vars) => {
+      await qc.invalidateQueries({ queryKey: ['agents'] });
+      requestAnimationFrame(() => completeTask(`update_${vars.id}`));
       setModal(null);
     },
     onError: (err: Error, vars) => {
+      completeTask(`update_${vars.id}`);
       if (/UPDATEDAT_CONFLICT|modified by another session|409/.test(err.message)) {
-        if (
-          confirm(t('agents.conflictConfirm'))
-        ) {
+        if (confirm(t('agents.conflictConfirm'))) {
           updateAgent.mutate({ id: vars.id, form: vars.form });
         } else {
           qc.invalidateQueries({ queryKey: ['agents'] });
@@ -92,8 +99,15 @@ export default function AgentsPage() {
   });
 
   const deleteAgent = useMutation({
-    mutationFn: (id: string) => api.deleteAgent(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['agents'] })
+    mutationFn: (id: string) => {
+      startTask({ id: `delete_${id}`, title: t('agents.confirm.delete', { name: id }) });
+      return api.deleteAgent(id);
+    },
+    onSuccess: async (_d, id) => {
+      await qc.invalidateQueries({ queryKey: ['agents'] });
+      requestAnimationFrame(() => completeTask(`delete_${id}`));
+    },
+    onError: (_e, id) => completeTask(`delete_${id}`)
   });
 
   const cloneAgent = useMutation({

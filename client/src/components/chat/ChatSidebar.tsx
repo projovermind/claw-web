@@ -131,8 +131,12 @@ export function ChatSidebar({
   // 상태 점 컴포넌트
   const StatusDot = ({ unread, running, isError }: { unread: boolean; running: boolean; isError?: boolean }) => {
     if (!unread && !running) return null;
-    const color = unread ? (isError ? 'bg-red-400' : 'bg-sky-400') : 'bg-amber-400';
-    return <span className={`w-1.5 h-1.5 rounded-full ${color} animate-pulse shrink-0`} />;
+    return (
+      <>
+        {unread && <span className={`w-1.5 h-1.5 rounded-full ${isError ? 'bg-red-400' : 'bg-sky-400'} animate-pulse shrink-0`} />}
+        {running && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shrink-0" />}
+      </>
+    );
   };
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -283,6 +287,8 @@ export function ChatSidebar({
       window.removeEventListener('pointerup', onUp);
     };
   }, [sidebarWidth]);
+
+  const visibleSessions = sessions.filter((s) => !isHiddenDelegation(s));
 
   return (
     <aside
@@ -476,6 +482,18 @@ export function ChatSidebar({
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
+                const allSelected = visibleSessions.length > 0 && visibleSessions.every((s) => selectedIds.has(s.id));
+                setSelectedIds(allSelected ? new Set() : new Set(visibleSessions.map((s) => s.id)));
+              }}
+              className="text-[11px] text-zinc-400 hover:text-zinc-200 flex items-center gap-1"
+            >
+              <CheckSquare size={11} />
+              {visibleSessions.length > 0 && visibleSessions.every((s) => selectedIds.has(s.id))
+                ? t('chat.sidebar.deselectAll')
+                : t('chat.sidebar.selectAll')}
+            </button>
+            <button
+              onClick={() => {
                 const ids = Array.from(selectedIds);
                 if (ids.length === 0) return;
                 if (confirm(t('chat.sidebar.deleteCountConfirm', { count: ids.length })))
@@ -523,8 +541,7 @@ export function ChatSidebar({
             {t('chat.sidebar.noSessions')}
           </div>
         )}
-        {sessions
-          .filter((s) => !isHiddenDelegation(s))
+        {visibleSessions
           .slice()
           .sort((a, b) => {
             // 현재 열린 세션은 항상 읽음 취급
@@ -569,7 +586,7 @@ export function ChatSidebar({
                 {!selectMode && isUnread && (
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 animate-pulse ${unread[s.id]?.isError ? 'bg-red-400' : 'bg-sky-400'}`} title={t('chat.session.unread')} />
                 )}
-                {!selectMode && !isUnread && (s.isRunning || runtime[s.id]?.running) && (
+                {!selectMode && (s.isRunning || runtime[s.id]?.running) && (
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title={t('chat.session.running')} />
                 )}
                 {!selectMode && s.pinned && (

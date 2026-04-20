@@ -27,14 +27,16 @@ function describeFromPatch(configPatch, metaPatch) {
   return parts.length > 0 ? parts.join(', ') : '에이전트 수정';
 }
 
-export function pushUndo({ agentId, configBefore, metaBefore, configPatch, metaPatch }) {
+export function pushUndo({ agentId, configBefore, metaBefore, configPatch, metaPatch, sessionsBefore, action }) {
   const entry = {
     id: nanoid(8),
     timestamp: new Date().toISOString(),
     agentId,
-    description: describeFromPatch(configPatch ?? {}, metaPatch ?? {}),
+    action: action ?? 'update',
+    description: action === 'delete' ? '에이전트 삭제' : describeFromPatch(configPatch ?? {}, metaPatch ?? {}),
     configBefore,
-    metaBefore
+    metaBefore,
+    sessionsBefore: sessionsBefore ?? []
   };
   stack.push(entry);
   if (stack.length > MAX_STACK) stack.shift();

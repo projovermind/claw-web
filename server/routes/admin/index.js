@@ -23,7 +23,7 @@ import { registerTunnelCfRoutes } from './tunnel-cf.js';
 export function createAdminRouter({ runner, eventBus }) {
   const router = Router();
 
-  registerUpdateRoutes(router);
+  registerUpdateRoutes(router, { eventBus });
   registerClaudeRoutes(router, { eventBus });
   registerRestartRoute(router, { runner });
   registerTunnelCfRoutes(router);
