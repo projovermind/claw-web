@@ -6,7 +6,7 @@ import { logger } from '../../lib/logger.js';
 import { execFileAsync, compareVersions } from './utils.js';
 
 /** Register /update/* routes on the given router. */
-export function registerUpdateRoutes(router) {
+export function registerUpdateRoutes(router, { eventBus } = {}) {
   // GET /update/check — GitHub 최신 릴리즈 조회 후 현재 버전과 비교
   router.get('/update/check', async (_req, res) => {
     try {
@@ -110,6 +110,7 @@ export function registerUpdateRoutes(router) {
         setTimeout(() => process.exit(0), 500);
       } catch (err) {
         logger.error({ err: err.message }, 'admin: update/patch failed');
+        if (eventBus) eventBus.publish('admin.update.failed', { error: err.message });
       }
     }, 100);
   });

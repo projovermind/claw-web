@@ -95,6 +95,7 @@ export function createMessageSender(ctx) {
 
     eventBus.publish('chat.started', { sessionId });
 
+    try {
     runner.start({
       sessionId,
       agent,
@@ -301,6 +302,11 @@ export function createMessageSender(ctx) {
         }
       }
     });
+    } catch (err) {
+      eventBus.publish('chat.error', { sessionId, error: err.message });
+      sessionsStore.appendMessage(sessionId, { role: 'assistant', content: `⚠️ 실행 실패 — ${err.message}` }).catch(() => {});
+      eventBus.publish('chat.exit', { sessionId, code: -1 });
+    }
   }
 
   return { sendRunnerMessage };

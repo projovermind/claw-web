@@ -64,11 +64,9 @@ export function createDelegation(ctx) {
     if (!delegationTracker || !responseText) return;
     const parsed = extractDelegateJson(responseText);
     if (!parsed.length) return;
-    await Promise.all(
-      parsed.map((p) =>
-        executeDelegation(originSessionId, p.delegate.agent, p.delegate.task, JSON.stringify(p))
-      )
-    );
+    for (const p of parsed) {
+      await executeDelegation(originSessionId, p.delegate.agent, p.delegate.task, JSON.stringify(p));
+    }
   }
 
   /** Normalize agent ID (cf.router → cf_router, case-insensitive). */
@@ -179,6 +177,31 @@ export function createDelegation(ctx) {
     }
   }
 
+  /** Escape special regex characters in a string. */
+  function escapeForRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  /**
+   * Send a loop iteration prompt after waiting for the runner to become idle.
+   * Polls every 500ms up to maxRetries times, then sends regardless.
+   */
+  async function sendWhenIdle(sessionId, iterLabel, rawPrompt, maxRetries = 10) {
+    for (let i = 0; i < maxRetries; i++) {
+      const isIdle = ctx.runner?.isSessionIdle?.(sessionId) ?? true;
+      if (isIdle) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    try {
+      const s = sessionsStore.get(sessionId);
+      if (!s?.loop?.enabled || s.loop.paused) return;
+      sessionsStore.appendMessage(sessionId, { role: 'user', content: iterLabel });
+      ctx.sendRunnerMessage(sessionId, rawPrompt);
+    } catch (err) {
+      eventBus.publish('chat.error', { sessionId, error: `Loop failed: ${err.message}` });
+    }
+  }
+
   /**
    * Ralph Loop continuation — after each assistant response, decide:
    * continue, complete, or escalate.
@@ -191,12 +214,31 @@ export function createDelegation(ctx) {
     const text = responseText ?? '';
     const nextIter = (loop.currentIteration ?? 0) + 1;
 
-    const promiseTag = `<promise>${loop.completionPromise}</promise>`;
-    const completed = text.includes(promiseTag);
+    // (1) 완료/에스컬레이트 판정: 정규식으로 관대하게 (공백 허용, 대소문자 무관)
+    const completionRegex = new RegExp(
+      `<promise>\\s*${escapeForRegex(loop.completionPromise)}\\s*<\\/promise>`,
+      'i'
+    );
+    const completed = completionRegex.test(text);
 
-    const escalateMatch = text.match(/<escalate>([\s\S]*?)<\/escalate>/);
+    const escalateMatch = text.match(/<escalate>([\s\S]*?)<\/escalate>/i);
     const escalated = !!escalateMatch;
     const escalateReason = escalateMatch?.[1]?.trim() ?? '';
+
+    // (3) 진전 없음 감지: 최근 3개 응답이 길이차 10% 이내 + 첫 200자 동일이면 자동 에스컬레이트
+    const recentResponses = [...(loop.recentResponses ?? []), text].slice(-3);
+    let stagnated = false;
+    if (!completed && !escalated && recentResponses.length >= 3) {
+      const similar = (a, b) => {
+        const maxLen = Math.max(a.length, b.length, 1);
+        return (
+          Math.abs(a.length - b.length) / maxLen <= 0.1 &&
+          a.slice(0, 200) === b.slice(0, 200)
+        );
+      };
+      const [r1, r2, r3] = recentResponses;
+      if (similar(r1, r2) && similar(r2, r3)) stagnated = true;
+    }
 
     if (completed || nextIter >= loop.maxIterations) {
       await sessionsStore.update(sessionId, { loop: null });
@@ -206,13 +248,14 @@ export function createDelegation(ctx) {
         reason: completed ? 'promise' : 'max_iterations'
       });
       logger.info({ sessionId, iterations: nextIter, reason: completed ? 'promise' : 'max' }, 'ralph loop: completed');
-    } else if (escalated) {
+    } else if (escalated || stagnated) {
+      const reason = stagnated ? '진전 없음 감지' : escalateReason;
       await sessionsStore.update(sessionId, {
-        loop: { ...loop, currentIteration: nextIter, paused: true, escalateReason }
+        loop: { ...loop, currentIteration: nextIter, paused: true, escalateReason: reason, recentResponses }
       });
       await sessionsStore.appendMessage(sessionId, {
         role: 'assistant',
-        content: `🚨 **Loop 에스컬레이션** (${nextIter}/${loop.maxIterations})\n\n**이유**: ${escalateReason}\n\n후속 지시를 보내주시면 Loop 가 재개됩니다.`
+        content: `🚨 **Loop 에스컬레이션** (${nextIter}/${loop.maxIterations})\n\n**이유**: ${reason}\n\n후속 지시를 보내주시면 Loop 가 재개됩니다.`
       }).catch(() => {});
       if (delegationTracker) {
         const del = delegationTracker.getByTarget(sessionId);
@@ -229,7 +272,7 @@ export function createDelegation(ctx) {
                 `[위임 에스컬레이션]\n\n` +
                 `**대상**: ${del.targetAgentId}\n` +
                 `**작업**: ${del.task}\n` +
-                `**문제**: ${escalateReason}\n\n` +
+                `**문제**: ${reason}\n\n` +
                 `위임한 작업이 Ralph Loop 중 막혔습니다. 문제를 검토하고 사용자에게 상황을 설명한 뒤, 해결 방안 / 수정 지시 / 중단 중 선택지를 <choices> 로 제시해 주세요.`;
               await sessionsStore.appendMessage(originId, { role: 'user', content: trigger });
               ctx.sendRunnerMessage(originId, trigger);
@@ -242,12 +285,12 @@ export function createDelegation(ctx) {
       eventBus.publish('session.loop.escalated', {
         sessionId,
         iteration: nextIter,
-        reason: escalateReason
+        reason
       });
-      logger.info({ sessionId, iteration: nextIter, reason: escalateReason }, 'ralph loop: escalated');
+      logger.info({ sessionId, iteration: nextIter, reason }, 'ralph loop: escalated');
     } else {
       await sessionsStore.update(sessionId, {
-        loop: { ...loop, currentIteration: nextIter }
+        loop: { ...loop, currentIteration: nextIter, recentResponses }
       });
       eventBus.publish('session.loop.iteration', {
         sessionId,
@@ -255,17 +298,12 @@ export function createDelegation(ctx) {
         maxIterations: loop.maxIterations
       });
       logger.info({ sessionId, iteration: nextIter, max: loop.maxIterations }, 'ralph loop: next iteration');
-      setTimeout(() => {
-        try {
-          const s = sessionsStore.get(sessionId);
-          if (!s?.loop?.enabled || s.loop.paused) return;
-          const iterLabel = `[Loop ${nextIter}/${loop.maxIterations}] ${loop.prompt}`;
-          sessionsStore.appendMessage(sessionId, { role: 'user', content: iterLabel });
-          ctx.sendRunnerMessage(sessionId, loop.prompt);
-        } catch (err) {
-          eventBus.publish('chat.error', { sessionId, error: `Loop failed: ${err.message}` });
-        }
-      }, 2000);
+
+      // (2) 재전송 프롬프트: 진행상황 검토 규칙 항상 포함
+      // (4) setTimeout 대신 runner idle 체크 후 전송
+      const rule = `[Loop ${nextIter}/${loop.maxIterations}] 이전까지 진행상황 검토 후 남은 작업만 수행. 완료 시 <promise>DONE</promise>, 막히면 <escalate>이유</escalate> 반드시 출력`;
+      const iterLabel = `${rule}\n\n${loop.prompt}`;
+      sendWhenIdle(sessionId, iterLabel, iterLabel);
     }
   }
 

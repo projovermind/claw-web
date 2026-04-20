@@ -56,6 +56,9 @@ export function registerTunnelCfRoutes(router) {
 
   // POST /tunnel/cf/login — cloudflared tunnel login 실행
   router.post('/tunnel/cf/login', async (req, res) => {
+    if (setupState.phase === 'awaiting-auth') {
+      return res.status(409).json({ error: 'login already in progress', loginUrl: setupState.loginUrl });
+    }
     if (fssync.existsSync(CERT_PATH)) {
       return res.json({ ok: true, alreadyAuthed: true });
     }
