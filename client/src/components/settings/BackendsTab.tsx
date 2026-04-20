@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { useProgressMutation } from '../../lib/useProgressMutation';
 import { Plus } from 'lucide-react';
 import { api } from '../../lib/api';
 import { BackendCard } from './BackendCard';
@@ -15,23 +16,28 @@ function fmtTokens(n: number) {
 
 export function BackendsTab() {
   const t = useT();
-  const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ['backends'], queryFn: api.backends });
   const { data: usage } = useQuery({ queryKey: ['usage-stats'], queryFn: api.usageStats, refetchInterval: 30000 });
   const [adding, setAdding] = useState(false);
 
-  const setActive = useMutation({
+  const setActive = useProgressMutation<unknown, Error, string>({
+    title: '백엔드 전환 중...',
+    successMessage: '전환 완료',
+    invalidateKeys: [['backends']],
     mutationFn: (id: string) => api.setActiveBackend(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['backends'] })
   });
-  const setAusterity = useMutation({
+  const setAusterity = useProgressMutation<unknown, Error, { enabled: boolean; backendId?: string }>({
+    title: '절약 모드 변경 중...',
+    successMessage: '변경 완료',
+    invalidateKeys: [['backends']],
     mutationFn: ({ enabled, backendId }: { enabled: boolean; backendId?: string }) =>
       api.setAusterity(enabled, backendId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['backends'] })
   });
-  const removeBackend = useMutation({
+  const removeBackend = useProgressMutation<unknown, Error, string>({
+    title: '백엔드 삭제 중...',
+    successMessage: '삭제 완료',
+    invalidateKeys: [['backends']],
     mutationFn: (id: string) => api.deleteBackend(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['backends'] })
   });
 
   if (!data) return <div className="text-zinc-500">Loading...</div>;

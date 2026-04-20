@@ -1,12 +1,14 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { useProgressMutation } from '../../lib/useProgressMutation';
 import { api } from '../../lib/api';
 
 export function FeaturesTab() {
-  const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ['settings'], queryFn: api.settings });
-  const patch = useMutation({
-    mutationFn: (features: Record<string, boolean>) => api.patchSettings({ features }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] })
+  const patch = useProgressMutation<unknown, Error, Record<string, boolean>>({
+    title: '설정 변경 중...',
+    successMessage: '변경 완료',
+    invalidateKeys: [['settings']],
+    mutationFn: (features) => api.patchSettings({ features }),
   });
 
   if (!data) return <div className="text-zinc-500">Loading...</div>;

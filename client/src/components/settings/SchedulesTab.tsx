@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { useProgressMutation } from '../../lib/useProgressMutation';
 import { Plus, Trash2, Clock } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
@@ -16,7 +17,6 @@ interface Schedule {
 }
 
 export function SchedulesTab() {
-  const qc = useQueryClient();
   const t = useT();
   const { data: schedules = [] } = useQuery<Schedule[]>({
     queryKey: ['schedules'],
@@ -30,25 +30,33 @@ export function SchedulesTab() {
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({ name: '', cron: '0 * * * *', agentId: '', prompt: '' });
 
-  const createMut = useMutation({
-    mutationFn: (data: { name: string; cron: string; agentId: string; prompt: string }) =>
-      api.createSchedule(data),
+  const createMut = useProgressMutation<unknown, Error, { name: string; cron: string; agentId: string; prompt: string }>({
+    title: '스케줄 등록 중...',
+    successMessage: '등록 완료',
+    invalidateKeys: [['schedules']],
+    mutationFn: (data) => api.createSchedule(data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['schedules'] });
       setShowCreate(false);
       setForm({ name: '', cron: '0 * * * *', agentId: '', prompt: '' });
     }
   });
 
-  const toggleMut = useMutation({
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      api.patchSchedule(id, { enabled }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] })
+  const toggleMut = useProgressMutation<unknown, Error, { id: string; enabled: boolean }>({
+    title: '스케줄 변경 중...',
+    successMessage: '변경 완료',
+    invalidateKeys: [['schedules']],
+    mutationFn: ({ id, enabled }) => api.patchSchedule(id, { enabled }),
   });
 
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => api.deleteSchedule(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] })
+  const deleteMut = useProgressMutation<unknown, Error, string>({
+    title: '스케줄 삭제 중...',
+    successMessage: '삭제 완료',
+    invalidateKeys: [['schedules']],
+    optimistic: {
+      queryKey: ['schedules'],
+      updater: (old: Schedule[], id: string) => old?.filter((s) => s.id !== id) ?? old,
+    },
+    mutationFn: (id) => api.deleteSchedule(id),
   });
 
   const fmtTime = (ts: string | null) => {

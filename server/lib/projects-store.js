@@ -56,6 +56,7 @@ export async function createProjectsStore(filePath) {
         err.code = 'DUPLICATE';
         throw err;
       }
+      if (project.accountId && !project.backendId) project = { ...project, backendId: project.accountId };
       await writeWithLock((current) => {
         current.projects = [...(current.projects ?? []), project];
         return current;
@@ -64,6 +65,7 @@ export async function createProjectsStore(filePath) {
     },
 
     async update(id, patch) {
+      if (patch.accountId && !patch.backendId) patch = { ...patch, backendId: patch.accountId };
       await writeWithLock((current) => {
         current.projects = (current.projects ?? []).map(p => p.id === id ? { ...p, ...patch } : p);
         return current;

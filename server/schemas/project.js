@@ -12,10 +12,11 @@ export const projectCreateSchema = z.object({
   // disallowedTools before handing to Claude CLI.
   defaultAllowedTools: z.array(z.string().max(80)).max(50).optional(),
   defaultDisallowedTools: z.array(z.string().max(80)).max(50).optional(),
-  // Project-level Claude account override.
-  // Priority: agent.accountId > project.accountId > round-robin
-  // null = auto-select (least-recently-used active account)
-  accountId: z.string().max(64).nullable().optional(),
+  // Project-level Claude account/backend override.
+  // Priority: agent.backendId > project.backendId > round-robin
+  // null = auto-select (least-recently-used active backend/account)
+  backendId: z.string().max(64).nullable().optional(),
+  accountId: z.string().max(64).nullable().optional(), // deprecated: use backendId
   dashboard: z.object({
     notes: z.string().max(50000).optional().default(''),
     goals: z.array(z.object({

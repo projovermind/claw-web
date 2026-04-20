@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { useProgressMutation } from '../../lib/useProgressMutation';
 import { Volume2, VolumeX, Play, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { DEFAULT_APPEARANCE } from '../../hooks/useAppearance';
@@ -12,7 +13,6 @@ import { playDing } from '../../lib/sound';
  * 저장하면 서버 webConfig.appearance 에 반영되고 useAppearance 훅이 즉시 적용.
  */
 export function AppearanceTab() {
-  const qc = useQueryClient();
   const t = useT();
   const { data, isLoading } = useQuery({ queryKey: ['settings-appearance'], queryFn: api.getSettings });
   const server = (data as { appearance?: Partial<Appearance> } | undefined)?.appearance;
@@ -22,11 +22,11 @@ export function AppearanceTab() {
     if (server) setDraft({ ...DEFAULT_APPEARANCE, ...server });
   }, [server]);
 
-  const save = useMutation({
+  const save = useProgressMutation<unknown, Error, Appearance>({
+    title: '저장 중...',
+    successMessage: '저장 완료',
+    invalidateKeys: [['settings-appearance']],
     mutationFn: (next: Appearance) => api.patchSettings({ appearance: next }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['settings-appearance'] });
-    }
   });
 
   const dirty = JSON.stringify(draft) !== JSON.stringify({ ...DEFAULT_APPEARANCE, ...(server ?? {}) });

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { Account } from '../../lib/types';
@@ -106,7 +106,9 @@ export function AccountsTab() {
     mutationFn: (id) => api.deleteAccount(id),
   });
 
-  const testMut = useMutation({
+  const testMut = useProgressMutation<{ ok: boolean; output?: string; error?: string }, Error, string>({
+    title: '계정 테스트 중...',
+    successMessage: '테스트 완료',
     mutationFn: (id: string) => api.testAccount(id),
     onSuccess: (res, id) => {
       setTestResults((prev) => ({

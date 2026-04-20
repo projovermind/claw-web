@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useProgressMutation } from '../../lib/useProgressMutation';
 import { Globe, Copy, RefreshCw, Check, AlertTriangle, Wifi, ShoppingCart, Search, Link, Power, ExternalLink, Loader2, Download } from 'lucide-react';
 import { api, getAuthToken } from '../../lib/api';
 import { useT } from '../../lib/i18n';
@@ -139,7 +140,6 @@ function authHeaders(): Record<string, string> {
 }
 
 function DomainConnectCard() {
-  const qc = useQueryClient();
   const [type, setType] = useState<TunnelType>('ngrok');
   const [domain, setDomain] = useState('');
   const [copied, setCopied] = useState(false);
@@ -150,18 +150,22 @@ function DomainConnectCard() {
     refetchInterval: 5000,
   });
 
-  const startMutation = useMutation({
+  const startMutation = useProgressMutation({
+    title: '터널 연결 중...',
+    successMessage: '연결 완료',
+    invalidateKeys: [['tunnel-connect-status']],
     mutationFn: () => fetch('/api/tunnel/start', {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ type, ...(type === 'ngrok' && domain ? { domain } : {}) }),
     }).then(r => r.json()),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tunnel-connect-status'] }),
   });
 
-  const stopMutation = useMutation({
+  const stopMutation = useProgressMutation({
+    title: '터널 해제 중...',
+    successMessage: '해제 완료',
+    invalidateKeys: [['tunnel-connect-status']],
     mutationFn: () => fetch('/api/tunnel/stop', { method: 'POST', headers: authHeaders() }).then(r => r.json()),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tunnel-connect-status'] }),
   });
 
   const running = status?.running ?? false;
@@ -263,7 +267,6 @@ interface OwnedDomain {
 }
 
 function DomainManagerCard() {
-  const qc = useQueryClient();
   const [accountId, setAccountId] = useState('');
   const [apiToken, setApiToken] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -287,16 +290,15 @@ function DomainManagerCard() {
     enabled: credentials?.saved === true,
   });
 
-  const saveMutation = useMutation({
+  const saveMutation = useProgressMutation({
+    title: 'Cloudflare 자격증명 저장 중...',
+    successMessage: '저장 완료',
+    invalidateKeys: [['domain-credentials'], ['domain-list']],
     mutationFn: () => fetch('/api/domain/credentials', {
       method: 'POST',
       headers: authHeaders(),
       body: JSON.stringify({ accountId, apiToken }),
     }).then(r => r.json()),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['domain-credentials'] });
-      qc.invalidateQueries({ queryKey: ['domain-list'] });
-    },
   });
 
   const handleSearch = async () => {
@@ -464,7 +466,9 @@ function ServerControlCard() {
   const [confirming, setConfirming] = useState<'soft' | 'force' | null>(null);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  const restart = useMutation({
+  const restart = useProgressMutation<{ msg?: string }, Error, boolean>({
+    title: '서버 재시작 중...',
+    successMessage: '재시작 요청 완료',
     mutationFn: (force: boolean) =>
       fetch('/api/admin/restart', {
         method: 'POST',
@@ -598,7 +602,9 @@ function NamedTunnelCard() {
     }
   }, [step, status?.authed, hostname, qc]);
 
-  const startLogin = useMutation({
+  const startLogin = useProgressMutation<{ loginUrl?: string; alreadyAuthed?: boolean; message?: string }, Error, void>({
+    title: 'Cloudflare 로그인 중...',
+    successMessage: '로그인 완료',
     mutationFn: () =>
       fetch('/api/admin/tunnel/cf/login', { method: 'POST', headers: authHeaders() }).then((r) => r.json()),
     onSuccess: (data) => {
@@ -615,14 +621,15 @@ function NamedTunnelCard() {
     }
   });
 
-  const teardown = useMutation({
+  const teardown = useProgressMutation({
+    title: '터널 제거 중...',
+    successMessage: '제거 완료',
+    invalidateKeys: [['cf-tunnel-status'], ['tunnel-url']],
     mutationFn: () =>
       fetch('/api/admin/tunnel/cf/teardown', { method: 'POST', headers: authHeaders() }).then((r) => r.json()),
     onSuccess: () => {
       setStep('idle');
       setHostname('');
-      qc.invalidateQueries({ queryKey: ['cf-tunnel-status'] });
-      qc.invalidateQueries({ queryKey: ['tunnel-url'] });
     }
   });
 
@@ -761,7 +768,9 @@ function UpdateCheckCard() {
   });
   const [installMsg, setInstallMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const install = useMutation({
+  const install = useProgressMutation<{ message?: string }, Error, string>({
+    title: '업데이트 설치 중...',
+    successMessage: '설치 완료',
     mutationFn: async (pkgUrl: string) => {
       const r = await fetch('/api/admin/update/install', {
         method: 'POST',
@@ -776,7 +785,9 @@ function UpdateCheckCard() {
     onError: (e: Error) => setInstallMsg({ ok: false, text: e.message })
   });
 
-  const patch = useMutation({
+  const patch = useProgressMutation<{ message?: string }, Error, void>({
+    title: '자동 패치 중...',
+    successMessage: '패치 완료',
     mutationFn: async () => {
       const r = await fetch('/api/admin/update/patch', {
         method: 'POST',
@@ -923,14 +934,15 @@ function UpdateCheckCard() {
 }
 
 export function AccessTab() {
-  const qc = useQueryClient();
   const t = useT();
   const { data } = useQuery({ queryKey: ['settings'], queryFn: api.settings });
   const [token, setToken] = useState('');
 
-  const patch = useMutation({
-    mutationFn: (body: { auth: { enabled?: boolean; token?: string | null } }) => api.patchSettings(body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['settings'] })
+  const patch = useProgressMutation<unknown, Error, { auth: { enabled?: boolean; token?: string | null } }>({
+    title: '설정 저장 중...',
+    successMessage: '저장 완료',
+    invalidateKeys: [['settings']],
+    mutationFn: (body) => api.patchSettings(body),
   });
 
   if (!data) return <div className="text-zinc-500">{t('access.loading')}</div>;

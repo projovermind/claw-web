@@ -17,6 +17,7 @@ export const agentPatchSchema = z.object({
   disallowedTools: z.array(z.string()).optional(),
   planMode: z.boolean().optional(),
   backendId: z.string().max(64).nullable().optional(),
+  accountId: z.string().max(64).nullable().optional(), // deprecated: use backendId
   thinkingEffort: z.enum(['auto', 'low', 'medium', 'high', 'max']).optional()
 }).strict();
 

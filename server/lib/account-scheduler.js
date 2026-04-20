@@ -27,7 +27,7 @@ export function parseRateLimitExpiry(text) {
   return Date.now() + 5 * 3_600_000;
 }
 
-export function createAccountScheduler({ accountsStore }) {
+export function createAccountScheduler({ accountsStore, backendsStore }) {
   async function autoRestoreCooldowns() {
     const now = Date.now();
     for (const acc of accountsStore.getAll()) {
@@ -40,6 +40,35 @@ export function createAccountScheduler({ accountsStore }) {
         }
       }
     }
+  }
+
+  /**
+   * Pick the best backend for an agent run.
+   * Priority:
+   *   1. agent.backendId  — agent-level fixed backend
+   *   2. project.backendId — project-level fixed backend
+   *   3. backendsStore.pickClaudeCliBackend() — least recently used active backend
+   *   4. null → use default auth (no CLAUDE_CONFIG_DIR override)
+   */
+  function pickBackend(agent, project) {
+    const backendId = agent.backendId ?? agent.accountId ?? null;
+    if (backendId && backendsStore) {
+      const b = backendsStore.getBackend(backendId);
+      if (b && b.status !== 'disabled') return { ...b, id: backendId };
+    }
+
+    const projectBackendId = project?.backendId ?? project?.accountId ?? null;
+    if (projectBackendId && backendsStore) {
+      const b = backendsStore.getBackend(projectBackendId);
+      if (b && b.status !== 'disabled') return { ...b, id: projectBackendId };
+    }
+
+    if (backendsStore) {
+      const b = backendsStore.pickClaudeCliBackend();
+      if (b) return b;
+    }
+
+    return null;
   }
 
   /**
@@ -110,5 +139,8 @@ export function createAccountScheduler({ accountsStore }) {
     return active.length > 0 ? active[0] : null;
   }
 
-  return { pickAccount, pickNextAccount, markUsed, setCooldown, isRateLimitText, parseRateLimitExpiry };
+  // pickNextBackend is an alias for pickNextAccount (backward compat)
+  const pickNextBackend = pickNextAccount;
+
+  return { pickAccount, pickBackend, pickNextAccount, pickNextBackend, markUsed, setCooldown, isRateLimitText, parseRateLimitExpiry };
 }

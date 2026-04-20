@@ -130,7 +130,7 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
 
     async deleteBackend(id) {
       await writeWithLock((current) => {
-        if (current.backends?.[id]?.type === 'claude-cli') {
+        if (id === 'claude' && current.backends?.[id]?.type === 'claude-cli') {
           const err = new Error('Cannot delete built-in Claude CLI backend');
           err.code = 'PROTECTED';
           throw err;
@@ -140,6 +140,56 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
       });
       // Also forget the secret for this backend
       if (secretsStore) await secretsStore.forget(id);
+    },
+
+    async markUsed(id) {
+      await writeWithLock((current) => {
+        const b = current.backends?.[id];
+        if (!b || b.type !== 'claude-cli') return current;
+        const now = Date.now();
+        const windowStart = b.usage?.windowStart ?? now;
+        const windowAge = now - windowStart;
+        current.backends[id] = {
+          ...b,
+          lastUsedAt: now,
+          usage: {
+            windowStart: windowAge > 3_600_000 ? now : windowStart,
+            messagesUsed: windowAge > 3_600_000 ? 1 : (b.usage?.messagesUsed ?? 0) + 1,
+          },
+        };
+        return current;
+      });
+    },
+
+    async setCooldown(id, expiresAt) {
+      await writeWithLock((current) => {
+        if (!current.backends?.[id]) return current;
+        current.backends[id] = {
+          ...current.backends[id],
+          status: 'cooldown',
+          cooldownUntil: expiresAt,
+        };
+        return current;
+      });
+    },
+
+    pickClaudeCliBackend() {
+      const candidates = Object.entries(cache.backends ?? {})
+        .filter(([, b]) =>
+          b.type === 'claude-cli' &&
+          b.status === 'active' &&
+          (b.cooldownUntil == null || b.cooldownUntil < Date.now())
+        )
+        .map(([id, b]) => ({ id, ...b }));
+
+      candidates.sort((a, b) => {
+        const aUsed = a.lastUsedAt ?? 0;
+        const bUsed = b.lastUsedAt ?? 0;
+        if (aUsed !== bUsed) return aUsed - bUsed;
+        return (b.priority ?? 50) - (a.priority ?? 50);
+      });
+
+      return candidates[0] ?? null;
     },
 
     /**

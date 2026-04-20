@@ -100,6 +100,9 @@ export function startClaudeRun({
     cleanEnv.CLAUDE_CONFIG_DIR = agent.configDir;
   }
 
+  // 백엔드 스케줄러: backendsStore 기반 pickBackend 지원
+  let pickedBackendId = agent.backendId ?? agent.accountId ?? null;
+
   // ── 모델 결정 (봇 bot.js 라인 2391-2410 동일) ──
   // 항상 MODEL_ID_MAP으로 변환 — Z.AI anthropic 프록시도 claude-sonnet-4-6을 받음
   const rawModel = (agent.model ?? 'opus').toLowerCase();
@@ -213,6 +216,9 @@ export function startClaudeRun({
   if (accountScheduler && pickedAccountId) {
     accountScheduler.markUsed(pickedAccountId).catch(() => {});
   }
+  if (envOverrides?._backendsStore && pickedBackendId) {
+    envOverrides._backendsStore.markUsed(pickedBackendId).catch(() => {});
+  }
 
   // MOCK_RATE_LIMIT=1: 테스트용 강제 rate-limit 트리거 (0.5초 후)
   if (process.env.MOCK_RATE_LIMIT === '1') {
@@ -232,20 +238,26 @@ export function startClaudeRun({
   let rateLimitRestartDone = false;
 
   function handleRateLimit(text) {
-    if (rateLimitDetected || !accountScheduler || !pickedAccountId) return;
+    if (rateLimitDetected) return;
     if (!isRateLimitText(text)) return;
     rateLimitDetected = true;
     const expiresAt = new Date(parseRateLimitExpiry(text)).toISOString();
-    accountScheduler.setCooldown(pickedAccountId, expiresAt).catch(() => {});
+
+    // backendsStore 기반 쿨다운 (우선)
+    if (envOverrides?._backendsStore && pickedBackendId) {
+      envOverrides._backendsStore.setCooldown(pickedBackendId, expiresAt).catch(() => {});
+    } else if (accountScheduler && pickedAccountId) {
+      accountScheduler.setCooldown(pickedAccountId, expiresAt).catch(() => {});
+    }
 
     // Find next account synchronously (before async cooldown persists)
-    const nextAcc = accountScheduler.pickNextAccount?.(pickedAccountId);
+    const nextAcc = accountScheduler?.pickNextAccount?.(pickedAccountId);
     const nextAccountId = nextAcc?.id ?? null;
     logger.warn(
-      { accountId: pickedAccountId, expiresAt, nextAccountId },
-      `[scheduler] account ${pickedAccountId} rate-limited → next: ${nextAccountId ?? 'none'}`
+      { accountId: pickedAccountId, backendId: pickedBackendId, expiresAt, nextAccountId },
+      `[scheduler] rate-limited → next: ${nextAccountId ?? 'none'}`
     );
-    onRateLimit?.({ accountId: pickedAccountId, nextAccountId });
+    onRateLimit?.({ accountId: pickedAccountId, backendId: pickedBackendId, nextAccountId });
 
     // Kill process so caller can restart with new account (max 1 restart enforced by caller)
     if (!rateLimitRestartDone) {

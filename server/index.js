@@ -246,7 +246,7 @@ async function main() {
   const sessionsStore = await createSessionsStore(SESSIONS_PATH);
   const secretsStore = await createSecretsStore({ filePath: SECRETS_PATH });
   const backendsStore = await createBackendsStore(BACKENDS_PATH, { secretsStore });
-  const accountsStore = await createAccountsStore(ACCOUNTS_PATH);
+  const accountsStore = await createAccountsStore(ACCOUNTS_PATH, { backendsStore });
   const skillsStore = await createSkillsStore(SKILLS_PATH);
   const systemSkillsStore = createSystemSkillsStore();
   try {

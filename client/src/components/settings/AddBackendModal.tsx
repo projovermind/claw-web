@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useProgressMutation } from '../../lib/useProgressMutation';
 import { X, AlertTriangle } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
@@ -14,7 +14,6 @@ function Labeled({ label, children }: { label: string; children: React.ReactNode
 }
 
 export function AddBackendModal({ onClose }: { onClose: () => void }) {
-  const qc = useQueryClient();
   const t = useT();
   const [form, setForm] = useState({
     id: '',
@@ -24,7 +23,10 @@ export function AddBackendModal({ onClose }: { onClose: () => void }) {
     secret: '',
     defaultModel: ''
   });
-  const add = useMutation({
+  const add = useProgressMutation({
+    title: '백엔드 연결 중...',
+    successMessage: '연결 완료',
+    invalidateKeys: [['backends']],
     mutationFn: () =>
       api.createBackend({
         id: form.id,
@@ -41,7 +43,6 @@ export function AddBackendModal({ onClose }: { onClose: () => void }) {
         }
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['backends'] });
       onClose();
     }
   });

@@ -42,6 +42,7 @@ export async function createConfigStore(configPath) {
       try {
         const current = await readFile();
         current.agents = current.agents ?? {};
+        if (patch.accountId && !patch.backendId) patch = { ...patch, backendId: patch.accountId };
         current.agents[id] = { ...(current.agents[id] ?? {}), ...patch };
         const tmp = configPath + '.tmp';
         await fs.writeFile(tmp, JSON.stringify(current, null, 2));
@@ -64,6 +65,7 @@ export async function createConfigStore(configPath) {
           err.code = 'DUPLICATE';
           throw err;
         }
+        if (data.accountId && !data.backendId) data = { ...data, backendId: data.accountId };
         current.agents[id] = { ...data };
         const tmp = configPath + '.tmp';
         await fs.writeFile(tmp, JSON.stringify(current, null, 2));

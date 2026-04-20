@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
+import { useProgressMutation } from '../../lib/useProgressMutation';
 import { Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
@@ -17,7 +18,6 @@ const EVENTS = ['PreToolUse', 'PostToolUse', 'SessionStart'] as const;
 
 export function HooksTab() {
   const t = useT();
-  const qc = useQueryClient();
   const { data: hooks = [] } = useQuery<Hook[]>({
     queryKey: ['hooks'],
     queryFn: api.listHooks
@@ -28,26 +28,34 @@ export function HooksTab() {
   const [newMatcher, setNewMatcher] = useState('*');
   const [newCommand, setNewCommand] = useState('');
 
-  const createMut = useMutation({
-    mutationFn: (data: { event: string; matcher: string; action: string; command: string }) =>
-      api.createHook(data),
+  const createMut = useProgressMutation<unknown, Error, { event: string; matcher: string; action: string; command: string }>({
+    title: '훅 저장 중...',
+    successMessage: '저장 완료',
+    invalidateKeys: [['hooks']],
+    mutationFn: (data) => api.createHook(data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['hooks'] });
       setShowCreate(false);
       setNewCommand('');
       setNewMatcher('*');
     }
   });
 
-  const toggleMut = useMutation({
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      api.patchHook(id, { enabled }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['hooks'] })
+  const toggleMut = useProgressMutation<unknown, Error, { id: string; enabled: boolean }>({
+    title: '훅 변경 중...',
+    successMessage: '변경 완료',
+    invalidateKeys: [['hooks']],
+    mutationFn: ({ id, enabled }) => api.patchHook(id, { enabled }),
   });
 
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => api.deleteHook(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['hooks'] })
+  const deleteMut = useProgressMutation<unknown, Error, string>({
+    title: '훅 삭제 중...',
+    successMessage: '삭제 완료',
+    invalidateKeys: [['hooks']],
+    optimistic: {
+      queryKey: ['hooks'],
+      updater: (old: Hook[], id: string) => old?.filter((h) => h.id !== id) ?? old,
+    },
+    mutationFn: (id) => api.deleteHook(id),
   });
 
   return (
