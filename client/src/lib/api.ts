@@ -161,6 +161,10 @@ export const api = {
       soundEnabled?: boolean;
       soundVolume?: number;
     };
+    editor?: {
+      scheme?: 'off' | 'vscode' | 'cursor';
+      pathMap?: Record<string, string>;
+    };
   }) =>
     patch === undefined ? Promise.reject(new Error('patch is required')) : req<WebSettings>('/settings', { method: 'PATCH', body: JSON.stringify(patch) }),
   backends: () => get<BackendsState>('/backends'),

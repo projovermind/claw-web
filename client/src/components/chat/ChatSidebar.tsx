@@ -1,12 +1,13 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Star, Download, CheckSquare, Square, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Trash2, Star, Download, CheckSquare, Square, X, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 import { useChatStore } from '../../store/chat-store';
 import { useProgressToastStore } from '../../store/progress-toast-store';
 import type { Session, Agent, Project, BackendsState } from '../../lib/types';
 import { isSessionRunning } from '../../lib/visibility';
+import DraggableSession from './DraggableSession';
 
 /** 에이전트 모델 단축명 뱃지 — 모델명만 표시 (백엔드명 제외) */
 function ModelBadge({ agent, backends }: { agent: Agent; backends?: BackendsState | null }) {
@@ -287,6 +288,17 @@ export function ChatSidebar({
     const saved = Number(localStorage.getItem('chatSidebarWidth'));
     return Number.isFinite(saved) && saved >= 200 && saved <= 500 ? saved : 256;
   });
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('chatSidebarCollapsed') === '1';
+  });
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem('chatSidebarCollapsed', next ? '1' : '0'); } catch { /* noop */ }
+      return next;
+    });
+  }, []);
   const resizingRef = useRef(false);
   const onResizeStart = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
@@ -317,11 +329,36 @@ export function ChatSidebar({
 
   const visibleSessions = sessions.filter((s) => !isHiddenDelegation(s));
 
+  if (collapsed) {
+    return (
+      <aside
+        className="hidden lg:flex shrink-0 border-r border-zinc-700/50 bg-zinc-900/50 flex-col relative"
+        style={{ width: 18 }}
+      >
+        <button
+          onClick={toggleCollapsed}
+          className="absolute top-1/2 -translate-y-1/2 -right-3 z-30 w-6 h-12 rounded-r-md border border-l-0 border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center shadow"
+          title="사이드바 펼치기"
+        >
+          <ChevronRight size={14} />
+        </button>
+      </aside>
+    );
+  }
+
   return (
     <aside
-      className="hidden lg:flex shrink-0 border-r border-zinc-700/50 bg-zinc-900/50 flex-col relative"
+      className="group hidden lg:flex shrink-0 border-r border-zinc-700/50 bg-zinc-900/50 flex-col relative"
       style={{ width: sidebarWidth }}
     >
+      {/* Collapse toggle — vertically centered on right edge */}
+      <button
+        onClick={toggleCollapsed}
+        className="absolute top-1/2 -translate-y-1/2 -right-3 z-30 w-6 h-12 rounded-r-md border border-l-0 border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center shadow opacity-30 group-hover:opacity-100 transition-opacity"
+        title="사이드바 접기"
+      >
+        <ChevronLeft size={14} />
+      </button>
       {/* Project/Agent picker */}
       <div className="p-3 border-b border-zinc-800 relative">
         <label className="text-[11px] uppercase tracking-wider text-zinc-500 block mb-1">
@@ -585,8 +622,8 @@ export function ChatSidebar({
             const isDelegated = s.title?.startsWith('[위임]');
             const isUnread = !!unread[s.id] && s.id !== currentSessionId;
             return (
+              <DraggableSession key={s.id} sessionId={s.id} agentId={s.agentId}>
               <div
-                key={s.id}
                 className={`group rounded px-2 py-1.5 mb-1 text-xs cursor-pointer flex items-center gap-1.5 ${
                   selectMode
                     ? isSelected
@@ -660,6 +697,7 @@ export function ChatSidebar({
                   </div>
                 )}
               </div>
+              </DraggableSession>
             );
           })}
       </div>

@@ -19,6 +19,7 @@ import CommandPalette from './components/palette/CommandPalette';
 import FilePalette from './components/palette/FilePalette';
 import ToastContainer from './components/layout/ToastContainer';
 import ProgressToasts from './components/common/ProgressToasts';
+import { FileDiffHost } from './components/chat/FileDiffModal';
 
 export default function App() {
   useWebSocket();
@@ -35,6 +36,7 @@ export default function App() {
       <GlobalDropOverlay />
       <ToastContainer />
       <ProgressToasts />
+      <FileDiffHost />
       <Routes>
       <Route element={<AppShell />}>
         <Route index element={<DashboardPage />} />

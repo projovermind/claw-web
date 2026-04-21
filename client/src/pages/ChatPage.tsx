@@ -2,23 +2,23 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  Zap, Eye, RotateCw, Square, AlertTriangle, Search, X,
-  Plus, Pin, ChevronDown
-} from 'lucide-react';
+  DndContext, DragEndEvent, PointerSensor, useSensor, useSensors
+} from '@dnd-kit/core';
+import { Plus, Pin, ChevronDown } from 'lucide-react';
 import { api } from '../lib/api';
 import type { Session, ChatMessage, Agent, Project } from '../lib/types';
 import { isSessionRunning } from '../lib/visibility';
-import { useChatStore } from '../store/chat-store';
+import { useChatStore, selectActiveWorkspace } from '../store/chat-store';
 import { useProgressToastStore } from '../store/progress-toast-store';
 import { useT } from '../lib/i18n';
-import MessageList from '../components/chat/MessageList';
-import StreamingMessage from '../components/chat/StreamingMessage';
 import ChatInput from '../components/chat/ChatInput';
 import TodoWidget from '../components/chat/TodoWidget';
 import { ChatSidebar } from '../components/chat/ChatSidebar';
-import { SessionTitleEditor } from '../components/chat/SessionTitleEditor';
 import { FrameworkActions } from '../components/chat/FrameworkActions';
 import DelegationStatusBar from '../components/layout/DelegationStatusBar';
+import SplitToolbar from '../components/chat/SplitToolbar';
+import WorkspaceGrid from '../components/chat/WorkspaceGrid';
+import ChatPane from '../components/chat/ChatPane';
 
 export default function ChatPage() {
   const t = useT();
@@ -29,8 +29,13 @@ export default function ChatPage() {
   const setCurrentAgent = useChatStore((s) => s.setCurrentAgent);
   const setCurrentSession = useChatStore((s) => s.setCurrentSession);
   const runtime = useChatStore((s) => (currentSessionId ? s.runtime[currentSessionId] : undefined));
-  const startRun = useChatStore((s) => s.startRun);
-  const finishRun = useChatStore((s) => s.finishRun);
+
+  // Workspace state
+  const activeWs = useChatStore(selectActiveWorkspace);
+  const setActivePane = useChatStore((s) => s.setActivePane);
+  const setPaneSession = useChatStore((s) => s.setPaneSession);
+  const swapPanes = useChatStore((s) => s.swapPanes);
+
   const { startTask, completeTask, failTask } = useProgressToastStore();
 
   useEffect(() => {
@@ -44,12 +49,12 @@ export default function ChatPage() {
 
   const agentsQ = useQuery({ queryKey: ['agents'], queryFn: api.agents });
   const projectsQ = useQuery({ queryKey: ['projects'], queryFn: api.projects });
-  const backendsQ = useQuery({ queryKey: ['backends'], queryFn: api.backends });
   const sessionsQ = useQuery({
     queryKey: ['sessions', currentAgentId],
     queryFn: () => (currentAgentId ? api.sessions(currentAgentId) : Promise.resolve([])),
     enabled: !!currentAgentId
   });
+  // For MobileHeader + mutations that need current session title
   const sessionQ = useQuery({
     queryKey: ['session', currentSessionId],
     queryFn: () => api.session(currentSessionId!),
@@ -63,38 +68,15 @@ export default function ChatPage() {
     }
   }, [agentsQ.data, currentAgentId, setCurrentAgent]);
 
-  // 현재 세션 열려있으면 자동으로 읽음 처리 (새로고침/탭 복귀/visibility)
-  const markRead = useChatStore((s) => s.markRead);
-  useEffect(() => {
-    if (currentSessionId) markRead(currentSessionId);
-  }, [currentSessionId, markRead, sessionQ.data?.messages?.length]);
-
-  // 탭 visibility 변경 시 현재 세션 읽음 처리
-  useEffect(() => {
-    const onVis = () => {
-      if (!document.hidden && currentSessionId) markRead(currentSessionId);
-    };
-    document.addEventListener('visibilitychange', onVis);
-    window.addEventListener('focus', onVis);
-    return () => {
-      document.removeEventListener('visibilitychange', onVis);
-      window.removeEventListener('focus', onVis);
-    };
-  }, [currentSessionId, markRead]);
-
   const createSession = useMutation({
     mutationFn: () => api.createSession(currentAgentId!),
-    onMutate: () => {
-      startTask({ id: 'create-session', title: '세션 생성 중...' });
-    },
+    onMutate: () => { startTask({ id: 'create-session', title: '세션 생성 중...' }); },
     onSuccess: async (session) => {
       await qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
       setCurrentSession(session.id);
       requestAnimationFrame(() => completeTask('create-session', '세션 생성 완료'));
     },
-    onError: (err) => {
-      failTask('create-session', (err as Error).message);
-    }
+    onError: (err) => failTask('create-session', (err as Error).message)
   });
 
   const deleteSession = useMutation({
@@ -112,9 +94,13 @@ export default function ChatPage() {
     onSuccess: async (_res, deletedId, ctx) => {
       await qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
       await qc.invalidateQueries({ queryKey: ['sessions-all'] });
-      // 삭제된 세션이 unread 에 남아 유령점이 되는 문제 방지
-      markRead(deletedId);
-      if (sessionQ.data?.id === currentSessionId) setCurrentSession(null);
+      // 삭제된 세션이 어떤 pane 에 있었다면 비우기
+      const state = useChatStore.getState();
+      for (const ws of state.workspaces) {
+        for (const p of ws.panes) {
+          if (p.sessionId === deletedId) setPaneSession(p.id, null, null);
+        }
+      }
       requestAnimationFrame(() => completeTask(ctx!.taskId, '삭제 완료'));
     },
     onError: (_err, _id, ctx) => {
@@ -124,23 +110,22 @@ export default function ChatPage() {
   });
 
   const sendMessage = useMutation({
-    mutationFn: ({ message, paths }: { message: string; paths: string[] }) =>
-      api.sendMessage(currentSessionId!, message, paths),
-    onMutate: async ({ message, paths }) => {
-      if (!currentSessionId) return { prev: undefined };
-      await qc.cancelQueries({ queryKey: ['session', currentSessionId] });
-      const prev = qc.getQueryData<Session>(['session', currentSessionId]);
+    mutationFn: ({ sessionId, message, paths }: { sessionId: string; message: string; paths: string[] }) =>
+      api.sendMessage(sessionId, message, paths),
+    onMutate: async ({ sessionId, message, paths }) => {
+      await qc.cancelQueries({ queryKey: ['session', sessionId] });
+      const prev = qc.getQueryData<Session>(['session', sessionId]);
       const content = paths.length > 0
         ? `${message}\n\n${t('chat.attachmentHeader')}\n${paths.map((p) => `- ${p}`).join('\n')}\n\n${t('chat.attachmentFooter')}`
         : message;
       const optimistic: ChatMessage = { role: 'user', content, ts: new Date().toISOString() };
-      qc.setQueryData<Session>(['session', currentSessionId], (old) =>
+      qc.setQueryData<Session>(['session', sessionId], (old) =>
         old ? { ...old, messages: [...(old.messages ?? []), optimistic] } : old
       );
-      return { prev };
+      return { prev, sessionId };
     },
     onError: (_err, _vars, ctx) => {
-      if (ctx?.prev && currentSessionId) qc.setQueryData(['session', currentSessionId], ctx.prev);
+      if (ctx?.prev && ctx.sessionId) qc.setQueryData(['session', ctx.sessionId], ctx.prev);
     }
   });
 
@@ -150,17 +135,13 @@ export default function ChatPage() {
 
   const renameSession = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) => api.renameSession(id, title),
-    onMutate: () => {
-      startTask({ id: 'rename-session', title: '세션 이름 변경 중...' });
-    },
+    onMutate: () => { startTask({ id: 'rename-session', title: '세션 이름 변경 중...' }); },
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['session', currentSessionId] });
       await qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
       requestAnimationFrame(() => completeTask('rename-session', '이름 변경 완료'));
     },
-    onError: (err) => {
-      failTask('rename-session', (err as Error).message);
-    }
+    onError: (err) => failTask('rename-session', (err as Error).message)
   });
 
   const pinSession = useMutation({
@@ -174,55 +155,11 @@ export default function ChatPage() {
       await qc.invalidateQueries({ queryKey: ['session', currentSessionId] });
       requestAnimationFrame(() => completeTask('pin-session', vars.pinned ? '고정 완료' : '해제 완료'));
     },
-    onError: (err) => {
-      failTask('pin-session', (err as Error).message);
-    }
+    onError: (err) => failTask('pin-session', (err as Error).message)
   });
 
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const chatScrollRef = useRef<HTMLDivElement>(null);
-
   const running = runtime?.running ?? false;
-  const streaming = runtime?.streaming ?? '';
-  const toolCalls = runtime?.toolCalls ?? [];
   const todos = runtime?.todos ?? [];
-  const error = runtime?.error ?? null;
-
-  // 서버가 isRunning인데 클라이언트 runtime이 없으면 복원 (페이지 새로고침/탭 복귀 시)
-  useEffect(() => {
-    if (!currentSessionId || !sessionQ.data?.isRunning) return;
-    if (!runtime) startRun(currentSessionId);
-  }, [currentSessionId, sessionQ.data?.isRunning, runtime, startRun]);
-
-  // WS chat.done 이벤트 유실 시 서버 폴링으로 스피너 자동 해제
-  useEffect(() => {
-    if (!running || !currentSessionId || !sessionQ.data) return;
-    if (sessionQ.data.isRunning) return;
-    const timer = setTimeout(() => {
-      const state = useChatStore.getState();
-      const stillRunning = state.runtime[currentSessionId]?.running;
-      const serverDone = !sessionQ.data?.isRunning;
-      if (stillRunning && serverDone) {
-        finishRun(currentSessionId, null);
-      }
-    }, 2000);
-    return () => clearTimeout(timer);
-  }, [running, currentSessionId, sessionQ.data, sessionQ.data?.isRunning, finishRun]);
-
-  // Auto-scroll: fires on new messages, streaming text, and running state change.
-  // Uses requestAnimationFrame so the DOM has painted the new content first.
-  useEffect(() => {
-    const el = chatScrollRef.current;
-    if (!el) return;
-    requestAnimationFrame(() => {
-      // Always scroll if user hasn't scrolled up more than 200px
-      const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 200;
-      if (isNearBottom || running) {
-        el.scrollTop = el.scrollHeight;
-      }
-    });
-  }, [streaming, running, sessionQ.data?.messages?.length]);
 
   // Current agent/project context
   const currentAgent = (agentsQ.data ?? []).find((a) => a.id === currentAgentId);
@@ -241,14 +178,12 @@ export default function ChatPage() {
     });
   }, [sessionsQ.data]);
 
-  // 전체 세션 — 프로젝트 선택 시 마지막 세션 찾기용 (같은 key 쿼리는 캐시 공유)
   const projectSelectAllSessionsQ = useQuery<{ sessions: Session[] }>({
     queryKey: ['sessions-all'],
     queryFn: api.allSessions,
     staleTime: 5_000
   });
 
-  // Project selection — lead(tier:'project') 세션 우선, 없으면 최근 세션 폴백
   const selectProject = (project: Project) => {
     const lead = (agentsQ.data ?? []).find(
       (a) => a.projectId === project.id && a.tier === 'project'
@@ -260,7 +195,6 @@ export default function ChatPage() {
       .filter((s) => projectAgentIds.has(s.agentId) && !s.isDelegation)
       .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
 
-    // lead 세션 우선, 없으면 가장 최근 세션
     const leadSession = lead ? projectSessions.find((s) => s.agentId === lead.id) : undefined;
     const lastSession = leadSession ?? projectSessions[0];
 
@@ -274,9 +208,48 @@ export default function ChatPage() {
     setCurrentSession(null);
   };
 
+  // DnD sensors — 5px movement threshold so clicks still work
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const handleDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over) return;
+    const activeData = active.data.current as
+      | { kind?: string; sessionId?: string | null; agentId?: string | null; paneId?: string }
+      | undefined;
+    const overData = over.data.current as
+      | { kind?: string; paneId?: string; workspaceId?: string }
+      | undefined;
+    if (overData?.kind !== 'pane' || !overData.paneId) return;
+
+    // 1) 사이드바 세션 → pane 에 장착
+    if (activeData?.kind === 'session') {
+      if (!activeData.sessionId || !activeData.agentId) return;
+      setPaneSession(overData.paneId, activeData.agentId, activeData.sessionId);
+      setActivePane(overData.paneId);
+      return;
+    }
+
+    // 2) pane → pane (위치 swap)
+    if (activeData?.kind === 'pane-drag' && activeData.paneId) {
+      if (activeData.paneId === overData.paneId) return;
+      swapPanes(activeData.paneId, overData.paneId);
+      setActivePane(overData.paneId);
+    }
+  };
+
+  /** pane count 에 따른 폰트 스케일 */
+  const paneScale = (() => {
+    const n = activeWs?.count ?? 1;
+    if (n <= 1) return 1.0;
+    if (n === 2) return 0.9;
+    if (n === 3) return 0.8;
+    if (n === 4) return 0.75;
+    return 0.7; // 5, 6
+  })();
+
   return (
     <div className="flex-1 min-h-0 flex">
-      {/* Desktop sidebar — hidden on mobile, flex on lg so it stretches full height */}
       <ChatSidebar
         agents={agentsQ.data ?? []}
         projects={projectsQ.data ?? []}
@@ -289,9 +262,7 @@ export default function ChatPage() {
         deleteSession={deleteSession}
       />
 
-      {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* ─── Mobile compact header (visible only on <lg) ─── */}
         <MobileHeader
           projects={projectsQ.data ?? []}
           agents={agentsQ.data ?? []}
@@ -313,213 +284,101 @@ export default function ChatPage() {
           canCreate={!!currentAgentId}
         />
 
-        {/* ─── Chat content ─── */}
-        {!currentSessionId ? (
-          <div className="flex-1 flex items-center justify-center text-zinc-500 text-sm px-4 text-center">
-            {t('chat.sessionSelectHint')}
-          </div>
-        ) : (
-          <>
-            {/* Desktop header (hidden on mobile) */}
-            <div className="hidden lg:flex px-6 py-2 border-b border-zinc-800 items-center gap-2 min-w-0">
-              {currentSession ? (
-                <SessionTitleEditor
-                  key={currentSession.id}
-                  sessionId={currentSession.id}
-                  title={currentSession.title}
-                  onRename={(title) => renameSession.mutate({ id: currentSession.id, title })}
-                  busy={renameSession.isPending}
-                />
-              ) : (
-                <div className="font-semibold text-zinc-500">{t('chat.loading')}</div>
-              )}
-              {/* Right-aligned controls — all same height (h-7) */}
-              <div className="ml-auto flex items-center gap-1.5 shrink-0">
-                {currentAgent?.model && (() => {
-                  const bid = currentAgent.backendId;
-                  const allBackends = (backendsQ.data as { backends: Record<string, { models: Record<string, string> }> })?.backends ?? {};
-                  const pool = bid ? (allBackends[bid] ? [allBackends[bid]] : []) : Object.values(allBackends);
-                  let shortKey = currentAgent.model;
-                  for (const b of pool) {
-                    const found = Object.entries(b?.models ?? {}).find(([, v]) => v === currentAgent.model);
-                    if (found) { shortKey = found[0]; break; }
-                  }
-                  return (
-                    <div className="h-7 px-2 rounded bg-zinc-800/50 text-[11px] text-zinc-400 font-mono flex items-center gap-1">
-                      {bid && bid !== 'claude' && (
-                        <span className="text-emerald-400">{bid}</span>
-                      )}
-                      <span>{shortKey}</span>
-                    </div>
-                  );
-                })()}
-                {currentSession?.messages && (() => {
-                  const totalIn = currentSession.messages.reduce((s, m) => s + (m.usage?.inputTokens ?? 0), 0);
-                  const totalOut = currentSession.messages.reduce((s, m) => s + (m.usage?.outputTokens ?? 0), 0);
-                  if (totalIn + totalOut === 0) return null;
-                  return (
-                    <div className="h-7 px-2 rounded bg-zinc-800/50 text-[11px] text-zinc-500 font-mono flex items-center">
-                      ↑{(totalIn / 1000).toFixed(1)}k ↓{(totalOut / 1000).toFixed(1)}k
-                    </div>
-                  );
-                })()}
-                {currentAgent && (() => {
-                  const isPlan = !!(currentAgent as { planMode?: boolean }).planMode;
-                  return (
-                    <button
-                      onClick={() => {
-                        api.patchAgent(currentAgent.id, { planMode: !isPlan } as Partial<Agent>);
-                        qc.invalidateQueries({ queryKey: ['agents'] });
-                      }}
-                      className={`h-7 px-2.5 rounded text-[11px] flex items-center gap-1 ${
-                        isPlan ? 'bg-sky-900/40 text-sky-300 border border-sky-800' : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'
-                      }`}
-                    >
-                      <Eye size={12} /> Plan
-                    </button>
-                  );
-                })()}
-                {/* Thinking effort selector */}
-                {currentAgent && (
-                  <select
-                    value={(currentAgent as { thinkingEffort?: string }).thinkingEffort ?? 'auto'}
-                    onChange={(e) => {
-                      api.patchAgent(currentAgent.id, { thinkingEffort: e.target.value } as Partial<Agent>);
-                      qc.invalidateQueries({ queryKey: ['agents'] });
-                    }}
-                    className="h-7 px-1.5 rounded bg-zinc-800 text-[11px] text-zinc-400 border-none focus:outline-none cursor-pointer"
-                    title={t('chat.thinkingEffort')}
-                  >
-                    <option value="auto">🧠 auto</option>
-                    <option value="low">🧠 low</option>
-                    <option value="medium">🧠 med</option>
-                    <option value="high">🧠 high</option>
-                    <option value="max">🧠 max</option>
-                  </select>
-                )}
-                <button
-                  onClick={() => { setSearchOpen((v) => !v); if (searchOpen) setSearchQuery(''); }}
-                  className={`h-7 px-2.5 rounded text-[11px] flex items-center gap-1 ${
-                    searchOpen ? 'bg-sky-900/40 text-sky-300 border border-sky-800' : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'
-                  }`}
-                >
-                  <Search size={12} />
-                </button>
-              </div>
-              {running && (
-                <div className="flex items-center gap-1 text-[11px] text-amber-300 shrink-0">
-                  <Zap size={10} /> {t('chat.running')}
-                </div>
-              )}
-            </div>
+        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+          <SplitToolbar />
 
-            {/* Search bar */}
-            {searchOpen && (
-              <div className="px-4 lg:px-6 py-2 border-b border-zinc-800 flex items-center gap-2 bg-zinc-900/40">
-                <Search size={14} className="text-zinc-500 shrink-0" />
-                <input autoFocus value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={t('chat.searchPlaceholder')} className="flex-1 bg-transparent text-sm text-zinc-200 placeholder-zinc-600 outline-none" />
-                {searchQuery && <button onClick={() => setSearchQuery('')} className="text-zinc-500"><X size={14} /></button>}
-              </div>
-            )}
-
-            {/* Loop banner */}
-            {currentSession?.loop?.enabled && (
-              <div className={`px-4 lg:px-6 py-2 border-b flex items-center gap-2 text-xs ${
-                currentSession.loop.paused
-                  ? 'bg-amber-900/20 border-amber-900/40 text-amber-200'
-                  : 'bg-emerald-900/20 border-emerald-900/40 text-emerald-200'
-              }`}>
-                {currentSession.loop.paused ? (
-                  <><AlertTriangle size={12} className="shrink-0" /><span className="flex-1 truncate">{t('chat.escalation')}: {currentSession.loop.escalateReason}</span></>
-                ) : (
-                  <><RotateCw size={12} className="animate-spin shrink-0" /><span className="flex-1 truncate">Loop {currentSession.loop.currentIteration}/{currentSession.loop.maxIterations}</span></>
-                )}
-                <button onClick={async () => { if (confirm(t('chat.loopStopConfirm'))) { await api.stopLoop(currentSessionId!); qc.invalidateQueries({ queryKey: ['session', currentSessionId] }); } }}
-                  className="shrink-0 px-2 py-1 rounded bg-red-900/50 text-red-200 text-[11px]"><Square size={10} /></button>
-              </div>
-            )}
-
-            {/* Messages */}
-            <div className="relative flex-1 min-h-0 flex flex-col">
+          {/* Workspace grid */}
+          <div className="relative flex-1 min-h-0 flex flex-col">
             <DelegationStatusBar />
-            <div ref={chatScrollRef} className="flex-1 overflow-y-auto px-3 lg:px-6">
-              <div className="min-h-full flex flex-col justify-end">
-              {currentSession && (
-                <MessageList
-                  key={currentSession.id}
-                  messages={currentSession.messages ?? []}
-                  searchQuery={searchQuery || undefined}
-                  onChoice={(c) => sendMessage.mutate({ message: c, paths: [] })}
+            <div className="flex-1 min-h-0">
+              {activeWs && (
+                <WorkspaceGrid
+                  key={`${activeWs.id}-${activeWs.count}-${activeWs.layoutResetKey ?? 0}`}
+                  workspaceId={activeWs.id}
+                  count={activeWs.count}
+                  resetKey={activeWs.layoutResetKey ?? 0}
+                  renderPane={(i) => {
+                    const pane = activeWs.panes[i];
+                    if (!pane) return null;
+                    return (
+                      <ChatPane
+                        paneId={pane.id}
+                        workspaceId={activeWs.id}
+                        agentId={pane.agentId}
+                        sessionId={pane.sessionId}
+                        isActive={activeWs.activePaneId === pane.id}
+                        isCompact={activeWs.count > 1}
+                        scale={paneScale}
+                        onActivate={() => setActivePane(pane.id)}
+                        onSendMessage={(msg) => {
+                          if (pane.sessionId) {
+                            sendMessage.mutate({ sessionId: pane.sessionId, message: msg, paths: [] });
+                          }
+                        }}
+                      />
+                    );
+                  }}
                 />
               )}
-              <StreamingMessage
-                text={streaming}
-                toolCalls={toolCalls}
-                running={running}
-                error={error}
-                onChoice={(c) => sendMessage.mutate({ message: c, paths: [] })}
-              />
-              </div>
             </div>
-            </div>{/* end messages relative wrapper */}
+          </div>
 
-            {/* Framework action buttons */}
-            <FrameworkActions
-              disabled={!currentSessionId || running}
-              onSend={(msg) => sendMessage.mutate({ message: msg, paths: [] })}
-            />
+          {/* Framework actions — target active pane */}
+          <FrameworkActions
+            disabled={!currentSessionId || running}
+            onSend={(msg) => {
+              if (currentSessionId) sendMessage.mutate({ sessionId: currentSessionId, message: msg, paths: [] });
+            }}
+          />
 
-            {/* Input */}
-            <ChatInput
-              disabled={!currentSessionId}
-              running={running}
-              sessionId={currentSessionId}
-              workingDir={currentAgent?.workingDir ?? null}
-              onSend={(msg, paths) => sendMessage.mutate({ message: msg, paths })}
-              onAbort={abortChat}
-              onSystemCommand={async (cmd, arg) => {
-                switch (cmd) {
-                  case 'clear':
-                    if (currentSessionId && confirm(t('chat.clearConfirm'))) {
-                      await api.deleteSession(currentSessionId);
-                      qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
-                      createSession.mutate();
-                    }
-                    break;
-                  case 'new':
+          {/* Shared input — targets active pane's session */}
+          <ChatInput
+            disabled={!currentSessionId}
+            running={running}
+            sessionId={currentSessionId}
+            workingDir={currentAgent?.workingDir ?? null}
+            onSend={(msg, paths) => {
+              if (currentSessionId) sendMessage.mutate({ sessionId: currentSessionId, message: msg, paths });
+            }}
+            onAbort={abortChat}
+            onSystemCommand={async (cmd, arg) => {
+              switch (cmd) {
+                case 'clear':
+                  if (currentSessionId && confirm(t('chat.clearConfirm'))) {
+                    await api.deleteSession(currentSessionId);
+                    qc.invalidateQueries({ queryKey: ['sessions', currentAgentId] });
                     createSession.mutate();
-                    break;
-                  case 'rename':
-                    if (currentSessionId && arg) {
-                      renameSession.mutate({ id: currentSessionId, title: arg });
-                    } else if (currentSessionId) {
-                      const title = prompt(t('chat.renamePrompt'), currentSession?.title ?? '');
-                      if (title) renameSession.mutate({ id: currentSessionId, title });
-                    }
-                    break;
-                  case 'export':
-                    if (currentSessionId) {
-                      try { await api.downloadSessionExport(currentSessionId, 'md'); }
-                      catch (e) { alert(`${t('chat.exportFailed')}: ${(e as Error).message}`); }
-                    }
-                    break;
-                  case 'pin':
-                    if (currentSessionId && currentSession) {
-                      pinSession.mutate({ id: currentSessionId, pinned: !currentSession.pinned });
-                    }
-                    break;
-                  case 'search':
-                    setSearchOpen((v) => !v);
-                    break;
-                  case 'help':
-                    alert(t('chat.helpMessage'));
-                    break;
-                }
-              }}
-            />
-          </>
-        )}
+                  }
+                  break;
+                case 'new':
+                  createSession.mutate();
+                  break;
+                case 'rename':
+                  if (currentSessionId && arg) {
+                    renameSession.mutate({ id: currentSessionId, title: arg });
+                  } else if (currentSessionId) {
+                    const title = prompt(t('chat.renamePrompt'), currentSession?.title ?? '');
+                    if (title) renameSession.mutate({ id: currentSessionId, title });
+                  }
+                  break;
+                case 'export':
+                  if (currentSessionId) {
+                    try { await api.downloadSessionExport(currentSessionId, 'md'); }
+                    catch (e) { alert(`${t('chat.exportFailed')}: ${(e as Error).message}`); }
+                  }
+                  break;
+                case 'pin':
+                  if (currentSessionId && currentSession) {
+                    pinSession.mutate({ id: currentSessionId, pinned: !currentSession.pinned });
+                  }
+                  break;
+                case 'help':
+                  alert(t('chat.helpMessage'));
+                  break;
+              }
+            }}
+          />
+        </DndContext>
       </div>
 
       {/* Todo sidebar (desktop only) */}
@@ -561,7 +420,6 @@ function MobileHeader({
   const unread = useChatStore((s) => s.unread);
   const runtimeAll = useChatStore((s) => s.runtime);
 
-  // Close dropdowns on outside click
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
       if (projOpen && !projRef.current?.contains(e.target as Node)) setProjOpen(false);
@@ -571,16 +429,13 @@ function MobileHeader({
     return () => document.removeEventListener('mousedown', onClick);
   }, [projOpen, sessOpen]);
 
-  // Global agents for the project picker
   const globalAgents = agents.filter((a) => a.tier === 'main' || (!a.projectId && !a.tier));
 
-  // 전역 모든 세션 (프로젝트/에이전트 점 계산용)
   const allSessionsQ = useQuery<{ sessions: Session[] }>({
     queryKey: ['sessions-all'],
     queryFn: api.allSessions,
     refetchInterval: 5000
   });
-  // 에이전트별 상태 집계 (현재 열린 세션 + 위임 세션 제외)
   const agentStatus = useMemo(() => {
     const all = allSessionsQ.data?.sessions ?? [];
     const byAgent: Record<string, { unread: boolean; running: boolean }> = {};
@@ -592,7 +447,6 @@ function MobileHeader({
     }
     return byAgent;
   }, [allSessionsQ.data, unread, currentSessionId, runtimeAll]);
-  // 프로젝트별 상태 집계
   const projectStatus = useMemo(() => {
     const byProject: Record<string, { unread: boolean; running: boolean }> = {};
     for (const a of agents) {
@@ -605,7 +459,6 @@ function MobileHeader({
     }
     return byProject;
   }, [agentStatus, agents]);
-  // 세션별 unread (현재 열린 세션 제외)
   const sessionUnread = (sid: string) => !!unread[sid] && sid !== currentSessionId;
   const isHiddenDelegation = (s: Session) => s.title?.startsWith('[위임]');
   const runningSessions = useMemo(() => {
@@ -618,7 +471,6 @@ function MobileHeader({
       unread[s.id] && s.id !== currentSessionId && !isHiddenDelegation(s)
     );
   }, [allSessionsQ.data, unread, currentSessionId]);
-  // 상태 점 컴포넌트
   const StatusDot = ({ unread, running }: { unread: boolean; running: boolean }) => {
     if (!unread && !running) return null;
     const color = unread ? 'bg-sky-400' : 'bg-amber-400';
@@ -627,7 +479,6 @@ function MobileHeader({
 
   return (
     <div className="lg:hidden flex items-center gap-1.5 px-2 py-2 border-b border-zinc-800 bg-zinc-950/90 relative z-20">
-      {/* Project selector */}
       <div ref={projRef} className="relative flex-1 min-w-0">
         <button
           onClick={() => { setProjOpen((v) => !v); setSessOpen(false); }}
@@ -647,7 +498,6 @@ function MobileHeader({
             <span className="text-zinc-500">{t('chat.mobileProject')}</span>
           )}
           <ChevronDown size={12} className="text-zinc-500 shrink-0 ml-auto" />
-          {/* 프로젝트/에이전트 running/unread 상태 점 */}
           {currentProject
             ? <StatusDot unread={projectStatus[currentProject.id]?.unread ?? false} running={projectStatus[currentProject.id]?.running ?? false} />
             : currentAgent
@@ -656,7 +506,6 @@ function MobileHeader({
         </button>
         {projOpen && (
           <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl max-h-64 overflow-y-auto z-50">
-            {/* Running sessions — 최상단 */}
             {runningSessions.length > 0 && (
               <>
                 <div className="px-3 py-1 text-[11px] text-amber-400 flex items-center gap-1">
@@ -678,7 +527,6 @@ function MobileHeader({
                 <div className="border-t border-zinc-800" />
               </>
             )}
-            {/* Unread sessions */}
             {unreadSessions.length > 0 && (
               <>
                 <div className="px-3 py-1 text-[11px] text-sky-400 flex items-center gap-1">
@@ -700,7 +548,6 @@ function MobileHeader({
                 <div className="border-t border-zinc-800" />
               </>
             )}
-            {/* Global agents first */}
             {globalAgents.length > 0 && (
               <>
                 <div className="px-3 py-1 text-[11px] text-zinc-500">{t('chat.mobileGlobal')}</div>
@@ -721,7 +568,6 @@ function MobileHeader({
                 <div className="border-t border-zinc-800" />
               </>
             )}
-            {/* Projects */}
             {projects.map((p) => {
               const pst = projectStatus[p.id] ?? { unread: false, running: false };
               return (
@@ -738,7 +584,6 @@ function MobileHeader({
         )}
       </div>
 
-      {/* Session selector */}
       <div ref={sessRef} className="relative flex-1 min-w-0">
         <button
           onClick={() => { setSessOpen((v) => !v); setProjOpen(false); }}
@@ -746,7 +591,6 @@ function MobileHeader({
         >
           <span className="truncate flex-1">{currentSession?.title ?? t('chat.mobileSessionSelect')}</span>
           <ChevronDown size={12} className="text-zinc-500 shrink-0" />
-          {/* 다른 세션 running/unread 상태 점 */}
           <StatusDot
             unread={sessions.some(s => sessionUnread(s.id))}
             running={sessions.some(s => isSessionRunning(s, runtimeAll) && s.id !== currentSessionId)}
@@ -776,7 +620,6 @@ function MobileHeader({
         )}
       </div>
 
-      {/* Pin current session */}
       {currentSessionId && (
         <button
           onClick={onTogglePin}

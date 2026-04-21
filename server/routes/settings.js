@@ -26,6 +26,12 @@ const featurePatchSchema = z.object({
       enabled: z.boolean().optional(),
       idleThreshold: z.number().int().min(1).max(30).optional()
     })
+    .optional(),
+  editor: z
+    .object({
+      scheme: z.enum(['off', 'vscode', 'cursor']).optional(),
+      pathMap: z.record(z.string()).optional()
+    })
     .optional()
 }).strict();
 
@@ -55,6 +61,9 @@ export function createSettingsRouter({ webConfig, webConfigPath, eventBus }) {
       }
       if (patch.push) {
         webConfig.push = { ...(webConfig.push ?? {}), ...patch.push };
+      }
+      if (patch.editor) {
+        webConfig.editor = { ...(webConfig.editor ?? {}), ...patch.editor };
       }
       await fs.writeFile(webConfigPath, JSON.stringify(webConfig, null, 2));
       if (eventBus) eventBus.publish('settings.updated', {});

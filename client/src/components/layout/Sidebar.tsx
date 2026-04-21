@@ -11,7 +11,9 @@ import {
   Search,
   Menu,
   X,
-  RotateCcw
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { useI18nStore, useT } from '../../lib/i18n';
 import { useQuery } from '@tanstack/react-query';
@@ -25,6 +27,17 @@ export default function Sidebar() {
   const lang = useI18nStore((s) => s.lang);
   const setLang = useI18nStore((s) => s.setLang);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('appSidebarCollapsed') === '1';
+  });
+  const toggleCollapsed = () => {
+    setCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem('appSidebarCollapsed', next ? '1' : '0'); } catch { /* noop */ }
+      return next;
+    });
+  };
   const location = useLocation();
   const unread = useChatStore((s) => s.unread);
   const runtime = useChatStore((s) => s.runtime);
@@ -192,6 +205,59 @@ export default function Sidebar() {
     </>
   );
 
+  const collapsedContent = (
+    <>
+      <div className="px-2 py-4 border-b border-zinc-800 flex flex-col items-center gap-2">
+        <Link
+          to="/"
+          className="text-lg font-bold text-zinc-200 hover:text-sky-400 transition-colors"
+          title={appName}
+        >
+          {(appName ?? 'C').charAt(0).toUpperCase()}
+        </Link>
+        <button
+          onClick={openPalette}
+          className="p-1.5 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-500 hover:text-zinc-300 transition-colors"
+          title={`${t('sidebar.searchPlaceholder')} (${isMac ? '⌘K' : 'Ctrl+K'})`}
+        >
+          <Search size={14} />
+        </button>
+      </div>
+      <nav className="flex-1 p-1.5 overflow-y-auto">
+        {GROUPS.map((group, gi) => (
+          <div
+            key={gi}
+            className={`space-y-1 ${gi > 0 ? 'mt-3 pt-3 border-t border-zinc-800/60' : ''}`}
+          >
+            {group.items.map(({ to, icon: Icon, label }) => {
+              const showChatDot = to === '/chat' && chatDotColor;
+              return (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={to === '/'}
+                  title={label}
+                  className={({ isActive }) =>
+                    `relative flex items-center justify-center p-2 rounded-md transition-colors ${
+                      isActive
+                        ? 'bg-zinc-800 text-white'
+                        : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
+                    }`
+                  }
+                >
+                  <Icon size={16} />
+                  {showChatDot && (
+                    <span className={`absolute top-1 right-1 w-1.5 h-1.5 rounded-full ${chatDotColor} ${hasError || hasUnread || hasRunning ? 'animate-pulse' : ''}`} />
+                  )}
+                </NavLink>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+    </>
+  );
+
   return (
     <>
       {/* Mobile top bar (visible on <lg) — hamburger + current page hint */}
@@ -228,8 +294,20 @@ export default function Sidebar() {
       </div>
 
       {/* Desktop sidebar — static, always visible on lg+ */}
-      <aside className="w-60 shrink-0 border-r border-zinc-800 bg-zinc-950/80 hidden lg:flex lg:flex-col">
-        {sidebarContent}
+      <aside
+        className={`group shrink-0 border-r border-zinc-800 bg-zinc-950/80 hidden lg:flex lg:flex-col relative transition-[width] ${
+          collapsed ? 'w-12' : 'w-60'
+        }`}
+      >
+        {collapsed ? collapsedContent : sidebarContent}
+        {/* Collapse/expand toggle — vertically centered on right edge */}
+        <button
+          onClick={toggleCollapsed}
+          className="absolute top-1/2 -translate-y-1/2 -right-3 z-30 w-6 h-12 rounded-r-md border border-l-0 border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center justify-center shadow opacity-30 group-hover:opacity-100 transition-opacity"
+          title={collapsed ? '사이드바 펼치기' : '사이드바 접기'}
+        >
+          {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+        </button>
       </aside>
 
       {/* Mobile drawer — overlay + slide-in panel when mobileOpen */}

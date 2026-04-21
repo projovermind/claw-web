@@ -9,6 +9,8 @@ logs/
 ._*
 .claude/
 sessions.json
+sessions.json.migrated-*
+sessions-store/
 web-metadata.json
 secrets.json
 projects.json

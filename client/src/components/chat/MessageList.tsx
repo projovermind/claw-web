@@ -2,18 +2,62 @@ import { useEffect, useLayoutEffect, useRef, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
+import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle, Loader2, Maximize2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { ChatMessage, Session } from '../../lib/types';
 import ToolCallCard from './ToolCallCard';
 import { useT } from '../../lib/i18n';
+import { linkifyFilePaths, useEditorConfig, openFileDiff, pathFromEditorUrl } from '../../lib/editor';
+
+// 에디터 스킴 링크 옆에 diff 모달 트리거를 끼워 넣는 커스텀 렌더러
+function EditorLinkWithDiff({ href, children, ...props }: React.ComponentPropsWithoutRef<'a'>) {
+  const path = href ? pathFromEditorUrl(href) : null;
+  if (!path) {
+    return <a href={href} {...props}>{children}</a>;
+  }
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <a href={href} {...props}>{children}</a>
+      <button
+        type="button"
+        onClick={(e) => { e.preventDefault(); openFileDiff(path); }}
+        className="text-sky-500 hover:text-sky-300 inline-flex items-center align-baseline text-[10px] px-1 rounded border border-sky-900/60 hover:border-sky-600"
+        title="파일 누적 diff 보기"
+      >
+        <Maximize2 size={9} /> diff
+      </button>
+    </span>
+  );
+}
+
+/** 메시지 버블 우측 하단 시간 포맷 — 오늘이면 HH:mm, 아니면 MM/DD HH:mm */
+function formatBubbleTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    const sameDay =
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate();
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    if (sameDay) return `${hh}:${mm}`;
+    const M = String(d.getMonth() + 1).padStart(2, '0');
+    const D = String(d.getDate()).padStart(2, '0');
+    return `${M}/${D} ${hh}:${mm}`;
+  } catch {
+    return '';
+  }
+}
 
 // 테이블이 버블 너비를 초과할 때 가로 스크롤 처리
 const mdComponents = {
   table: ({ children, ...props }: React.ComponentPropsWithoutRef<'table'>) => (
     <div className="table-scroll"><table {...props}>{children}</table></div>
-  )
+  ),
+  a: EditorLinkWithDiff
 } as const;
 
 // 도구 호출 접혀있는 뷰
@@ -312,14 +356,28 @@ function MessageBubble({ message, searchQuery, onChoice, delegationStage, runnin
   if (isUser && /^\[(?:위임 결과 보고|위임 에스컬레이션)\]/.test(message.content)) {
     return <SystemTriggerCard content={message.content} />;
   }
-  const { body, choices } = useMemo(() => isUser ? { body: message.content, choices: [] } : extractChoices(message.content), [message.content, isUser]);
+  const editorCfg = useEditorConfig();
+  const { body, choices } = useMemo(() => {
+    if (isUser) return { body: message.content, choices: [] };
+    const parsed = extractChoices(message.content);
+    return { body: linkifyFilePaths(parsed.body, editorCfg), choices: parsed.choices };
+  }, [message.content, isUser, editorCfg]);
   // 에러 메시지 감지: ⚠️ 로 시작하는 assistant 메시지
   const isError = !isUser && /^⚠️/.test(message.content.trim());
   // 버블 색상 — CSS 변수(useAppearance 훅이 주입) 기반
   const userBubbleStyle = isUser && !isQueued ? { background: 'var(--user-bubble, #3f3f46)' } : undefined;
   const assistantBubbleStyle = !isUser && !isError ? { background: 'var(--assistant-bubble, #18181b)' } : undefined;
+  const timeLabel = message.ts ? (
+    <span
+      className="text-[10px] font-mono text-zinc-600 shrink-0 pb-0.5 select-none"
+      title={new Date(message.ts).toLocaleString('ko-KR')}
+    >
+      {formatBubbleTime(message.ts)}
+    </span>
+  ) : null;
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex items-end gap-1.5 ${isUser ? 'justify-end' : 'justify-start'}`}>
+      {isUser && timeLabel}
       <div
         style={userBubbleStyle ?? assistantBubbleStyle}
         className={`max-w-[95%] lg:max-w-[80%] rounded-lg px-4 py-3 text-sm break-words relative ${
@@ -381,6 +439,7 @@ function MessageBubble({ message, searchQuery, onChoice, delegationStage, runnin
           </div>
         )}
       </div>
+      {!isUser && timeLabel}
     </div>
   );
 }

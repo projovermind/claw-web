@@ -12,7 +12,8 @@ const DEFAULTS = {
     logsViewer: false,
     tokenManager: false
   },
-  auth: { enabled: false, token: null }
+  auth: { enabled: false, token: null },
+  editor: { scheme: 'vscode', pathMap: {} }
 };
 
 export function loadWebConfig(filePath) {
@@ -22,6 +23,7 @@ export function loadWebConfig(filePath) {
     ...DEFAULTS,
     ...parsed,
     features: { ...DEFAULTS.features, ...(parsed.features ?? {}) },
-    auth: { ...DEFAULTS.auth, ...(parsed.auth ?? {}) }
+    auth: { ...DEFAULTS.auth, ...(parsed.auth ?? {}) },
+    editor: { ...DEFAULTS.editor, ...(parsed.editor ?? {}) }
   };
 }

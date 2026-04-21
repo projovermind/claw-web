@@ -125,6 +125,15 @@ export interface WebSettings {
   port: number;
   features: Record<string, boolean>;
   auth: { enabled: boolean; token: string | null };
+  appearance?: Record<string, unknown>;
+  editor?: EditorConfig;
+}
+
+export interface EditorConfig {
+  /** 'off' disables the Open-in-Editor buttons */
+  scheme: 'off' | 'vscode' | 'cursor';
+  /** Prefix-based remapping for remote-server → local paths. { serverPrefix: localPrefix } */
+  pathMap?: Record<string, string>;
 }
 
 export type BackendPublic =
