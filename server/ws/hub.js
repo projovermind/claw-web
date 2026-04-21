@@ -9,7 +9,9 @@ export function attachWsHub(server, { eventBus, webConfig }) {
   const clients = new Set();
 
   server.on('upgrade', (req, socket, head) => {
-    if (!req.url || !req.url.startsWith('/ws')) return;
+    // Only accept `/ws` exactly (not sub-paths like /ws/pty — those are handled by their own routers)
+    const pathOnly = (req.url || '').split('?')[0];
+    if (pathOnly !== '/ws') return;
     if (webConfig && !authorizeWsUpgrade(req, webConfig)) {
       logger.warn('ws: upgrade rejected (auth)');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');

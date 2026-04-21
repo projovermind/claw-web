@@ -220,6 +220,12 @@ export const api = {
       root: string;
       results: { name: string; path: string; rel: string }[];
     }>(`/fs/search?root=${encodeURIComponent(root)}&q=${encodeURIComponent(q)}&limit=${limit}`),
+  fsTree: (p: string) =>
+    get<{
+      path: string;
+      parent: string | null;
+      entries: { name: string; path: string; kind: 'dir' | 'file'; size?: number; mtime?: string }[];
+    }>(`/fs/tree?path=${encodeURIComponent(p)}`),
   agentStats: () =>
     get<{
       agents: {

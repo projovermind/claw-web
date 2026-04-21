@@ -13,7 +13,9 @@ import {
   X,
   RotateCcw,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  TerminalSquare,
+  FolderTree
 } from 'lucide-react';
 import { useI18nStore, useT } from '../../lib/i18n';
 import { useQuery } from '@tanstack/react-query';
@@ -89,7 +91,9 @@ export default function Sidebar() {
     {
       items: [
         { to: '/', icon: LayoutDashboard, label: t('nav.dashboard') },
-        { to: '/chat', icon: MessageSquare, label: t('nav.chat') }
+        { to: '/chat', icon: MessageSquare, label: t('nav.chat') },
+        { to: '/terminal', icon: TerminalSquare, label: '터미널' },
+        { to: '/files', icon: FolderTree, label: '파일' }
       ]
     },
     {

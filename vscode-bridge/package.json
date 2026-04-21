@@ -1,0 +1,66 @@
+{
+  "name": "claw-web-bridge",
+  "displayName": "Claw Web Bridge",
+  "description": "Push current editor state (open files, selection, cursor) to a Claw Web instance so agents can see what you're working on.",
+  "version": "0.1.0",
+  "publisher": "claw-web",
+  "private": true,
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Claw Web Bridge",
+      "properties": {
+        "clawWebBridge.endpoint": {
+          "type": "string",
+          "default": "http://localhost:3838",
+          "description": "Base URL of the Claw Web server (no trailing slash)."
+        },
+        "clawWebBridge.authToken": {
+          "type": "string",
+          "default": "",
+          "description": "Bearer token for the Claw Web server (set in Settings → Access if auth is enabled)."
+        },
+        "clawWebBridge.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable pushing editor state to Claw Web."
+        },
+        "clawWebBridge.throttleMs": {
+          "type": "number",
+          "default": 800,
+          "description": "Minimum interval (ms) between pushes."
+        },
+        "clawWebBridge.includeSelectionText": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include the selected text (up to 64KB) with each push."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "clawWebBridge.pushNow",
+        "title": "Claw Web: Push editor state now"
+      },
+      {
+        "command": "clawWebBridge.toggle",
+        "title": "Claw Web: Toggle bridge on/off"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -4,6 +4,8 @@ import DashboardPage from './pages/DashboardPage';
 import AgentsPage from './pages/AgentsPage';
 import ProjectsPage from './pages/ProjectsPage';
 import ChatPage from './pages/ChatPage';
+import TerminalPage from './pages/TerminalPage';
+import FilesPage from './pages/FilesPage';
 import SettingsPage from './pages/SettingsPage';
 import SkillsPage from './pages/SkillsPage';
 import SetupWizard from './pages/SetupWizard';
@@ -44,6 +46,8 @@ export default function App() {
         <Route path="/projects" element={<ProjectsPage />} />
         <Route path="/skills" element={<SkillsPage />} />
         <Route path="/chat" element={<ChatPage />} />
+        <Route path="/terminal" element={<TerminalPage />} />
+        <Route path="/files" element={<FilesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/setup" element={<SetupWizard />} />
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -37,6 +37,9 @@ import { createTunnelRouter, autoStartQuickTunnel, stopQuickTunnel } from './rou
 import { createAdminRouter } from './routes/admin.js';
 import { createDomainRouter } from './routes/domain.js';
 import { attachWsHub } from './ws/hub.js';
+import { attachPtyWs } from './ws/pty.js';
+import { attachFsWatchWs } from './ws/fs-watch.js';
+import { attachExecWs } from './ws/exec.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { createAutoBackup } from './lib/auto-backup.js';
@@ -50,6 +53,7 @@ import { createLspRouter } from './routes/lsp.js';
 import { createTerraformRouter } from './routes/terraform.js';
 import { createUndoRouter } from './routes/undo.js';
 import { createExportImportRouter } from './routes/export-import.js';
+import { createBridgeRouter } from './routes/bridge.js';
 import { createDelegationsRouter } from './routes/delegations.js';
 import { createHooksStore } from './lib/hooks-store.js';
 import { createScheduler } from './lib/scheduler.js';
@@ -370,6 +374,8 @@ async function main() {
   app.use('/api/undo', createUndoRouter({ configStore, metadataStore, sessionsStore, eventBus }));
   app.use('/api/delegations', createDelegationsRouter({ delegationTracker }));
   app.use('/api/export-import', createExportImportRouter({ skillsStore, configStore }));
+  const bridgeRouter = createBridgeRouter({ webConfig });
+  app.use('/api/bridge', bridgeRouter);
 
   const distPath = path.join(REPO_ROOT, 'client', 'dist');
   app.use(express.static(distPath));
@@ -382,6 +388,9 @@ async function main() {
 
   const server = http.createServer(app);
   const wsHub = attachWsHub(server, { eventBus, webConfig });
+  const ptyWs = attachPtyWs(server, { webConfig });
+  const fsWatchWs = attachFsWatchWs(server, { webConfig });
+  const execWs = attachExecWs(server, { webConfig });
 
   // ── 포트 점유 진단 (kill 하지 않고 로그만) ──
   // 자가 청소는 launchd unload→load 오버랩 시점에 방금 launchd 가 띄운

@@ -231,6 +231,65 @@ export function createFsBrowserRouter({ webConfig }) {
     }
   });
 
+  // File tree listing (Phase 3): files + directories, non-recursive (lazy).
+  // GET /api/fs/tree?path=<abs>
+  //   → { path, parent, entries: [{ name, path, kind: 'dir'|'file', size?, mtime? }] }
+  // Hidden dot-entries and common heavy dirs (node_modules, .git, dist) are filtered.
+  router.get('/tree', async (req, res, next) => {
+    try {
+      const rawPath = typeof req.query.path === 'string' ? req.query.path : '';
+      if (!rawPath) throw new HttpError(400, 'path param required', 'MISSING_PATH');
+      const absPath = path.resolve(rawPath);
+      if (!isInsideAllowed(absPath)) {
+        throw new HttpError(403, `Path outside allowedRoots: ${absPath}`, 'OUTSIDE_ALLOWED_ROOTS');
+      }
+      let entries;
+      try {
+        entries = await fs.readdir(absPath, { withFileTypes: true });
+      } catch (err) {
+        if (err.code === 'ENOENT') throw new HttpError(404, 'Not found', 'NOT_FOUND');
+        if (err.code === 'ENOTDIR') throw new HttpError(400, 'Not a directory', 'NOT_DIR');
+        if (err.code === 'EACCES') throw new HttpError(403, 'Permission denied', 'PERMISSION_DENIED');
+        throw err;
+      }
+
+      const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', '__pycache__', '.next', '.cache', '.turbo']);
+      const dirs = [];
+      const files = [];
+
+      await Promise.all(entries.map(async (e) => {
+        if (e.name.startsWith('.')) return;
+        if (e.isDirectory() && SKIP_DIRS.has(e.name)) return;
+        const full = path.join(absPath, e.name);
+        if (e.isDirectory()) {
+          dirs.push({ name: e.name, path: full, kind: 'dir' });
+        } else if (e.isFile()) {
+          let size = 0, mtime = null;
+          try {
+            const st = await fs.stat(full);
+            size = st.size;
+            mtime = st.mtime.toISOString();
+          } catch { /* ignore */ }
+          files.push({ name: e.name, path: full, kind: 'file', size, mtime });
+        }
+      }));
+
+      dirs.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+      files.sort((a, b) => a.name.localeCompare(b.name, 'ko'));
+
+      const parent = path.dirname(absPath);
+      const parentAllowed = isInsideAllowed(parent) && parent !== absPath;
+
+      res.json({
+        path: absPath,
+        parent: parentAllowed ? parent : null,
+        entries: [...dirs, ...files]
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // Serve a raw file from disk (restricted to allowedRoots).
   // GET /api/fs/file?path=<absolute_path>
   // Used by the client to render images inline and provide download links
