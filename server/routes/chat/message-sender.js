@@ -1,5 +1,6 @@
 import { logger } from '../../lib/logger.js';
 import { buildCarlContext } from '../../lib/carl-injector.js';
+import { buildSkillContext } from '../../lib/skill-injector.js';
 import { buildBaseContext } from '../../lib/base-reader.js';
 import { buildPaulContext } from '../../lib/paul-reader.js';
 import { classifyError, resolveAgent } from './utils.js';
@@ -49,6 +50,16 @@ export function createMessageSender(ctx) {
         const memory = proj?.dashboard?.memory?.trim();
         if (memory) agent.projectMemory = memory;
       }
+
+      // 첫 메시지에만 스킬 주입 — 이후 턴은 --resume 컨텍스트에 이미 포함되므로 재주입 불필요
+      // (매 턴 buildSkillContext 호출 시 배열 재생성 → Claude CLI prompt cache 무효화)
+      if (Array.isArray(agent.skills) && agent.skills.length > 0) {
+        agent.skills = buildSkillContext(agent.skills, message);
+      }
+    } else {
+      // 이후 턴: 스킬 재주입 억제 → prompt cache 유지
+      // alwaysOn + trigger 없는 스킬은 내용 변화 없으므로 그대로 유지 (캐시 일관성 확보)
+      agent.skills = [];
     }
     const carlContext = buildCarlContext(agent.workingDir, message);
     if (carlContext) agent.carlContext = carlContext;
@@ -120,6 +131,14 @@ export function createMessageSender(ctx) {
         },
         async onResult(result) {
           retryCounters.delete(sessionId);
+          // prompt cache 검증 로그 — cache_creation / cache_read 토큰 추적
+          if (result.usage) {
+            const { cacheReadTokens, inputTokens, outputTokens } = result.usage;
+            logger.info(
+              { sessionId, isFirstMsg, inputTokens, outputTokens, cacheReadTokens: cacheReadTokens ?? 0 },
+              'chat: token usage'
+            );
+          }
           try {
             await sessionsStore.appendMessage(sessionId, {
               role: 'assistant',
@@ -243,14 +262,14 @@ export function createMessageSender(ctx) {
               content: `🔄 **자동 복구 중** (${attempt}/${maxForLabel}) — \`${label}\` 오류 감지. ${delay >= 1000 ? `${delay / 1000}초 후 재시도합니다...` : '즉시 재시도합니다...'}`
             }).catch(() => {});
             eventBus.publish('chat.error', { sessionId, error: `[auto-retry ${attempt}/${maxForLabel}] ${err.message}` });
-            sessionsStore.update(sessionId, { claudeSessionId: null }).catch(() => {});
+            // 에러 시 claudeSessionId 보존 — 재시도에서 --resume 강제 재사용해 컨텍스트 유지
             setTimeout(() => {
               try {
                 const s = sessionsStore.get(sessionId);
                 if (!s) return;
                 const lastUser = [...(s.messages ?? [])].reverse().find((m) => m.role === 'user');
                 if (lastUser?.content) {
-                  sendRunnerMessage(sessionId, lastUser.content);
+                  sendRunnerMessage(sessionId, lastUser.content, { claudeSessionId: s.claudeSessionId });
                 }
               } catch (retryErr) {
                 logger.error({ retryErr, sessionId }, 'chat: auto-retry failed');
@@ -265,10 +284,7 @@ export function createMessageSender(ctx) {
             role: 'assistant',
             content: `⚠️ **응답 중단됨** — ${err.message}${counter.count >= maxForLabel ? `\n\n자동 복구를 ${counter.count}회 시도했지만 해결되지 않았습니다.` : '\n\n메시지를 다시 보내주세요.'}`
           }).catch(() => {});
-          if (session.claudeSessionId) {
-            logger.warn({ sessionId, err: err.message }, 'chat: clearing claudeSessionId on error (auto-recovery)');
-            sessionsStore.update(sessionId, { claudeSessionId: null }).catch(() => {});
-          }
+          // 에러 시에도 claudeSessionId 보존 — 사용자 수동 재시도 시 --resume 재사용해 컨텍스트 유지
           if (delegationTracker) {
             const del = delegationTracker.getByTarget(sessionId);
             if (del) {
