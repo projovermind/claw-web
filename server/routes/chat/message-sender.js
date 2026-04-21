@@ -3,7 +3,7 @@ import { buildCarlContext } from '../../lib/carl-injector.js';
 import { buildSkillContext } from '../../lib/skill-injector.js';
 import { buildBaseContext } from '../../lib/base-reader.js';
 import { buildPaulContext } from '../../lib/paul-reader.js';
-import { buildPinnedFilesContext, buildGitDiffContext } from '../../lib/working-context-injector.js';
+import { buildPinnedFilesContext, buildGitDiffContext, buildBridgeContext } from '../../lib/working-context-injector.js';
 import { findClaudeSessionFile } from '../../runners/claude-cli-runner.js';
 import { classifyError, resolveAgent, buildConversationSummary } from './utils.js';
 
@@ -27,6 +27,7 @@ export function createMessageSender(ctx) {
     delegationTracker,
     pushStore,
     webConfig,
+    getBridgeContext,
     retryCounters,
     MAX_AUTO_RETRIES
   } = ctx;
@@ -166,6 +167,19 @@ export function createMessageSender(ctx) {
       const diffCtx = buildGitDiffContext(agent.workingDir);
       if (diffCtx) {
         message = `${diffCtx}\n\n${message}`;
+      }
+    }
+
+    // Phase 5: VS Code bridge auto-attach — per-turn prepend (dynamic)
+    if (agent.bridgeAutoAttach && typeof getBridgeContext === 'function') {
+      try {
+        const bridgeState = getBridgeContext(agent.workingDir);
+        const bridgeBlock = buildBridgeContext(bridgeState, agent.workingDir);
+        if (bridgeBlock) {
+          message = `${bridgeBlock}\n\n${message}`;
+        }
+      } catch (err) {
+        logger.warn({ err: err.message, sessionId }, 'chat: bridge context inject failed (non-fatal)');
       }
     }
 

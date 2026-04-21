@@ -333,6 +333,8 @@ async function main() {
   // CLAUDE.md / AGENTS.md editor mounted on same prefix
   app.use('/api/projects', createProjectMdRouter({ projectsStore, webConfig, eventBus }));
   app.use('/api/sessions', createSessionsRouter({ sessionsStore, configStore, runner, eventBus }));
+  // Phase 5: bridge router is created up-front so chat can inject IDE context
+  const bridgeRouter = createBridgeRouter({ webConfig });
   const { router: chatRouter, resumeInterruptedSession } = createChatRouter({
     sessionsStore,
     configStore,
@@ -346,7 +348,8 @@ async function main() {
     eventBus,
     delegationTracker,
     pushStore,
-    webConfig
+    webConfig,
+    getBridgeContext: (workspace) => bridgeRouter.getContextForWorkspace?.(workspace) ?? null
   });
   app.use('/api/chat', chatRouter);
   app.use('/api/backends', createBackendsRouter({ backendsStore, eventBus }));
@@ -374,7 +377,6 @@ async function main() {
   app.use('/api/undo', createUndoRouter({ configStore, metadataStore, sessionsStore, eventBus }));
   app.use('/api/delegations', createDelegationsRouter({ delegationTracker }));
   app.use('/api/export-import', createExportImportRouter({ skillsStore, configStore }));
-  const bridgeRouter = createBridgeRouter({ webConfig });
   app.use('/api/bridge', bridgeRouter);
 
   const distPath = path.join(REPO_ROOT, 'client', 'dist');

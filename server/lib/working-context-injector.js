@@ -131,3 +131,52 @@ export function buildGitDiffContext(workingDir) {
 
   return `<git-diff>\n현재 워킹 디렉토리의 unstaged/staged 변경사항입니다:\n\n\`\`\`diff\n${diff}${truncatedNote}\n\`\`\`\n</git-diff>`;
 }
+
+/**
+ * Phase 5: Build <ide-context> block from VS Code bridge state.
+ * @param {object|null} ctx   the context object stored by /api/bridge/context
+ *   { workspaceFolders, activeFile, openFiles, selection, cursor, ideVersion }
+ * @param {string} workingDir   used to present paths relative to the agent cwd
+ * @returns {string|null}
+ */
+export function buildBridgeContext(ctx, workingDir) {
+  if (!ctx || typeof ctx !== 'object') return null;
+
+  const rel = (p) => {
+    if (!p) return p;
+    if (workingDir && p.startsWith(workingDir + '/')) return p.slice(workingDir.length + 1);
+    return p;
+  };
+
+  const lines = [];
+  if (ctx.activeFile?.path) {
+    const dirty = ctx.activeFile.isDirty ? ' [unsaved]' : '';
+    const lang = ctx.activeFile.languageId ? ` (${ctx.activeFile.languageId})` : '';
+    lines.push(`active: ${rel(ctx.activeFile.path)}${lang}${dirty}`);
+  }
+  if (ctx.cursor?.path) {
+    lines.push(`cursor: ${rel(ctx.cursor.path)}:${ctx.cursor.line + 1}:${ctx.cursor.column + 1}`);
+  }
+  if (ctx.selection?.path) {
+    const s = ctx.selection;
+    lines.push(`selection: ${rel(s.path)} [${s.startLine + 1}:${s.startColumn + 1}-${s.endLine + 1}:${s.endColumn + 1}]`);
+  }
+  if (Array.isArray(ctx.openFiles) && ctx.openFiles.length > 0) {
+    const names = ctx.openFiles.slice(0, 30).map((f) => rel(f.path)).filter(Boolean);
+    if (names.length > 0) {
+      const more = ctx.openFiles.length > names.length ? ` (+${ctx.openFiles.length - names.length} more)` : '';
+      lines.push(`open (${ctx.openFiles.length}): ${names.join(', ')}${more}`);
+    }
+  }
+
+  let selBlock = '';
+  if (ctx.selection?.text && typeof ctx.selection.text === 'string' && ctx.selection.text.trim()) {
+    const ext = path.extname(ctx.selection.path || '').replace(/^\./, '') || '';
+    selBlock = `\n\n선택된 텍스트:\n\`\`\`${ext}\n${ctx.selection.text}\n\`\`\``;
+  }
+
+  if (lines.length === 0 && !selBlock) return null;
+
+  const ide = ctx.ideVersion ? ` [${ctx.ideVersion}]` : '';
+  return `<ide-context${ide}>\n사용자가 현재 IDE에서 보고 있는 상태입니다:\n\n${lines.join('\n')}${selBlock}\n</ide-context>`;
+}

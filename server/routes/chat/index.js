@@ -25,7 +25,8 @@ export function createChatRouter({
   eventBus,
   delegationTracker,
   pushStore,
-  webConfig
+  webConfig,
+  getBridgeContext
 }) {
   const router = Router();
 
@@ -52,6 +53,7 @@ export function createChatRouter({
     delegationTracker,
     pushStore,
     webConfig,
+    getBridgeContext,
     retryCounters,
     reEntryCounters,
     MAX_AUTO_RETRIES,

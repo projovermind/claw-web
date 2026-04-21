@@ -20,6 +20,7 @@ export interface AgentFormState {
   disallowedTools: string[];
   pinnedFiles: string[];
   gitDiffAutoAttach: boolean;
+  bridgeAutoAttach: boolean;
 }
 
 export const emptyAgentForm = (): AgentFormState => ({
@@ -34,7 +35,8 @@ export const emptyAgentForm = (): AgentFormState => ({
   allowedTools: [],
   disallowedTools: [],
   pinnedFiles: [],
-  gitDiffAutoAttach: false
+  gitDiffAutoAttach: false,
+  bridgeAutoAttach: false
 });
 
 function Field({
@@ -100,7 +102,8 @@ export function AgentModal({
           allowedTools: agent.allowedTools ?? [],
           disallowedTools: agent.disallowedTools ?? [],
           pinnedFiles: agent.pinnedFiles ?? [],
-          gitDiffAutoAttach: agent.gitDiffAutoAttach ?? false
+          gitDiffAutoAttach: agent.gitDiffAutoAttach ?? false,
+          bridgeAutoAttach: agent.bridgeAutoAttach ?? false
         }
       : emptyAgentForm()
   );
@@ -328,6 +331,21 @@ export function AgentModal({
                 <span className="block text-sm text-zinc-200">Git diff 자동 첨부</span>
                 <span className="block text-[11px] text-zinc-500">
                   매 메시지 전송 시 현재 워킹 디렉토리의 <code>git diff</code> 를 프롬프트 앞에 붙입니다 (unstaged + staged, 32KB 한도).
+                </span>
+              </span>
+            </label>
+
+            <label className="flex items-start gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={form.bridgeAutoAttach}
+                onChange={(e) => setForm({ ...form, bridgeAutoAttach: e.target.checked })}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-sm text-zinc-200">VS Code Bridge 자동 첨부</span>
+                <span className="block text-[11px] text-zinc-500">
+                  VS Code 확장이 push 한 IDE 상태(열린 파일 · 활성 파일 · 커서 · 선택 영역)를 매 메시지 앞에 붙입니다. 5분 내 push가 있어야 활성화됩니다.
                 </span>
               </span>
             </label>

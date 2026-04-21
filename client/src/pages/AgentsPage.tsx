@@ -39,6 +39,7 @@ export default function AgentsPage() {
       if (form.backendId) patch.backendId = form.backendId;
       if (form.pinnedFiles.length > 0) patch.pinnedFiles = form.pinnedFiles;
       if (form.gitDiffAutoAttach) patch.gitDiffAutoAttach = true;
+      if (form.bridgeAutoAttach) patch.bridgeAutoAttach = true;
       if (Object.keys(patch).length > 0) {
         await api.patchAgent(form.id, patch);
       }
@@ -70,7 +71,8 @@ export default function AgentsPage() {
           allowedTools: form.allowedTools,
           disallowedTools: form.disallowedTools,
           pinnedFiles: form.pinnedFiles,
-          gitDiffAutoAttach: form.gitDiffAutoAttach
+          gitDiffAutoAttach: form.gitDiffAutoAttach,
+          bridgeAutoAttach: form.bridgeAutoAttach
         },
         { ifMatchUpdatedAt }
       ),

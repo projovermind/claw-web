@@ -22,6 +22,8 @@ export interface Agent {
   // Phase 1: auto-injected working context
   pinnedFiles?: string[];
   gitDiffAutoAttach?: boolean;
+  // Phase 5: VS Code bridge auto-inject
+  bridgeAutoAttach?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
