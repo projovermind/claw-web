@@ -105,6 +105,8 @@ export interface Skill {
   content: string;
   createdAt?: string;
   updatedAt?: string;
+  alwaysOn?: boolean;
+  triggers?: string[];
   // System skills from ~/.claude/plugins/**/SKILL.md (read-only)
   system?: boolean;
   plugin?: string;

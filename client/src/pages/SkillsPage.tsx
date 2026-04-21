@@ -15,7 +15,13 @@ import { SkillDetail } from '../components/skills/SkillDetail';
 import { BulkAssignModal } from '../components/skills/BulkAssignModal';
 import { useProgressMutation } from '../lib/useProgressMutation';
 
-const emptyDraft = () => ({ name: '', description: '', content: '' });
+const emptyDraft = () => ({
+  name: '',
+  description: '',
+  content: '',
+  alwaysOn: false,
+  triggers: [] as string[]
+});
 
 export default function SkillsPage() {
   const t = useT();
@@ -29,16 +35,35 @@ export default function SkillsPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [assignModal, setAssignModal] = useState<{ skill: Skill; mode: 'assign' | 'unassign' } | null>(null);
 
-  const create = useProgressMutation<Skill, Error, { name: string; description: string; content: string }>({
+  const create = useProgressMutation<
+    Skill,
+    Error,
+    { name: string; description: string; content: string; alwaysOn?: boolean; triggers?: string[] }
+  >({
     title: '스킬 생성 중...',
     successMessage: '생성 완료',
     invalidateKeys: [['skills']],
     mutationFn: (d) => api.createSkill(d),
     onSuccess: async (s) => {
       setDraft(emptyDraft());
+      setDraftTriggerInput('');
       setSelectedId(s.id);
     }
   });
+  const [draftTriggerInput, setDraftTriggerInput] = useState('');
+
+  function commitDraftTrigger(raw: string) {
+    const tags = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    if (!tags.length) return;
+    setDraft((d) => ({
+      ...d,
+      triggers: [...d.triggers, ...tags.filter((t) => !d.triggers.includes(t))]
+    }));
+    setDraftTriggerInput('');
+  }
+  function removeDraftTrigger(idx: number) {
+    setDraft((d) => ({ ...d, triggers: d.triggers.filter((_, i) => i !== idx) }));
+  }
   const update = useProgressMutation<Skill, Error, { id: string; patch: Partial<Omit<Skill, 'id'>> }>({
     title: '스킬 저장 중...',
     successMessage: '저장 완료',
@@ -121,13 +146,65 @@ export default function SkillsPage() {
               placeholder={t('skills.descPlaceholder')}
               className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
             />
+
+            {/* alwaysOn toggle */}
+            <div className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+              <div>
+                <div className="text-xs font-medium text-zinc-300">Always On</div>
+                <div className="text-[10px] text-zinc-500 mt-0.5">매 메시지마다 전체 내용 주입</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDraft({ ...draft, alwaysOn: !draft.alwaysOn })}
+                className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${draft.alwaysOn ? 'bg-emerald-600' : 'bg-zinc-700'}`}
+              >
+                <span
+                  className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${draft.alwaysOn ? 'translate-x-4' : 'translate-x-0.5'}`}
+                />
+              </button>
+            </div>
+
+            {/* triggers tag input */}
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Triggers</div>
+              <div className="rounded border border-zinc-800 bg-zinc-950 px-2 py-1.5 min-h-[34px]">
+                <div className="flex flex-wrap gap-1 mb-1">
+                  {draft.triggers.map((tag, i) => (
+                    <span key={i} className="flex items-center gap-1 bg-zinc-800 text-zinc-300 text-xs px-1.5 py-0.5 rounded">
+                      {tag}
+                      <button type="button" onClick={() => removeDraftTrigger(i)} className="text-zinc-500 hover:text-zinc-200">
+                        <X size={9} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <input
+                  value={draftTriggerInput}
+                  onChange={(e) => setDraftTriggerInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if ((e.key === 'Enter' || e.key === ',') && draftTriggerInput.trim()) {
+                      e.preventDefault();
+                      commitDraftTrigger(draftTriggerInput);
+                    } else if (e.key === 'Backspace' && !draftTriggerInput && draft.triggers.length > 0) {
+                      removeDraftTrigger(draft.triggers.length - 1);
+                    }
+                  }}
+                  onBlur={() => { if (draftTriggerInput.trim()) commitDraftTrigger(draftTriggerInput); }}
+                  placeholder={draft.triggers.length === 0 ? '키워드, Enter' : ''}
+                  className="bg-transparent text-xs focus:outline-none w-full placeholder:text-zinc-600"
+                />
+              </div>
+            </div>
+
             <button
               disabled={!draft.name.trim() || create.isPending}
               onClick={() =>
                 create.mutate({
                   name: draft.name.trim(),
                   description: draft.description.trim(),
-                  content: draft.content
+                  content: draft.content,
+                  alwaysOn: draft.alwaysOn,
+                  triggers: draft.triggers
                 })
               }
               className="w-full rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 px-3 py-2 text-sm flex items-center justify-center gap-1.5"
@@ -303,9 +380,23 @@ function EditSkillModal({
   const [form, setForm] = useState({
     name: skill.name,
     description: skill.description,
-    content: skill.content
+    content: skill.content,
+    alwaysOn: skill.alwaysOn ?? false,
+    triggers: skill.triggers ?? [] as string[],
   });
+  const [triggerInput, setTriggerInput] = useState('');
   const valid = form.name.trim();
+
+  function commitTriggerInput(raw: string) {
+    const tags = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    if (!tags.length) return;
+    setForm((f) => ({ ...f, triggers: [...f.triggers, ...tags.filter((t) => !f.triggers.includes(t))] }));
+    setTriggerInput('');
+  }
+
+  function removeTrigger(idx: number) {
+    setForm((f) => ({ ...f, triggers: f.triggers.filter((_, i) => i !== idx) }));
+  }
 
   return (
     <div
@@ -342,6 +433,57 @@ function EditSkillModal({
               className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
             />
           </label>
+
+          {/* alwaysOn toggle */}
+          <div className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2.5">
+            <div>
+              <div className="text-sm font-medium text-zinc-200">Always On</div>
+              <div className="text-[11px] text-zinc-500 mt-0.5">매 메시지마다 전체 내용 주입</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setForm({ ...form, alwaysOn: !form.alwaysOn })}
+              className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${form.alwaysOn ? 'bg-emerald-600' : 'bg-zinc-700'}`}
+            >
+              <span
+                className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${form.alwaysOn ? 'translate-x-5' : 'translate-x-0.5'}`}
+              />
+            </button>
+          </div>
+
+          {/* triggers tag input */}
+          <div className="block">
+            <span className="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1">Triggers</span>
+            <div className="rounded border border-zinc-800 bg-zinc-950 px-3 py-2 min-h-[38px]">
+              <div className="flex flex-wrap gap-1 mb-1">
+                {form.triggers.map((tag, i) => (
+                  <span key={i} className="flex items-center gap-1 bg-zinc-800 text-zinc-300 text-xs px-2 py-0.5 rounded">
+                    {tag}
+                    <button type="button" onClick={() => removeTrigger(i)} className="text-zinc-500 hover:text-zinc-200">
+                      <X size={9} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <input
+                value={triggerInput}
+                onChange={(e) => setTriggerInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if ((e.key === 'Enter' || e.key === ',') && triggerInput.trim()) {
+                    e.preventDefault();
+                    commitTriggerInput(triggerInput);
+                  } else if (e.key === 'Backspace' && !triggerInput && form.triggers.length > 0) {
+                    removeTrigger(form.triggers.length - 1);
+                  }
+                }}
+                onBlur={() => { if (triggerInput.trim()) commitTriggerInput(triggerInput); }}
+                placeholder={form.triggers.length === 0 ? '키워드 입력 후 Enter 또는 콤마로 추가' : ''}
+                className="bg-transparent text-sm focus:outline-none w-full placeholder:text-zinc-600"
+              />
+            </div>
+            <div className="text-[11px] text-zinc-600 mt-1">키워드 매칭 시 스킬 전체 내용 주입 (alwaysOn 없을 때 사용)</div>
+          </div>
+
           <label className="block">
             <span className="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1">
               {t('skills.contentLabel')}
@@ -362,7 +504,7 @@ function EditSkillModal({
           </button>
           <button
             disabled={!valid || busy}
-            onClick={() => onSubmit(form)}
+            onClick={() => onSubmit({ name: form.name, description: form.description, content: form.content, alwaysOn: form.alwaysOn, triggers: form.triggers })}
             className="px-4 py-2 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-sm"
           >
             {busy ? t('common.saving') : t('common.save')}

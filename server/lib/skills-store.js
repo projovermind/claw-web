@@ -52,7 +52,7 @@ export async function createSkillsStore(filePath) {
     },
     onChange: (cb) => emitter.on('change', cb),
 
-    async create({ name, description, content }) {
+    async create({ name, description, content, triggers, alwaysOn, priority }) {
       const id = newId();
       const now = new Date().toISOString();
       const skill = {
@@ -60,6 +60,9 @@ export async function createSkillsStore(filePath) {
         name: name ?? 'Untitled skill',
         description: description ?? '',
         content: content ?? '',
+        triggers: triggers ?? [],
+        alwaysOn: alwaysOn ?? true,
+        priority: priority ?? 0,
         createdAt: now,
         updatedAt: now
       };

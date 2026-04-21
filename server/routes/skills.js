@@ -5,13 +5,19 @@ import { HttpError } from '../middleware/error-handler.js';
 const createSchema = z.object({
   name: z.string().min(1).max(80),
   description: z.string().max(500).optional(),
-  content: z.string().max(100000).optional()
+  content: z.string().max(100000).optional(),
+  alwaysOn: z.boolean().optional(),
+  triggers: z.array(z.string().min(1).max(80)).max(32).optional(),
+  priority: z.number().int().min(0).max(1000).optional()
 }).strict();
 
 const updateSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   description: z.string().max(500).optional(),
-  content: z.string().max(100000).optional()
+  content: z.string().max(100000).optional(),
+  alwaysOn: z.boolean().optional(),
+  triggers: z.array(z.string().min(1).max(80)).max(32).optional(),
+  priority: z.number().int().min(0).max(1000).optional()
 }).strict();
 
 const assignSchema = z.object({

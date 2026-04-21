@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Trash2, Sparkles, Package, Lock, Users, UserPlus, UserMinus } from 'lucide-react';
+import { Pencil, Trash2, Sparkles, Package, Lock, Users, UserPlus, UserMinus, Zap, Tag } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { Skill, Agent } from '../../lib/types';
 import { useT } from '../../lib/i18n';
@@ -50,6 +50,21 @@ export function SkillDetail({
           {selected.source && (
             <div className="text-xs text-zinc-600 font-mono mt-1.5 truncate" title={selected.source}>
               📁 {selected.source}
+            </div>
+          )}
+          {/* alwaysOn / triggers badges */}
+          {(selected.alwaysOn || (selected.triggers && selected.triggers.length > 0)) && (
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+              {selected.alwaysOn && (
+                <span className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-300 border border-emerald-900/60">
+                  <Zap size={10} /> Always On
+                </span>
+              )}
+              {selected.triggers?.map((tr) => (
+                <span key={tr} className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">
+                  <Tag size={9} /> {tr}
+                </span>
+              ))}
             </div>
           )}
         </div>
