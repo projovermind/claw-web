@@ -18,6 +18,8 @@ export interface AgentFormState {
   skillIds: string[];
   allowedTools: string[];
   disallowedTools: string[];
+  pinnedFiles: string[];
+  gitDiffAutoAttach: boolean;
 }
 
 export const emptyAgentForm = (): AgentFormState => ({
@@ -30,7 +32,9 @@ export const emptyAgentForm = (): AgentFormState => ({
   systemPrompt: '',
   skillIds: [],
   allowedTools: [],
-  disallowedTools: []
+  disallowedTools: [],
+  pinnedFiles: [],
+  gitDiffAutoAttach: false
 });
 
 function Field({
@@ -94,7 +98,9 @@ export function AgentModal({
           systemPrompt: agent.systemPrompt ?? '',
           skillIds: agent.skillIds ?? [],
           allowedTools: agent.allowedTools ?? [],
-          disallowedTools: agent.disallowedTools ?? []
+          disallowedTools: agent.disallowedTools ?? [],
+          pinnedFiles: agent.pinnedFiles ?? [],
+          gitDiffAutoAttach: agent.gitDiffAutoAttach ?? false
         }
       : emptyAgentForm()
   );
@@ -279,6 +285,53 @@ export function AgentModal({
               onChange={(ids) => setForm({ ...form, skillIds: ids })}
             />
           </Field>
+
+          {/* Auto-injected working context (Phase 1) */}
+          <div className="border-t border-zinc-800 pt-4 space-y-3">
+            <div>
+              <div className="text-sm font-semibold text-zinc-200">작업 컨텍스트 자동 주입</div>
+              <p className="text-[11px] text-zinc-500 mt-0.5">
+                매 세션 첫 턴 또는 매 메시지에 자동으로 파일 내용 / git diff 를 프롬프트에 포함시킵니다.
+              </p>
+            </div>
+
+            <Field
+              label="고정 파일 (Pinned Files)"
+              help="working dir 기준 상대경로 — 한 줄에 하나씩. 첫 턴에 파일 내용이 자동 첨부되고 --resume 으로 캐시됩니다. (파일당 64KB, 총 256KB 한도)"
+            >
+              <textarea
+                value={form.pinnedFiles.join('\n')}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    pinnedFiles: e.target.value
+                      .split('\n')
+                      .map((s) => s.trim())
+                      .filter(Boolean)
+                  })
+                }
+                rows={4}
+                placeholder="src/components/App.tsx&#10;server/routes/settings.js"
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
+                style={{ fontSize: '13px' }}
+              />
+            </Field>
+
+            <label className="flex items-start gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={form.gitDiffAutoAttach}
+                onChange={(e) => setForm({ ...form, gitDiffAutoAttach: e.target.checked })}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-sm text-zinc-200">Git diff 자동 첨부</span>
+                <span className="block text-[11px] text-zinc-500">
+                  매 메시지 전송 시 현재 워킹 디렉토리의 <code>git diff</code> 를 프롬프트 앞에 붙입니다 (unstaged + staged, 32KB 한도).
+                </span>
+              </span>
+            </label>
+          </div>
 
           {/* Tool permissions section */}
           <div className="border-t border-zinc-800 pt-4 space-y-3">

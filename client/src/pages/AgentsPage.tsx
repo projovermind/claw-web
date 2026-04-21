@@ -37,6 +37,8 @@ export default function AgentsPage() {
       if (form.skillIds.length > 0) patch.skillIds = form.skillIds;
       if (form.backend && form.backend !== 'claude') patch.backendId = form.backend;
       if (form.backendId) patch.backendId = form.backendId;
+      if (form.pinnedFiles.length > 0) patch.pinnedFiles = form.pinnedFiles;
+      if (form.gitDiffAutoAttach) patch.gitDiffAutoAttach = true;
       if (Object.keys(patch).length > 0) {
         await api.patchAgent(form.id, patch);
       }
@@ -66,7 +68,9 @@ export default function AgentsPage() {
           systemPrompt: form.systemPrompt,
           skillIds: form.skillIds,
           allowedTools: form.allowedTools,
-          disallowedTools: form.disallowedTools
+          disallowedTools: form.disallowedTools,
+          pinnedFiles: form.pinnedFiles,
+          gitDiffAutoAttach: form.gitDiffAutoAttach
         },
         { ifMatchUpdatedAt }
       ),

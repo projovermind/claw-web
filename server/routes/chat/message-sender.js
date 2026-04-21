@@ -3,6 +3,7 @@ import { buildCarlContext } from '../../lib/carl-injector.js';
 import { buildSkillContext } from '../../lib/skill-injector.js';
 import { buildBaseContext } from '../../lib/base-reader.js';
 import { buildPaulContext } from '../../lib/paul-reader.js';
+import { buildPinnedFilesContext, buildGitDiffContext } from '../../lib/working-context-injector.js';
 import { findClaudeSessionFile } from '../../runners/claude-cli-runner.js';
 import { classifyError, resolveAgent, buildConversationSummary } from './utils.js';
 
@@ -106,6 +107,12 @@ export function createMessageSender(ctx) {
       const paulCtx = buildPaulContext(agent.workingDir);
       if (paulCtx) agent.paulContext = paulCtx;
 
+      // Phase 1: pinned files (first-turn only → cached via --resume)
+      if (Array.isArray(agent.pinnedFiles) && agent.pinnedFiles.length > 0) {
+        const pinnedCtx = buildPinnedFilesContext(agent.pinnedFiles, agent.workingDir);
+        if (pinnedCtx) agent.pinnedFilesContext = pinnedCtx;
+      }
+
       // 대시보드 API 안내: 프로젝트 소속 에이전트에게 대시보드 조작 방법 주입
       if (!isWorkerSession && meta?.projectId) {
         const isLead = meta.tier === 'project';
@@ -149,8 +156,17 @@ export function createMessageSender(ctx) {
       agent.dashboardHint = null;
       agent.choicesHint = null;
       agent.delegateHint = null;
+      agent.pinnedFilesContext = null;
       // agent.systemPrompt 도 제거 — 첫 턴에 이미 세션에 구워짐
       agent.systemPrompt = null;
+    }
+
+    // Phase 1: git diff auto-attach — per-turn prepend (not cached; dynamic by design)
+    if (agent.gitDiffAutoAttach) {
+      const diffCtx = buildGitDiffContext(agent.workingDir);
+      if (diffCtx) {
+        message = `${diffCtx}\n\n${message}`;
+      }
     }
 
     // ── 강제 fresh-start 감지 → 대화 요약 주입 ──

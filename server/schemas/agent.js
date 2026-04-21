@@ -18,13 +18,17 @@ export const agentPatchSchema = z.object({
   planMode: z.boolean().optional(),
   backendId: z.string().max(64).nullable().optional(),
   accountId: z.string().max(64).nullable().optional(), // deprecated: use backendId
-  thinkingEffort: z.enum(['auto', 'low', 'medium', 'high', 'max']).optional()
+  thinkingEffort: z.enum(['auto', 'low', 'medium', 'high', 'max']).optional(),
+  // Phase 1: auto-injected working context
+  pinnedFiles: z.array(z.string().max(500)).max(20).optional(),
+  gitDiffAutoAttach: z.boolean().optional()
 }).strict();
 
 // Which fields live in config.json (bot territory) vs web-metadata.json
 export const CONFIG_FIELDS = new Set([
   'name', 'avatar', 'systemPrompt', 'model', 'workingDir',
-  'allowedTools', 'disallowedTools', 'planMode', 'backendId', 'thinkingEffort'
+  'allowedTools', 'disallowedTools', 'planMode', 'backendId', 'thinkingEffort',
+  'pinnedFiles', 'gitDiffAutoAttach'
 ]);
 export const METADATA_FIELDS = new Set([
   'projectId',

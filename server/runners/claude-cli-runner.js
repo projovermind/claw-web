@@ -204,6 +204,7 @@ export function startClaudeRun({
   if (agent.carlContext) parts.push(agent.carlContext);
   if (agent.paulContext) parts.push(agent.paulContext);
   if (agent.projectMemory) parts.push(`\n<project-memory>\n${agent.projectMemory}\n</project-memory>`);
+  if (agent.pinnedFilesContext) parts.push(agent.pinnedFilesContext);
   if (agent.dashboardHint) parts.push(agent.dashboardHint);
   if (agent.choicesHint) parts.push(agent.choicesHint);
   if (agent.delegateHint) parts.push(agent.delegateHint);

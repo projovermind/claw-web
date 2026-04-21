@@ -91,6 +91,7 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
       if (agent.carlContext) parts.push(agent.carlContext);
       if (agent.paulContext) parts.push(agent.paulContext);
       if (agent.projectMemory) parts.push(`\n<project-memory>\n${agent.projectMemory}\n</project-memory>`);
+      if (agent.pinnedFilesContext) parts.push(agent.pinnedFilesContext);
       if (agent.choicesHint) parts.push(agent.choicesHint);
       if (agent.delegateHint) parts.push(agent.delegateHint);
       if (agent.systemPrompt) parts.push(agent.systemPrompt);

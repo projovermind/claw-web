@@ -19,6 +19,9 @@ export interface Agent {
   favorite?: boolean;
   skillIds?: string[];
   lightweightMode?: boolean;
+  // Phase 1: auto-injected working context
+  pinnedFiles?: string[];
+  gitDiffAutoAttach?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
