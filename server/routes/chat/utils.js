@@ -22,6 +22,11 @@ export function classifyError(errMsg = '') {
   if (msg.includes('context') && (msg.includes('long') || msg.includes('length') || msg.includes('exceed'))) {
     return { canRetry: true, delay: 1000, label: 'context_length' };
   }
+  // Runner 가 system.init 에서 --resume 드롭을 감지해 abort 한 경우.
+  // 재시도는 반드시 claudeSessionId=null 로 해야 동일 조건 반복 루프를 피함.
+  if (msg.includes('silent_fallback')) {
+    return { canRetry: true, delay: 300, label: 'silent_fallback' };
+  }
   // Claude CLI 가 stderr 없이 exit != 0 로 종료 (runner.js 가 생성한 'claude CLI exited N'
   // 또는 'exit N' fallback 메시지). 주로 --resume 세션 손상/모델 일시 장애.
   // → 1회만 재시도 허용 (message-sender 에서 counter 로 cap). claudeSessionId 는 자동 클리어됨.
@@ -29,6 +34,41 @@ export function classifyError(errMsg = '') {
     return { canRetry: true, delay: 1500, label: 'cli_exit' };
   }
   return { canRetry: false, delay: 0, label: 'unrecoverable' };
+}
+
+/**
+ * Build a conversation summary for fresh-start retries when --resume is dropped.
+ * Older messages are compressed (first 200 chars); the last `recent` messages kept in full.
+ * Output is prefixed onto the next user message so the model has context without --resume.
+ */
+export function buildConversationSummary(messages = [], { recent = 6 } = {}) {
+  if (!Array.isArray(messages) || messages.length === 0) return '';
+  const older = messages.slice(0, -recent);
+  const tail = messages.slice(-recent);
+  const lines = [];
+  lines.push('[이전 대화 컨텍스트 — 세션이 새로 시작되어 요약으로 전달됨]');
+  lines.push('');
+  if (older.length > 0) {
+    lines.push(`## 이전 대화 (${older.length}개 메시지, 압축됨)`);
+    for (const m of older) {
+      const role = m.role === 'user' ? '👤' : '🤖';
+      const content = (m.content ?? '').replace(/\n/g, ' ').slice(0, 200);
+      const ellipsis = (m.content ?? '').length > 200 ? '...' : '';
+      lines.push(`- ${role} ${content}${ellipsis}`);
+    }
+    lines.push('');
+  }
+  if (tail.length > 0) {
+    lines.push(`## 최근 대화 (${tail.length}개 메시지, 전문)`);
+    lines.push('');
+    for (const m of tail) {
+      const role = m.role === 'user' ? '👤 User' : '🤖 Assistant';
+      lines.push(`### ${role}`);
+      lines.push(m.content ?? '');
+      lines.push('');
+    }
+  }
+  return lines.join('\n');
 }
 
 export function resolveSkills(ids, skillsStore, systemSkillsStore) {

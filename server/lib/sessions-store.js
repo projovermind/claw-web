@@ -57,6 +57,7 @@ export async function createSessionsStore(filePath) {
         createdAt: now,
         updatedAt: now,
         claudeSessionId: null,
+        personaBakedInto: null,  // 어떤 CLI 세션 ID 에 persona(system prompt) 가 구워졌는지 추적
         messages: [],
         ...(extra ?? {})
       };

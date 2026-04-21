@@ -22,29 +22,49 @@ function findClaudeBin() {
 }
 const CLAUDE_BIN = findClaudeBin();
 
-// Claude CLI 세션 파일 위치 — ~/.claude/projects/-cwd-encoded/SESSION_ID.jsonl
+// Claude CLI 세션 파일 위치 — <configDir>/projects/-cwd-encoded/SESSION_ID.jsonl
 // resume 대상 세션이 존재하는지 pre-check 해 crash/idle timeout 을 막는다.
-function findClaudeSessionFile(workingDir, sessionId) {
+// 멀티계정(claude-claw) 대응:
+//   - configDir 이 명시되면 해당 경로의 projects/ 만 탐색 (정확).
+//   - configDir 미지정 시 기본 ~/.claude/ + ~/.claude-claw/*/ 모두 스캔 (pre-check 용 하위 호환).
+export function findClaudeSessionFile(workingDir, sessionId, configDir = null) {
   if (!sessionId) return null;
-  const projectsRoot = path.join(process.env.HOME || '', '.claude', 'projects');
-  if (!fs.existsSync(projectsRoot)) return null;
 
-  // 1) cwd 기반 정확 경로 (/ → - 치환)
-  if (workingDir) {
-    const encoded = workingDir.replace(/\//g, '-');
-    // 앞에 `-` 없으면 붙이고, 끝의 `-` 제거
-    const dirName = (encoded.startsWith('-') ? encoded : '-' + encoded).replace(/-+$/, '');
-    const exact = path.join(projectsRoot, dirName, `${sessionId}.jsonl`);
-    if (fs.existsSync(exact)) return exact;
+  const roots = [];
+  if (configDir) {
+    roots.push(path.join(configDir, 'projects'));
+  } else {
+    roots.push(path.join(process.env.HOME || '', '.claude', 'projects'));
+    const clawBase = path.join(process.env.HOME || '', '.claude-claw');
+    if (fs.existsSync(clawBase)) {
+      try {
+        for (const accountDir of fs.readdirSync(clawBase)) {
+          const projectsDir = path.join(clawBase, accountDir, 'projects');
+          if (fs.existsSync(projectsDir)) roots.push(projectsDir);
+        }
+      } catch { /* ignore */ }
+    }
   }
 
-  // 2) fallback: 모든 projects/ 하위에서 ID 매치
-  try {
-    for (const projDir of fs.readdirSync(projectsRoot)) {
-      const candidate = path.join(projectsRoot, projDir, `${sessionId}.jsonl`);
-      if (fs.existsSync(candidate)) return candidate;
+  for (const projectsRoot of roots) {
+    if (!fs.existsSync(projectsRoot)) continue;
+
+    // 1) cwd 기반 정확 경로 (/ → - 치환)
+    if (workingDir) {
+      const encoded = workingDir.replace(/\//g, '-');
+      const dirName = (encoded.startsWith('-') ? encoded : '-' + encoded).replace(/-+$/, '');
+      const exact = path.join(projectsRoot, dirName, `${sessionId}.jsonl`);
+      if (fs.existsSync(exact)) return exact;
     }
-  } catch { /* ignore */ }
+
+    // 2) fallback: 모든 projects/ 하위에서 ID 매치
+    try {
+      for (const projDir of fs.readdirSync(projectsRoot)) {
+        const candidate = path.join(projectsRoot, projDir, `${sessionId}.jsonl`);
+        if (fs.existsSync(candidate)) return candidate;
+      }
+    } catch { /* ignore */ }
+  }
 
   return null;
 }
@@ -139,7 +159,7 @@ export function startClaudeRun({
   let effectiveResumeId = claudeSessionId || null;
   let resumeSessionFile = null;
   if (effectiveResumeId) {
-    resumeSessionFile = findClaudeSessionFile(agent.workingDir, effectiveResumeId);
+    resumeSessionFile = findClaudeSessionFile(agent.workingDir, effectiveResumeId, cleanEnv.CLAUDE_CONFIG_DIR || null);
     if (!resumeSessionFile) {
       logger.warn(
         { agent: agent.id, sessionId: effectiveResumeId, cwd: agent.workingDir },
@@ -165,13 +185,19 @@ export function startClaudeRun({
   args.push('--model', model);
 
   // 스킬을 시스템 프롬프트로 주입
+  // skill-injector 가 trigger 미매치 스킬은 content='' 로 비워 둠.
+  // -p 모드에서는 모델이 skill content 를 별도로 fetch 할 수단이 없으므로
+  // content 가 비면 헤더만 찍어도 순수 토큰 낭비 → 본문 있는 스킬만 주입.
   const parts = [];
   if (Array.isArray(agent.skills) && agent.skills.length > 0) {
-    parts.push('[첨부된 스킬]');
-    for (const sk of agent.skills) {
-      parts.push(`\n## ${sk.name}${sk.description ? ` — ${sk.description}` : ''}\n\n${sk.content}`);
+    const liveSkills = agent.skills.filter(sk => sk?.content && sk.content.trim());
+    if (liveSkills.length > 0) {
+      parts.push('[첨부된 스킬]');
+      for (const sk of liveSkills) {
+        parts.push(`\n## ${sk.name}${sk.description ? ` — ${sk.description}` : ''}\n\n${sk.content}`);
+      }
+      parts.push('\n---\n');
     }
-    parts.push('\n---\n');
   }
   // 프레임워크 자동 주입 순서: BASE → CARL → PAUL → ProjectMemory → Dashboard
   if (agent.baseContext) parts.push(agent.baseContext);
@@ -288,6 +314,7 @@ export function startClaudeRun({
 
   let pendingToolUse = false;  // 마지막으로 본 이벤트가 tool_use인데 아직 결과 못 받음
   let postToolThinkingTimer = null; // tool_result 직후 pendingToolUse 를 잠시 더 유지시키는 타이머
+  let silentFallbackDetected = false; // system.init 에서 --resume 드롭 감지 → 즉시 abort
   let idleTimer = setTimeout(() => {
     if (!gotAnyOutput) {
       logger.warn({ agent: agent.id, cwd }, 'runner: claude CLI idle timeout (no output) — killing');
@@ -313,6 +340,24 @@ export function startClaudeRun({
   }
 
   function handleEvent(event) {
+    // ── Silent-fallback 조기 감지 ──
+    // Claude CLI 는 세션 시작 직후 system.init 이벤트로 실제 사용된 session_id 를 흘려보냄.
+    // 요청한 resume ID 와 다르면 --resume 이 조용히 드롭된 것. 이대로 진행하면
+    // 시스템 프롬프트도 없고 이전 대화도 없는 쌩 모델이 유저 메시지에 엉뚱한 답을 함.
+    // → 토큰 소비 전에 즉시 abort 해서 message-sender onError 로 fresh-start 재시도 트리거.
+    if (event.type === 'system' && event.subtype === 'init') {
+      const actualId = event.session_id;
+      if (effectiveResumeId && actualId && actualId !== effectiveResumeId) {
+        silentFallbackDetected = true;
+        logger.warn(
+          { agent: agent.id, requested: effectiveResumeId, actual: actualId },
+          'runner: --resume dropped at init (silent fallback) — aborting for fresh-start retry'
+        );
+        try { proc.kill('SIGTERM'); } catch { /* ignore */ }
+        setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 1500);
+        return;
+      }
+    }
     if (event.type === 'tool_use') {
       pendingToolUse = true;
       onToolUse?.({ name: event.name || event.tool_name || 'unknown', input: event.input || {} });
@@ -393,8 +438,13 @@ export function startClaudeRun({
 
   proc.on('close', (code) => {
     clearTimeout(idleTimer);
-    // Resume 완전성 검증: 요청한 세션 ID 와 실제 사용된 세션 ID 가 다르면
-    // Claude CLI 가 새 세션으로 silent fallback 한 것 — 대화 컨텍스트 유실.
+    // init 단계에서 silent-fallback 을 감지해 abort 한 경우: 응답 없음 → fresh-start 재시도 에러로 즉시 종료.
+    if (silentFallbackDetected) {
+      onError?.(new Error('silent_fallback: --resume dropped by CLI, fresh-start retry required'));
+      onExit?.({ code });
+      return;
+    }
+    // 그 외 close 시점 검증 (init 을 못 받고 끝난 경우 등의 방어): 요청 ID 와 실제 ID 가 다르면 로그만 남김.
     if (effectiveResumeId && resultSessionId && resultSessionId !== effectiveResumeId) {
       logger.warn(
         { agent: agent.id, requested: effectiveResumeId, actual: resultSessionId },

@@ -146,8 +146,10 @@ export function createChatRouter({
 
   /**
    * Resume interrupted session on server restart.
-   * (1) If claudeSessionId exists → --resume loads it.
-   * (2) Otherwise → prepend prior conversation as text context.
+   * (1) If claudeSessionId + resume file exists → --resume loads it (컨텍스트 그대로).
+   * (2) 없으면 sendRunnerMessage 내부 isFirstMsg 경로가 자동으로
+   *     buildConversationSummary 를 프리픽스로 붙여 맥락을 재주입.
+   *     → 여기서 수동으로 컨텍스트 블록을 덧붙이면 이중 주입이 됨.
    */
   async function resumeInterruptedSession(sessionId) {
     const session = sessionsStore.get(sessionId);
@@ -160,14 +162,9 @@ export function createChatRouter({
     if (!lastUser?.content) return false;
 
     const hasClaudeId = !!(session.claudeSessionId || session.claude_session_id);
-    const priorMsgs = msgs.slice(0, absoluteIdx).filter((m) =>
-      (m?.role === 'user' || m?.role === 'assistant') &&
-      typeof m?.content === 'string' &&
-      !m.content.startsWith('▶') && !m.content.startsWith('⚠️')
-    );
 
     logger.info(
-      { sessionId, hasClaudeId, priorCount: priorMsgs.length },
+      { sessionId, hasClaudeId, priorCount: absoluteIdx },
       'resuming interrupted session'
     );
 
@@ -178,21 +175,8 @@ export function createChatRouter({
         : '▶ **재시작 후 작업 이어가기** — 이전 세션 ID 가 없어 대화 컨텍스트를 재주입합니다.'
     }).catch(() => {});
 
-    let content = lastUser.content;
-    if (!hasClaudeId && priorMsgs.length > 0) {
-      const TAIL = 12;
-      const slice = priorMsgs.slice(-TAIL);
-      const contextBlock = slice
-        .map((m) => {
-          const who = m.role === 'user' ? '사용자' : '어시스턴트';
-          const text = String(m.content).slice(0, 1500);
-          return `[${who}]\n${text}`;
-        })
-        .join('\n\n');
-      content = `<이전-대화-컨텍스트>\n${contextBlock}\n</이전-대화-컨텍스트>\n\n위 대화에 이어서 다음 메시지에 답하세요:\n\n${lastUser.content}`;
-    }
-
-    sendRunnerMessage(sessionId, content);
+    // fresh-start (resume 파일 부재) 시 컨텍스트 주입은 sendRunnerMessage 에 위임.
+    sendRunnerMessage(sessionId, lastUser.content);
     return true;
   }
 
