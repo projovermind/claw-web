@@ -98,14 +98,38 @@ export function AgentModal({
         }
       : emptyAgentForm()
   );
-  // form.model이 전체 ID('claude-sonnet-4-6')로 저장된 경우 → alias('sonnet')로 정규화
+  // form.model 정규화 + form.backend 자동 매칭
+  // ① 현재 backend 에 form.model(alias 또는 ID) 가 있으면 alias 로 정규화
+  // ② 없으면 전체 백엔드 스캔해서 해당 alias/ID 를 가진 첫 백엔드로 form.backend 재설정
+  //    (agent.backendId 가 비어있어 'claude' 로 폴백된 경우, 실제 alias 를 가진 백엔드로 교정)
   useEffect(() => {
-    if (!backendsState) return;
-    const b = backendsState.backends?.[form.backend];
-    if (!b || !b.models) return;
-    const alias = Object.entries(b.models).find(([, v]) => v === form.model)?.[0];
-    if (alias && alias !== form.model) setForm((f) => ({ ...f, model: alias }));
-  }, [backendsState, form.backend]);
+    if (!backendsState?.backends) return;
+    const currentB = backendsState.backends[form.backend];
+    const inCurrent =
+      currentB?.models &&
+      (currentB.models[form.model] ||
+        Object.values(currentB.models).includes(form.model));
+    if (inCurrent) {
+      // 전체 ID 로 저장돼 있다면 alias 로 되돌림
+      if (currentB?.models?.[form.model]) return;
+      const alias = Object.entries(currentB!.models!).find(([, v]) => v === form.model)?.[0];
+      if (alias && alias !== form.model) setForm((f) => ({ ...f, model: alias }));
+      return;
+    }
+    // 현재 backend 에 없음 → 다른 백엔드 스캔
+    for (const [bid, b] of Object.entries(backendsState.backends)) {
+      if (!b?.models) continue;
+      if (b.models[form.model]) {
+        setForm((f) => ({ ...f, backend: bid }));
+        return;
+      }
+      const alias = Object.entries(b.models).find(([, v]) => v === form.model)?.[0];
+      if (alias) {
+        setForm((f) => ({ ...f, backend: bid, model: alias }));
+        return;
+      }
+    }
+  }, [backendsState, form.backend, form.model]);
 
   // Models available for the currently selected backend
   // claude-cli 포함 모든 백엔드: models 딕셔너리 사용, 없으면 기본 3종 제공
