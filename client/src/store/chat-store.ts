@@ -325,6 +325,14 @@ export const useChatStore = create<ChatState>()(
           const nextUnread = { ...s.unread };
           if (sessionId) delete nextUnread[sessionId];
           if (touchedActivePane) {
+            // 페인을 '비우는' 경우(agentId=null & sessionId=null) 에는 사이드바의
+            // 현재 에이전트/세션 컨텍스트를 그대로 둔다. 그렇지 않으면 ChatPage 의
+            // useEffect 가 currentAgentId=null 을 감지해 agentsQ.data[0] 으로
+            // 되돌려버려 사이드바가 "메인 에이전트 세션 리스트" 로 점프함.
+            const isClearing = agentId === null && sessionId === null;
+            if (isClearing) {
+              return { workspaces, unread: nextUnread };
+            }
             return { workspaces, currentAgentId: agentId, currentSessionId: sessionId, unread: nextUnread };
           }
           return { workspaces, unread: nextUnread };
