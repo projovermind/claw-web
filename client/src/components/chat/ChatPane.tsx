@@ -195,9 +195,13 @@ export default function ChatPane({
     data: { kind: 'pane-drag', paneId, workspaceId, sessionId, agentId }
   });
 
+  // 단일 페인(1x) 에서는 활성 포커스 테두리가 의미 없으므로 숨긴다.
+  // 2개 이상일 때만 어떤 페인이 현재 포커스인지 시각화.
   const paneClasses = [
     'h-full min-h-0 flex flex-col relative border transition-colors',
-    isActive ? 'border-sky-600/50' : 'border-zinc-800/60 hover:border-zinc-700',
+    isCompact
+      ? (isActive ? 'border-sky-600/50' : 'border-zinc-800/60 hover:border-zinc-700')
+      : 'border-transparent',
     isOver ? 'ring-2 ring-sky-500/60 bg-sky-950/10' : '',
     isDragging ? 'opacity-50' : ''
   ].join(' ');

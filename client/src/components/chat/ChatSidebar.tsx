@@ -300,21 +300,28 @@ export function ChatSidebar({
     });
   }, []);
   const resizingRef = useRef(false);
+  // 드래그 시작 시점의 anchor — 현재 너비와 시작 pointer X 를 잠가놓고
+  // delta 를 얹는 방식. 예전처럼 e.clientX 를 그대로 너비로 쓰면 클릭 즉시
+  // 너비가 커서 위치까지 점프해서 튄다.
+  const resizeAnchorRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const onResizeStart = useCallback((e: React.PointerEvent) => {
     e.preventDefault();
     resizingRef.current = true;
+    resizeAnchorRef.current = { startX: e.clientX, startWidth: sidebarWidth };
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-  }, []);
+  }, [sidebarWidth]);
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
-      if (!resizingRef.current) return;
-      const next = Math.max(200, Math.min(500, e.clientX));
+      if (!resizingRef.current || !resizeAnchorRef.current) return;
+      const { startX, startWidth } = resizeAnchorRef.current;
+      const next = Math.max(200, Math.min(500, startWidth + (e.clientX - startX)));
       setSidebarWidth(next);
     };
     const onUp = () => {
       if (!resizingRef.current) return;
       resizingRef.current = false;
+      resizeAnchorRef.current = null;
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
       try { localStorage.setItem('chatSidebarWidth', String(sidebarWidth)); } catch { /* noop */ }

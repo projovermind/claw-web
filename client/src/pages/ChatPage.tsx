@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   DndContext, DragEndEvent, PointerSensor, useSensor, useSensors
 } from '@dnd-kit/core';
-import { Plus, Pin, ChevronDown } from 'lucide-react';
+import { Plus, Pin, ChevronDown, ListTodo, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { api } from '../lib/api';
 import type { Session, ChatMessage, Agent, Project } from '../lib/types';
 import { isSessionRunning } from '../lib/visibility';
@@ -160,6 +160,19 @@ export default function ChatPage() {
 
   const running = runtime?.running ?? false;
   const todos = runtime?.todos ?? [];
+
+  // 오른쪽 진행 사이드바 토글 (localStorage 영속)
+  const [todoCollapsed, setTodoCollapsed] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem('chatTodoCollapsed') === '1';
+  });
+  const toggleTodoCollapsed = () => {
+    setTodoCollapsed((v) => {
+      const next = !v;
+      try { localStorage.setItem('chatTodoCollapsed', next ? '1' : '0'); } catch { /* noop */ }
+      return next;
+    });
+  };
 
   // Current agent/project context
   const currentAgent = (agentsQ.data ?? []).find((a) => a.id === currentAgentId);
@@ -381,11 +394,45 @@ export default function ChatPage() {
         </DndContext>
       </div>
 
-      {/* Todo sidebar (desktop only) */}
+      {/* Todo sidebar (desktop only) — 접혀있을 때는 얇은 레일만 표시해서 토글 가능 */}
       {todos.length > 0 && (
-        <aside className="hidden lg:block w-72 shrink-0 border-l border-zinc-800 bg-zinc-950/60 p-4 overflow-y-auto">
-          <TodoWidget todos={todos} />
-        </aside>
+        todoCollapsed ? (
+          <aside className="hidden lg:flex w-8 shrink-0 border-l border-zinc-800 bg-zinc-950/60 flex-col items-center py-3 gap-2">
+            <button
+              type="button"
+              onClick={toggleTodoCollapsed}
+              className="p-1.5 rounded hover:bg-zinc-800/80 text-zinc-400 hover:text-zinc-200"
+              title="진행 패널 펼치기"
+            >
+              <PanelRightOpen className="w-4 h-4" />
+            </button>
+            <div className="flex flex-col items-center gap-1 text-zinc-500">
+              <ListTodo className="w-4 h-4" />
+              <span className="text-[10px] tabular-nums">
+                {todos.filter((x) => x.status === 'completed').length}/{todos.length}
+              </span>
+            </div>
+          </aside>
+        ) : (
+          <aside className="hidden lg:flex w-72 shrink-0 border-l border-zinc-800 bg-zinc-950/60 flex-col">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800/60">
+              <span className="text-xs font-medium text-zinc-400 flex items-center gap-1.5">
+                <ListTodo className="w-3.5 h-3.5" /> 진행
+              </span>
+              <button
+                type="button"
+                onClick={toggleTodoCollapsed}
+                className="p-1 rounded hover:bg-zinc-800/80 text-zinc-500 hover:text-zinc-300"
+                title="진행 패널 숨기기"
+              >
+                <PanelRightClose className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <TodoWidget todos={todos} />
+            </div>
+          </aside>
+        )
       )}
     </div>
   );
