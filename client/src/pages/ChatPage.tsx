@@ -2,7 +2,8 @@ import { useEffect, useState, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  DndContext, DragEndEvent, PointerSensor, useSensor, useSensors
+  DndContext, DragEndEvent, DragStartEvent, DragOverlay,
+  PointerSensor, useSensor, useSensors
 } from '@dnd-kit/core';
 import { Plus, Pin, ChevronDown, ListTodo, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { api } from '../lib/api';
@@ -68,11 +69,21 @@ export default function ChatPage() {
   // 상태일 수 있으므로, 사이드바 컨텍스트를 "메인(=agents[0]) 에이전트"로 되돌리지
   // 않음. 그렇지 않으면 "레이아웃 빈공간을 선택 시 사이드바가 메인 에이전트 세션
   // 리스트로 점프" 하는 버그가 재발함.
+  //
+  // 또한 persist 된 어떤 pane 이라도 이미 agent/session 을 갖고 있다면 자동
+  // 선택을 스킵한다. setCurrentAgent 는 active pane 의 agentId 를 덮어쓰므로,
+  // 새로고침 직후 활성 pane 이 "빈 pane" 이라는 이유로 fallback 이 실행되면
+  // 유저가 지정해둔 레이아웃(어떤 pane 에 어떤 세션) 이 부분적으로 망가져
+  // "새로고침하면 레이아웃이 초기화됨" 으로 체감됨.
   const didInitAgentRef = useRef(false);
   useEffect(() => {
     if (didInitAgentRef.current) return;
     if (!agentsQ.data || agentsQ.data.length === 0) return;
-    if (!currentAgentId) {
+    const state = useChatStore.getState();
+    const hasAssignedPane = state.workspaces.some((w) =>
+      w.panes.some((p) => p.agentId || p.sessionId)
+    );
+    if (!currentAgentId && !hasAssignedPane) {
       setCurrentAgent(agentsQ.data[0].id);
     }
     didInitAgentRef.current = true;
@@ -234,7 +245,24 @@ export default function ChatPage() {
   // DnD sensors — 5px movement threshold so clicks still work
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
+  /** 드래그 중인 아이템 메타 — DragOverlay 프리뷰 렌더용 */
+  interface DragItem {
+    kind: 'session' | 'pane-drag';
+    sessionId?: string;
+    agentId?: string;
+    paneId?: string;
+  }
+  const [activeDrag, setActiveDrag] = useState<DragItem | null>(null);
+
+  const handleDragStart = (e: DragStartEvent) => {
+    const data = e.active.data.current as DragItem | undefined;
+    if (data && (data.kind === 'session' || data.kind === 'pane-drag')) {
+      setActiveDrag(data);
+    }
+  };
+
   const handleDragEnd = (e: DragEndEvent) => {
+    setActiveDrag(null);
     const { active, over } = e;
     if (!over) return;
     const activeData = active.data.current as
@@ -260,6 +288,39 @@ export default function ChatPage() {
       setActivePane(overData.paneId);
     }
   };
+
+  /** DragOverlay 에 표시할 프리뷰 빌드
+   *  - `whitespace-nowrap` 은 한글이 세로로 쌓이는 걸 막는다(포털 렌더라 부모
+   *    narrow 컨텍스트 상속 가능성 존재).
+   *  - `w-max` 로 내용에 딱 맞게 확장되게 하고 `max-w` 로만 상한 지정. */
+  const dragPreview = useMemo(() => {
+    if (!activeDrag) return null;
+    if (activeDrag.kind === 'session') {
+      const allSessions = projectSelectAllSessionsQ.data?.sessions ?? [];
+      const s = allSessions.find((x) => x.id === activeDrag.sessionId);
+      const agent = (agentsQ.data ?? []).find((a) => a.id === activeDrag.agentId);
+      const title = s?.title || '세션';
+      const agentName = agent?.name || agent?.id || '';
+      return (
+        <div className="pointer-events-none inline-flex items-center gap-2 rounded-lg border border-sky-500/70 bg-zinc-900/95 backdrop-blur px-3.5 py-2 text-sm text-zinc-100 shadow-2xl shadow-black/60 ring-1 ring-sky-400/40 w-max max-w-[360px] whitespace-nowrap">
+          <span className="text-sky-300 shrink-0">{agent?.avatar ?? '💬'}</span>
+          <span className="font-medium truncate">{title}</span>
+          {agentName && (
+            <span className="text-zinc-500 text-[11px] shrink-0 border-l border-zinc-700 pl-2">
+              {agentName}
+            </span>
+          )}
+        </div>
+      );
+    }
+    // pane-drag
+    return (
+      <div className="pointer-events-none inline-flex items-center gap-2 rounded-lg border border-sky-500/70 bg-zinc-900/95 backdrop-blur px-3.5 py-2 text-sm text-zinc-100 shadow-2xl shadow-black/60 ring-1 ring-sky-400/40 w-max whitespace-nowrap">
+          <span className="text-sky-300 shrink-0">⇄</span>
+          <span className="font-medium">패널 이동 중</span>
+      </div>
+    );
+  }, [activeDrag, projectSelectAllSessionsQ.data, agentsQ.data]);
 
   /** pane count 에 따른 폰트 스케일 */
   const paneScale = (() => {
@@ -307,7 +368,12 @@ export default function ChatPage() {
           canCreate={!!currentAgentId}
         />
 
-        <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+        <DndContext
+          sensors={sensors}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragCancel={() => setActiveDrag(null)}
+        >
           <SplitToolbar />
 
           {/* Workspace grid */}
@@ -401,6 +467,12 @@ export default function ChatPage() {
               }
             }}
           />
+
+          {/* 드래그 프리뷰 — DragOverlay 는 포털로 body 에 렌더되므로
+              어느 pane / sidebar 위에서도 커서를 깔끔하게 따라다님. */}
+          <DragOverlay dropAnimation={{ duration: 150 }}>
+            {dragPreview}
+          </DragOverlay>
         </DndContext>
       </div>
 

@@ -40,12 +40,36 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
     if (!sessionId) { setValue(''); return; }
     const saved = localStorage.getItem(`draft:${sessionId}`);
     setValue(saved ?? '');
-    // textarea 높이 재조정
-    setTimeout(() => {
-      const ta = textareaRef.current;
-      if (ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; }
-    }, 0);
   }, [sessionId]);
+
+  // 세션이 "실제로 사용 가능해진 시점"에 자동 포커스.
+  // - sessionId 가 바뀔 때뿐 아니라 disabled → enabled 전환 시에도 트리거.
+  // - textarea 의 disabled 상태를 DOM 레벨에서 확인하고, 아직 disabled 면
+  //   rAF 로 한번 더 시도(상태 반영 타이밍 어긋남 방지).
+  // - 모바일에서는 프로그래매틱 focus 로 키보드가 올라오지 않을 수 있지만
+  //   최소한 커서 위치는 잡아둬서, 사용자가 탭 한 번으로 바로 입력 가능.
+  useEffect(() => {
+    if (!sessionId || disabled) return;
+    let cancelled = false;
+    let tries = 0;
+    const tryFocus = () => {
+      if (cancelled) return;
+      const ta = textareaRef.current;
+      if (!ta) return;
+      // 비활성 textarea 는 focus 불가 — 다음 프레임에 재시도
+      if (ta.disabled) {
+        if (tries++ < 5) requestAnimationFrame(tryFocus);
+        return;
+      }
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+      try { ta.focus({ preventScroll: true }); } catch { ta.focus(); }
+      const len = ta.value.length;
+      try { ta.setSelectionRange(len, len); } catch { /* noop */ }
+    };
+    const raf = requestAnimationFrame(tryFocus);
+    return () => { cancelled = true; cancelAnimationFrame(raf); };
+  }, [sessionId, disabled]);
 
   // 드래프트 저장: 타이핑 500ms 후 localStorage에 저장
   useEffect(() => {

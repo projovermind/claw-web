@@ -364,9 +364,11 @@ export default function ChatPane({
           )}
 
           {/* Messages */}
-          <div className="flex-1 min-h-0 relative">
-            <div ref={chatScrollRef} className={`absolute inset-0 overflow-y-auto ${isCompact ? 'px-2 pb-6' : 'px-3 lg:px-6 pb-8'}`}>
-              <div className="min-h-full flex flex-col justify-end">
+          <div className="flex-1 min-h-0 relative overflow-hidden">
+            {/* overflow-x-hidden + min-w-0: 긴 URL/코드/테이블이 모바일에서 가로 스크롤을
+                만들지 않도록 강제. 개별 pre/table 블록은 자체 overflow-x-auto 로 스크롤됨. */}
+            <div ref={chatScrollRef} className={`absolute inset-0 overflow-y-auto overflow-x-hidden ${isCompact ? 'px-2 pb-6' : 'px-3 lg:px-6 pb-8'}`}>
+              <div className="min-h-full min-w-0 flex flex-col justify-end">
                 {currentSession && (
                   <MessageList
                     key={currentSession.id}

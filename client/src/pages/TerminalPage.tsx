@@ -96,11 +96,15 @@ export default function TerminalPage() {
 
   return (
     <div className="flex flex-col h-full min-h-0 bg-zinc-950">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800 bg-zinc-900/40">
-        <TerminalSquare size={16} className="text-zinc-400" />
-        <div className="text-sm font-semibold text-zinc-200">터미널</div>
-        <div className="flex items-center gap-1 flex-1 overflow-x-auto ml-3">
+      {/* Header — mobile 에서는 두 줄로 랩되도록 flex-wrap,
+          "터미널" 라벨은 좁은 화면에서 숨기고,
+          에이전트 드롭다운은 화면을 절대 벗어나지 않게 max-w 제약. */}
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-zinc-800 bg-zinc-900/40">
+        <div className="flex items-center gap-2 shrink-0">
+          <TerminalSquare size={16} className="text-zinc-400" />
+          <div className="hidden sm:block text-sm font-semibold text-zinc-200">터미널</div>
+        </div>
+        <div className="flex items-center gap-1 flex-1 min-w-0 overflow-x-auto sm:ml-3 order-3 sm:order-none w-full sm:w-auto">
           {tabs.map((tab) => (
             <div
               key={tab.id}
@@ -115,7 +119,7 @@ export default function TerminalPage() {
               <span className="font-mono">{tab.title}</span>
               <button
                 onClick={(e) => { e.stopPropagation(); closeTab(tab.id); }}
-                className="p-0.5 rounded hover:bg-zinc-700 text-zinc-500 hover:text-zinc-200 opacity-0 group-hover:opacity-100"
+                className="p-0.5 rounded hover:bg-zinc-700 text-zinc-500 hover:text-zinc-200 opacity-60 sm:opacity-0 sm:group-hover:opacity-100"
                 title="탭 닫기"
               >
                 <X size={12} />
@@ -124,7 +128,7 @@ export default function TerminalPage() {
           ))}
           <button
             onClick={() => addTab(activeTab?.cwd ?? '~')}
-            className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800"
+            className="p-1 rounded text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 shrink-0"
             title="새 터미널 탭"
           >
             <Plus size={14} />
@@ -139,7 +143,7 @@ export default function TerminalPage() {
               if (val) addTab(val);
               e.target.value = '';
             }}
-            className="h-7 px-2 rounded bg-zinc-900 border border-zinc-800 text-xs text-zinc-400 hover:text-zinc-200"
+            className="h-7 px-2 rounded bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 hover:text-zinc-100 shrink-0 max-w-[55vw] sm:max-w-xs truncate ml-auto"
           >
             <option value="">에이전트 작업폴더로 열기…</option>
             {agentDirs.map((a) => (
