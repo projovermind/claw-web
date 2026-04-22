@@ -95,7 +95,11 @@ fi
 # ═══════════════════════════════════════════════════════
 # Step 2. 데이터 디렉토리 + 심볼릭 링크 + Bearer 토큰
 # ═══════════════════════════════════════════════════════
-for f in sessions.json projects.json skills.json web-metadata.json secrets.json hooks.json schedules.json; do
+# 서버는 REPO_ROOT = INSTALL_DIR 에서 데이터를 읽/쓰기 때문에
+# 모든 유저 데이터 파일/디렉토리는 USER_DATA → INSTALL_DIR 로 심링크 걸어야 한다.
+# (누락된 항목은 업그레이드 때 rm -rf 로 사라짐)
+for f in sessions.json projects.json skills.json web-metadata.json secrets.json \
+         hooks.json schedules.json accounts.json push-subscriptions.json; do
   if [ ! -f "$USER_DATA/$f" ]; then
     case "$f" in
       secrets.json) echo '{"version":1,"backends":{}}' > "$USER_DATA/$f"; chmod 600 "$USER_DATA/$f" ;;
@@ -103,9 +107,13 @@ for f in sessions.json projects.json skills.json web-metadata.json secrets.json 
       projects.json) echo '{"version":1,"projects":[]}' > "$USER_DATA/$f" ;;
       skills.json) echo '{"version":1,"skills":{}}' > "$USER_DATA/$f" ;;
       web-metadata.json) echo '{"version":1,"agents":{}}' > "$USER_DATA/$f" ;;
+      accounts.json) echo '{"version":1,"accounts":{}}' > "$USER_DATA/$f" ;;
+      push-subscriptions.json) echo '{"version":1,"subscriptions":[]}' > "$USER_DATA/$f" ;;
       *) echo '{"version":1}' > "$USER_DATA/$f" ;;
     esac
   fi
+  # 기존 payload 에 남아있을 수 있는 실 파일을 지우고 심링크로 교체
+  [ -e "$INSTALL_DIR/$f" ] && [ ! -L "$INSTALL_DIR/$f" ] && rm -f "$INSTALL_DIR/$f"
   ln -sf "$USER_DATA/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
 done
 
@@ -113,7 +121,7 @@ BEARER_TOKEN="1234"
 # agents-config.json 이 배포 payload 에 없을 수도 있으므로 기본 구조로 생성
 for f in backends.json agents-config.json; do
   if [ ! -f "$USER_DATA/$f" ]; then
-    if [ -f "$INSTALL_DIR/$f" ]; then
+    if [ -f "$INSTALL_DIR/$f" ] && [ ! -L "$INSTALL_DIR/$f" ]; then
       cp "$INSTALL_DIR/$f" "$USER_DATA/$f"
     else
       case "$f" in
@@ -122,7 +130,19 @@ for f in backends.json agents-config.json; do
       esac
     fi
   fi
+  [ -e "$INSTALL_DIR/$f" ] && [ ! -L "$INSTALL_DIR/$f" ] && rm -f "$INSTALL_DIR/$f"
   ln -sf "$USER_DATA/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
+done
+
+# 데이터 디렉토리 — 세션 본문, 업로드, 로그, 백업
+# 서버가 쓰는 경로 자체를 심링크로 돌려서 모든 write 가 USER_DATA 아래로 가게 한다.
+for d in sessions-store agents-config-backups logs uploads backups; do
+  mkdir -p "$USER_DATA/$d" 2>/dev/null || true
+  # INSTALL_DIR 에 실 디렉토리가 있으면 제거 (payload 에서 같이 왔을 수 있음)
+  if [ -d "$INSTALL_DIR/$d" ] && [ ! -L "$INSTALL_DIR/$d" ]; then
+    rm -rf "$INSTALL_DIR/$d"
+  fi
+  ln -sfn "$USER_DATA/$d" "$INSTALL_DIR/$d" 2>/dev/null || true
 done
 
 if [ ! -f "$USER_DATA/web-config.json" ]; then

@@ -60,6 +60,14 @@ rsync -a \
   --exclude='push-subscriptions.json' \
   --exclude='running-processes.json' \
   --exclude='activity.jsonl' \
+  --exclude='projects.json' \
+  --exclude='skills.json' \
+  --exclude='backends.json' \
+  --exclude='accounts.json' \
+  --exclude='agents-config.json' \
+  --exclude='web-config.json' \
+  --exclude='.migration-done' \
+  --exclude='/sessions-store' \
   --exclude='/logs' \
   --exclude='/uploads' \
   --exclude='/backups' \

@@ -234,10 +234,54 @@ if [ -d "$INSTALL_DIR" ] || [ -f "$REAL_HOME_CLEANUP/Library/LaunchAgents/com.cl
     sleep 1
   fi
 
-  # 3-4) 설치 디렉토리 제거 (심볼릭 링크로 붙어있는 유저 데이터는 영향 없음 — 실제 파일은 ~/.claw-web 에 있음)
+  # 3-4) 데이터 rescue — INSTALL_DIR 안에 "실 파일/실 디렉토리"로 박혀있던 유저 데이터를
+  #      ~/.claw-web 로 이사시킨 뒤에야 rm -rf 를 허용한다.
+  #      (v1.4.4 이전에는 일부 파일/디렉토리가 심링크가 아니어서 업그레이드 시 데이터 유실 발생)
+  USER_DATA_RESCUE="$REAL_HOME_CLEANUP/.claw-web"
+  mkdir -p "$USER_DATA_RESCUE" 2>> "$LOG" || true
+
+  # 파일: 심링크가 아닌 경우에만 이사 (심링크라면 이미 ~/.claw-web 가리킴)
+  for f in sessions.json projects.json skills.json web-metadata.json secrets.json \
+           hooks.json schedules.json backends.json agents-config.json web-config.json \
+           accounts.json push-subscriptions.json; do
+    SRC="$INSTALL_DIR/$f"
+    DST="$USER_DATA_RESCUE/$f"
+    if [ -f "$SRC" ] && [ ! -L "$SRC" ]; then
+      if [ ! -f "$DST" ]; then
+        cp -p "$SRC" "$DST" 2>> "$LOG" && echo "[preinstall] rescued $f → $USER_DATA_RESCUE" >> "$LOG"
+      else
+        # 양쪽 다 있으면 큰 쪽(실 데이터 가능성) 을 우선, 다만 ~/.claw-web 존재하면 보통은 그게 진실
+        SRC_SIZE=$(stat -f '%z' "$SRC" 2>/dev/null || echo 0)
+        DST_SIZE=$(stat -f '%z' "$DST" 2>/dev/null || echo 0)
+        if [ "$SRC_SIZE" -gt "$DST_SIZE" ] 2>/dev/null; then
+          cp -p "$DST" "$DST.pre-rescue.bak" 2>> "$LOG" || true
+          cp -p "$SRC" "$DST" 2>> "$LOG" && echo "[preinstall] rescued $f (bigger in INSTALL_DIR, old backed up .pre-rescue.bak)" >> "$LOG"
+        fi
+      fi
+    fi
+  done
+
+  # 디렉토리: sessions-store, agents-config-backups, logs, uploads, backups
+  for d in sessions-store agents-config-backups logs uploads backups; do
+    SRC="$INSTALL_DIR/$d"
+    DST="$USER_DATA_RESCUE/$d"
+    if [ -d "$SRC" ] && [ ! -L "$SRC" ]; then
+      mkdir -p "$DST" 2>> "$LOG" || true
+      # 이미 DST 에 있는 파일은 덮어쓰지 않는다 (사용자 최신 데이터 보존)
+      # cp -Rn = no-clobber recursive
+      cp -Rn "$SRC/." "$DST/" 2>> "$LOG" && echo "[preinstall] rescued dir $d/ → $USER_DATA_RESCUE" >> "$LOG"
+    fi
+  done
+
+  # 소유권을 실유저로 (root 로 cp 했을 수 있음)
+  if [ -n "$REAL_USER_CLEANUP" ]; then
+    chown -R "$REAL_USER_CLEANUP" "$USER_DATA_RESCUE" 2>> "$LOG" || true
+  fi
+
+  # 3-5) 설치 디렉토리 제거 (이제 rescue 가 끝나서 안전)
   rm -rf "$INSTALL_DIR" 2>> "$LOG" || true
 
-  # 3-5) 오래된 plist 제거 (새 postinstall 이 다시 씀)
+  # 3-6) 오래된 plist 제거 (새 postinstall 이 다시 씀)
   rm -f "$REAL_HOME_CLEANUP/Library/LaunchAgents/com.claw-web.server.plist" 2>> "$LOG" || true
 
   echo "[preinstall] cleanup done" >> "$LOG"
