@@ -108,7 +108,7 @@ export default function TerminalPage() {
               className={`group flex items-center gap-2 pl-3 pr-1.5 py-1 rounded text-xs cursor-pointer shrink-0 border ${
                 tab.id === activeId
                   ? 'bg-zinc-800 border-zinc-700 text-zinc-100'
-                  : 'bg-zinc-900/40 border-transparent text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+                  : 'bg-zinc-900/40 border-transparent text-zinc-200 hover:text-white hover:bg-zinc-900'
               }`}
               title={tab.cwd}
             >

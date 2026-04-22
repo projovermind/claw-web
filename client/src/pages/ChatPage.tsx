@@ -62,10 +62,20 @@ export default function ChatPage() {
     refetchInterval: runtime?.running ? 5000 : false
   });
 
+  // Fallback 으로 "첫 에이전트" 를 자동 선택하는 것은 **최초 마운트 1회** 에만 수행.
+  // 이후 currentAgentId 가 null 이 되더라도(예: 워크스페이스 전환 후 active pane 이
+  // 빈 pane / 레이아웃 count 변경 후 빈 슬롯이 active) 사용자가 의도적으로 비운
+  // 상태일 수 있으므로, 사이드바 컨텍스트를 "메인(=agents[0]) 에이전트"로 되돌리지
+  // 않음. 그렇지 않으면 "레이아웃 빈공간을 선택 시 사이드바가 메인 에이전트 세션
+  // 리스트로 점프" 하는 버그가 재발함.
+  const didInitAgentRef = useRef(false);
   useEffect(() => {
-    if (!currentAgentId && agentsQ.data && agentsQ.data.length > 0) {
+    if (didInitAgentRef.current) return;
+    if (!agentsQ.data || agentsQ.data.length === 0) return;
+    if (!currentAgentId) {
       setCurrentAgent(agentsQ.data[0].id);
     }
+    didInitAgentRef.current = true;
   }, [agentsQ.data, currentAgentId, setCurrentAgent]);
 
   const createSession = useMutation({
@@ -394,8 +404,11 @@ export default function ChatPage() {
         </DndContext>
       </div>
 
-      {/* Todo sidebar (desktop only) — 접혀있을 때는 얇은 레일만 표시해서 토글 가능 */}
-      {todos.length > 0 && (
+      {/* Todo sidebar (desktop only) — 접혀있을 때는 얇은 레일만 표시해서 토글 가능
+          Todo 가 비어있어도 레일은 항상 노출되도록 해서 사용자가 언제든지
+          패널을 펼칠 수 있게 함 (그렇지 않으면 "숨기기/보이기 버튼이 안 보인다"는
+          피드백이 반복됨). */}
+      {(
         todoCollapsed ? (
           <aside className="hidden lg:flex w-8 shrink-0 border-l border-zinc-800 bg-zinc-950/60 flex-col items-center py-3 gap-2">
             <button
@@ -429,7 +442,14 @@ export default function ChatPage() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4">
-              <TodoWidget todos={todos} />
+              {todos.length > 0 ? (
+                <TodoWidget todos={todos} />
+              ) : (
+                <div className="text-[11px] text-zinc-600 leading-relaxed">
+                  진행 중인 Todo 가 없습니다.<br />
+                  에이전트가 TodoWrite 도구로 계획을 세우면 여기에 표시됩니다.
+                </div>
+              )}
             </div>
           </aside>
         )

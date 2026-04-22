@@ -203,8 +203,12 @@ export const useChatStore = create<ChatState>()(
             const next = workspaces[0];
             activeWorkspaceId = next.id;
             const pane = next.panes.find((p) => p.id === next.activePaneId) ?? next.panes[0];
-            currentAgentId = pane?.agentId ?? null;
-            currentSessionId = pane?.sessionId ?? null;
+            // 새 active pane 이 빈 pane 이면 legacy 필드를 유지(null 로 덮지 않음).
+            // 그렇지 않으면 사이드바가 "메인 에이전트" 로 점프함.
+            if (pane?.agentId || pane?.sessionId) {
+              currentAgentId = pane.agentId ?? null;
+              currentSessionId = pane.sessionId ?? null;
+            }
           }
           return { workspaces, activeWorkspaceId, currentAgentId, currentSessionId };
         }),
@@ -214,10 +218,15 @@ export const useChatStore = create<ChatState>()(
           const ws = s.workspaces.find((w) => w.id === id);
           if (!ws) return s;
           const pane = ws.panes.find((p) => p.id === ws.activePaneId) ?? ws.panes[0];
+          // 전환한 ws 의 active pane 이 빈 pane 이면 legacy 필드 유지.
+          // (그렇지 않으면 ChatPage fallback 이 "메인 에이전트" 로 돌리는 버그 재발)
+          if (!pane?.agentId && !pane?.sessionId) {
+            return { activeWorkspaceId: id };
+          }
           return {
             activeWorkspaceId: id,
-            currentAgentId: pane?.agentId ?? null,
-            currentSessionId: pane?.sessionId ?? null
+            currentAgentId: pane.agentId ?? null,
+            currentSessionId: pane.sessionId ?? null
           };
         }),
 
@@ -247,6 +256,10 @@ export const useChatStore = create<ChatState>()(
           if (s.activeWorkspaceId === wsId) {
             const ws = workspaces.find((w) => w.id === wsId)!;
             const pane = ws.panes.find((p) => p.id === ws.activePaneId)!;
+            // 레이아웃 변경 후 active pane 이 빈 pane 이면 legacy 필드 유지.
+            if (!pane.agentId && !pane.sessionId) {
+              return { workspaces };
+            }
             return { workspaces, currentAgentId: pane.agentId, currentSessionId: pane.sessionId };
           }
           return { workspaces };
