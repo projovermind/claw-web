@@ -6,7 +6,7 @@ import { api } from '../lib/api';
 import { useWsStore } from '../store/ws-store';
 import { useChatStore } from '../store/chat-store';
 import { useT } from '../lib/i18n';
-import type { Session, Agent, Project } from '../lib/types';
+import type { SessionMeta, Agent, Project } from '../lib/types';
 import ActivityFeed from '../components/dashboard/ActivityFeed';
 import AgentStatsWidget from '../components/dashboard/AgentStatsWidget';
 
@@ -40,7 +40,7 @@ export default function DashboardPage() {
     refetchInterval: 30_000,
   });
 
-  const allSessionsRaw: Session[] = sessionsRaw?.sessions ?? [];
+  const allSessionsRaw: SessionMeta[] = sessionsRaw?.sessions ?? [];
   const activeIds: string[] = sessionsRaw?.activeIds ?? [];
   const agentById = new Map<string, Agent>((agents ?? []).map((a) => [a.id, a]));
   const getAgent = (id: string) => agentById.get(id);
@@ -62,9 +62,10 @@ export default function DashboardPage() {
     .slice()
     .sort((a, b) => (unreadMap[b.id]?.at ?? 0) - (unreadMap[a.id]?.at ?? 0));
 
-  // Project activity: message count per project in last 24h
+  // Project activity: message count per project in last 24h.
+  // `recent24hCount` is precomputed server-side so the client no longer needs
+  // the full message arrays (which used to dominate the /api/sessions payload).
   const projectActivity = useMemo(() => {
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     const projectMap = new Map<string, { name: string; color: string; count: number }>();
     for (const p of (projects ?? []) as Project[]) {
       projectMap.set(p.id, { name: p.name, color: p.color ?? '#6ee7b7', count: 0 });
@@ -72,12 +73,7 @@ export default function DashboardPage() {
     for (const session of allSessions) {
       const agentProjectId = agentById.get(session.agentId)?.projectId;
       if (!agentProjectId || !projectMap.has(agentProjectId)) continue;
-      const msgs = session.messages ?? [];
-      for (const m of msgs) {
-        if (m.ts && new Date(m.ts).getTime() > cutoff) {
-          projectMap.get(agentProjectId)!.count += 1;
-        }
-      }
+      projectMap.get(agentProjectId)!.count += session.recent24hCount ?? 0;
     }
     return Array.from(projectMap.values())
       .filter((p) => p.count > 0)
@@ -347,7 +343,7 @@ function StatCard({
   );
 }
 
-function SessionRow({ session, agent, running }: { session: Session; agent?: Agent; running?: boolean }) {
+function SessionRow({ session, agent, running }: { session: SessionMeta; agent?: Agent; running?: boolean }) {
   const t = useT();
   const navigate = useNavigate();
   const setCurrentAgent = useChatStore((s) => s.setCurrentAgent);

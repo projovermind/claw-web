@@ -7,7 +7,7 @@ import {
 } from '@dnd-kit/core';
 import { Plus, Pin, ChevronDown, ListTodo, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { api } from '../lib/api';
-import type { Session, ChatMessage, Agent, Project } from '../lib/types';
+import type { Session, SessionMeta, ChatMessage, Agent, Project } from '../lib/types';
 import { isSessionRunning } from '../lib/visibility';
 import { useChatStore, selectActiveWorkspace } from '../store/chat-store';
 import { useProgressToastStore } from '../store/progress-toast-store';
@@ -212,7 +212,7 @@ export default function ChatPage() {
     });
   }, [sessionsQ.data]);
 
-  const projectSelectAllSessionsQ = useQuery<{ sessions: Session[] }>({
+  const projectSelectAllSessionsQ = useQuery<{ sessions: SessionMeta[] }>({
     queryKey: ['sessions-all'],
     queryFn: api.allSessions,
     staleTime: 5_000
@@ -538,7 +538,7 @@ function MobileHeader({
 }: {
   projects: Project[];
   agents: Agent[];
-  sessions: Session[];
+  sessions: SessionMeta[];
   currentProject: Project | null | undefined;
   currentAgent: Agent | undefined;
   currentSessionId: string | null;
@@ -570,7 +570,7 @@ function MobileHeader({
 
   const globalAgents = agents.filter((a) => a.tier === 'main' || (!a.projectId && !a.tier));
 
-  const allSessionsQ = useQuery<{ sessions: Session[] }>({
+  const allSessionsQ = useQuery<{ sessions: SessionMeta[] }>({
     queryKey: ['sessions-all'],
     queryFn: api.allSessions,
     refetchInterval: 5000
@@ -599,14 +599,14 @@ function MobileHeader({
     return byProject;
   }, [agentStatus, agents]);
   const sessionUnread = (sid: string) => !!unread[sid] && sid !== currentSessionId;
-  const isHiddenDelegation = (s: Session) => s.title?.startsWith('[위임]');
+  const isHiddenDelegation = (s: SessionMeta) => s.title?.startsWith('[위임]');
   const runningSessions = useMemo(() => {
     const all = allSessionsQ.data?.sessions ?? [];
-    return all.filter((s: Session) => isSessionRunning(s, runtimeAll) && !isHiddenDelegation(s));
+    return all.filter((s: SessionMeta) => isSessionRunning(s, runtimeAll) && !isHiddenDelegation(s));
   }, [allSessionsQ.data, runtimeAll]);
   const unreadSessions = useMemo(() => {
     const all = allSessionsQ.data?.sessions ?? [];
-    return all.filter((s: Session) =>
+    return all.filter((s: SessionMeta) =>
       unread[s.id] && s.id !== currentSessionId && !isHiddenDelegation(s)
     );
   }, [allSessionsQ.data, unread, currentSessionId]);

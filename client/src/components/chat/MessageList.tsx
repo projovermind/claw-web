@@ -5,7 +5,7 @@ import rehypeHighlight from 'rehype-highlight';
 import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle, Loader2, Maximize2 } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
-import type { ChatMessage, Session } from '../../lib/types';
+import type { ChatMessage, SessionMeta } from '../../lib/types';
 import ToolCallCard from './ToolCallCard';
 import { useT } from '../../lib/i18n';
 import { linkifyFilePaths, useEditorConfig, openFileDiff, pathFromEditorUrl } from '../../lib/editor';
@@ -231,7 +231,7 @@ export default function MessageList({ messages, searchQuery, onChoice }: Message
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   // 위임 카드에 대상 세션의 라이브 running 상태 반영용
-  const { data: allSessionsData } = useQuery<{ sessions: Session[] }>({
+  const { data: allSessionsData } = useQuery<{ sessions: SessionMeta[] }>({
     queryKey: ['sessions-all'],
     queryFn: api.allSessions,
     refetchInterval: 5000

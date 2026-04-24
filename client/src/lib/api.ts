@@ -4,6 +4,8 @@ import type {
   WebSettings,
   Project,
   Session,
+  SessionMeta,
+  ChatMessage,
   BackendsState,
   BackendPublic,
   Skill,
@@ -102,12 +104,18 @@ export const api = {
     );
   },
   sessions: (agentId?: string) =>
-    get<{ sessions: Session[]; activeIds: string[] }>(
+    get<{ sessions: SessionMeta[]; activeIds: string[] }>(
       `/sessions${agentId ? `?agentId=${encodeURIComponent(agentId)}` : ''}`
     ).then((r) => r.sessions),
   allSessions: () =>
-    get<{ sessions: Session[]; activeIds: string[] }>('/sessions'),
-  session: (id: string) => get<Session>(`/sessions/${id}`),
+    get<{ sessions: SessionMeta[]; activeIds: string[] }>('/sessions'),
+  session: (id: string, limit = 50) =>
+    get<Session>(`/sessions/${id}?limit=${limit}`),
+  /** Fetch up to `limit` messages strictly older than `before` (ISO ts). */
+  olderMessages: (id: string, before: string, limit = 50) =>
+    get<{ messages: ChatMessage[]; hasMoreBefore: boolean }>(
+      `/sessions/${id}/messages?before=${encodeURIComponent(before)}&limit=${limit}`
+    ),
   createSession: (agentId: string, title?: string) =>
     post<Session>('/sessions', { agentId, title }),
   renameSession: (id: string, title: string) => patch<Session>(`/sessions/${id}`, { title }),

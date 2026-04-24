@@ -26,19 +26,39 @@ const bulkDeleteSchema = z.object({
 export function createSessionsRouter({ sessionsStore, configStore, runner, eventBus }) {
   const router = Router();
 
+  // GET /api/sessions — meta only (no messages). Returns messageCount and
+  // recent24hCount per session so the dashboard can render activity without
+  // downloading every message. Response size stays in KB even with hundreds
+  // of sessions (previously: tens of MB).
   router.get('/', (req, res) => {
     const { agentId } = req.query;
     const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 1000);
     const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
     const all = sessionsStore.list(typeof agentId === 'string' ? agentId : undefined);
     // 최신 세션이 잘리지 않도록 updatedAt DESC 로 정렬 후 페이징.
-    // (store 내부 Object.values 는 삽입 순서 = 생성 순. 세션이 limit 초과하면
-    //  최근 세션들이 오래된 100개에 밀려 응답에서 완전히 누락되는 버그 방지.)
     all.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
     const total = all.length;
     const paged = all.slice(offset, offset + limit);
+    const cutoff24h = Date.now() - 24 * 60 * 60 * 1000;
+    const sessions = paged.map((s) => {
+      // eslint-disable-next-line no-unused-vars
+      const { messages, ...meta } = s;
+      const msgs = Array.isArray(messages) ? messages : [];
+      let recent24hCount = 0;
+      for (const m of msgs) {
+        if (!m?.ts) continue;
+        const t = new Date(m.ts).getTime();
+        if (!Number.isNaN(t) && t >= cutoff24h) recent24hCount += 1;
+      }
+      return {
+        ...meta,
+        messageCount: msgs.length,
+        recent24hCount,
+        isRunning: runner.isRunning(s.id),
+      };
+    });
     res.json({
-      sessions: paged.map((s) => ({ ...s, isRunning: runner.isRunning(s.id) })),
+      sessions,
       activeIds: runner.activeIds(),
       total,
       limit,
@@ -46,10 +66,49 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
     });
   });
 
+  // GET /api/sessions/:id?limit=<n>
+  // Returns the session with only the most recent `limit` messages (default 50).
+  // `hasMoreBefore` signals the client that older messages are available via
+  // GET /api/sessions/:id/messages?before=<ts>.
   router.get('/:id', (req, res, next) => {
     const s = sessionsStore.get(req.params.id);
     if (!s) return next(new HttpError(404, 'Session not found', 'SESSION_NOT_FOUND'));
-    res.json({ ...s, isRunning: runner.isRunning(s.id) });
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500);
+    const all = Array.isArray(s.messages) ? s.messages : [];
+    const sliced = all.slice(-limit);
+    const hasMoreBefore = sliced.length < all.length;
+    // Token totals aggregated across ALL messages (not just the sliced tail) so
+    // the header badge stays accurate after pagination.
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    for (const m of all) {
+      totalInputTokens += m?.usage?.inputTokens ?? 0;
+      totalOutputTokens += m?.usage?.outputTokens ?? 0;
+    }
+    res.json({
+      ...s,
+      messages: sliced,
+      hasMoreBefore,
+      totalMessageCount: all.length,
+      totalInputTokens,
+      totalOutputTokens,
+      isRunning: runner.isRunning(s.id),
+    });
+  });
+
+  // GET /api/sessions/:id/messages?before=<ts>&limit=<n>
+  // Returns up to `limit` messages strictly older than `before` (ISO ts).
+  // Used by the chat UI's infinite-scroll-up to load earlier history.
+  router.get('/:id/messages', (req, res, next) => {
+    const s = sessionsStore.get(req.params.id);
+    if (!s) return next(new HttpError(404, 'Session not found', 'SESSION_NOT_FOUND'));
+    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 500);
+    const before = typeof req.query.before === 'string' ? req.query.before : null;
+    const all = Array.isArray(s.messages) ? s.messages : [];
+    const older = before ? all.filter((m) => (m?.ts ?? '') < before) : all;
+    const sliced = older.slice(-limit);
+    const hasMoreBefore = sliced.length < older.length;
+    res.json({ messages: sliced, hasMoreBefore });
   });
 
   router.post('/', async (req, res, next) => {

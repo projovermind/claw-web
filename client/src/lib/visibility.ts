@@ -1,8 +1,9 @@
-import type { Agent, Session } from './types';
+import type { Agent } from './types';
 
-/** 세션 running 여부 — 서버 DB(isRunning)와 클라이언트 runtime 양쪽 확인 */
+/** 세션 running 여부 — 서버 DB(isRunning)와 클라이언트 runtime 양쪽 확인.
+ *  Accepts either full Session or lightweight SessionMeta (id + isRunning). */
 export function isSessionRunning(
-  session: Session,
+  session: { id: string; isRunning?: boolean },
   runtime: Record<string, { running: boolean } | undefined>
 ): boolean {
   return !!(session.isRunning || runtime[session.id]?.running);

@@ -5,7 +5,7 @@ import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 import { useChatStore } from '../../store/chat-store';
 import { useProgressToastStore } from '../../store/progress-toast-store';
-import type { Session, Agent, Project, BackendsState } from '../../lib/types';
+import type { SessionMeta, Agent, Project, BackendsState } from '../../lib/types';
 import { isSessionRunning } from '../../lib/visibility';
 import DraggableSession from './DraggableSession';
 
@@ -53,7 +53,7 @@ export function ChatSidebar({
 }: {
   agents: Agent[];
   projects: Project[];
-  sessions: Session[];
+  sessions: SessionMeta[];
   currentAgentId: string | null;
   currentSessionId: string | null;
   setCurrentAgent: (id: string) => void;
@@ -76,15 +76,15 @@ export function ChatSidebar({
   // — planner 세션 안에 "🔄 위임 시작" 메시지로 이미 표시되며,
   //   사용자가 running 섹션에서 위임 세션을 클릭하면 대상 에이전트로
   //   전환되어 기획자에 작업 지시 못 하는 혼동 방지.
-  const isHiddenDelegation = (s: Session) => s.title?.startsWith('[위임]');
+  const isHiddenDelegation = (s: SessionMeta) => s.title?.startsWith('[위임]');
   const runningSessions = useMemo(() => {
     const all = allSessionsData?.sessions ?? [];
-    return all.filter((s: Session) => isSessionRunning(s, runtime) && !isHiddenDelegation(s));
+    return all.filter((s: SessionMeta) => isSessionRunning(s, runtime) && !isHiddenDelegation(s));
   }, [allSessionsData]);
 
   const unreadSessions = useMemo(() => {
     const all = allSessionsData?.sessions ?? [];
-    return all.filter((s: Session) =>
+    return all.filter((s: SessionMeta) =>
       unread[s.id] && s.id !== currentSessionId && !isHiddenDelegation(s)
     );
   }, [allSessionsData, unread, currentSessionId]);
@@ -113,7 +113,7 @@ export function ChatSidebar({
   useEffect(() => {
     const all = allSessionsData?.sessions ?? [];
     if (all.length === 0) return;
-    const validIds = new Set(all.map((s: Session) => s.id));
+    const validIds = new Set(all.map((s: SessionMeta) => s.id));
     const orphans = Object.keys(unread).filter(id => !validIds.has(id));
     for (const id of orphans) markRead(id);
   }, [allSessionsData, unread, markRead]);
@@ -184,8 +184,8 @@ export function ChatSidebar({
       agents.filter((a) => a.projectId === project.id).map((a) => a.id)
     );
     const projectSessions = (allSessionsData?.sessions ?? [])
-      .filter((s: Session) => projectAgentIds.has(s.agentId) && !s.isDelegation)
-      .sort((a: Session, b: Session) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+      .filter((s: SessionMeta) => projectAgentIds.has(s.agentId) && !s.isDelegation)
+      .sort((a: SessionMeta, b: SessionMeta) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
 
     // lead 세션 우선, 없으면 가장 최근 세션
     const leadSession = lead ? projectSessions.find((s) => s.agentId === lead.id) : undefined;
@@ -237,7 +237,7 @@ export function ChatSidebar({
       await qc.cancelQueries({ queryKey: ['sessions', currentAgentId] });
       const prev = qc.getQueryData(['sessions', currentAgentId]);
       qc.setQueryData(['sessions', currentAgentId], (old: unknown) =>
-        Array.isArray(old) ? old.filter((s: Session) => !ids.includes(s.id)) : old
+        Array.isArray(old) ? old.filter((s: SessionMeta) => !ids.includes(s.id)) : old
       );
       return { taskId, prev };
     },
@@ -408,7 +408,7 @@ export function ChatSidebar({
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
                   {t('dashboard.stat.running')} ({runningSessions.length})
                 </div>
-                {runningSessions.map((s: Session) => {
+                {runningSessions.map((s: SessionMeta) => {
                   const agent = agents.find((a) => a.id === s.agentId);
                   return (
                     <button
@@ -445,7 +445,7 @@ export function ChatSidebar({
                   <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
                   읽지 않음 ({unreadSessions.length})
                 </div>
-                {unreadSessions.map((s: Session) => {
+                {unreadSessions.map((s: SessionMeta) => {
                   const agent = agents.find((a) => a.id === s.agentId);
                   return (
                     <button
@@ -712,11 +712,11 @@ export function ChatSidebar({
       {/* 최근 세션 (에이전트 무관, 전역 5개) */}
       {(() => {
         const recent = (allSessionsData?.sessions ?? [])
-          .filter((s: Session) => s.agentId !== currentAgentId)
-          .filter((s: Session) => agents.some(a => a.id === s.agentId))
-          .filter((s: Session) => !isHiddenDelegation(s))
+          .filter((s: SessionMeta) => s.agentId !== currentAgentId)
+          .filter((s: SessionMeta) => agents.some(a => a.id === s.agentId))
+          .filter((s: SessionMeta) => !isHiddenDelegation(s))
           .slice()
-          .sort((a: Session, b: Session) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+          .sort((a: SessionMeta, b: SessionMeta) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
           .slice(0, 5);
         if (recent.length === 0) return null;
         return (
@@ -729,7 +729,7 @@ export function ChatSidebar({
               <span className="flex-1 text-left">{t('chat.sidebar.recentSessions')}</span>
               <span className="text-zinc-600">{recent.length}</span>
             </button>
-            {recentOpen && recent.map((s: Session) => {
+            {recentOpen && recent.map((s: SessionMeta) => {
               const agent = agents.find(a => a.id === s.agentId);
               const isUnreadRecent = !!unread[s.id];
               return (

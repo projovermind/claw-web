@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { MessageSquare, Clock } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
-import type { Agent, Session } from '../../lib/types';
+import type { Agent, SessionMeta } from '../../lib/types';
 
 function useTimeAgo() {
   const t = useT();
@@ -34,7 +34,7 @@ export function AgentTimeline({
     refetchInterval: 10000
   });
 
-  const allSessions: Session[] = (data as { sessions: Session[] })?.sessions ?? [];
+  const allSessions: SessionMeta[] = (data as { sessions: SessionMeta[] })?.sessions ?? [];
 
   // 이 프로젝트 에이전트의 세션만 필터 + 최근순 정렬
   const projectSessions = allSessions
@@ -60,7 +60,7 @@ export function AgentTimeline({
           <div className="divide-y divide-zinc-800/60">
             {projectSessions.map(s => {
               const agent = agentMap.get(s.agentId);
-              const msgCount = s.messages?.length ?? 0;
+              const msgCount = s.messageCount ?? 0;
               return (
                 <div key={s.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-zinc-800/30">
                   <span className="text-base shrink-0">{agent?.avatar ?? '🤖'}</span>

@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useChatStore } from '../store/chat-store';
-import type { Session } from '../lib/types';
+import type { SessionMeta } from '../lib/types';
 
 /**
  * 전역 unread 무결성 가드.
@@ -15,7 +15,7 @@ import type { Session } from '../lib/types';
  * 이 hook 은 App 최상위에서 한 번만 호출되어야 함.
  */
 export function useUnreadGuard() {
-  const { data } = useQuery<{ sessions: Session[] }>({
+  const { data } = useQuery<{ sessions: SessionMeta[] }>({
     queryKey: ['sessions-all'],
     queryFn: api.allSessions,
     refetchInterval: 5000

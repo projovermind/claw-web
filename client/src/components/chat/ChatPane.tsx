@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useDroppable, useDraggable } from '@dnd-kit/core';
-import { Zap, Eye, RotateCw, Square, AlertTriangle, Search, X, Inbox, GripVertical, Settings, ArrowDown } from 'lucide-react';
+import { Zap, Eye, RotateCw, Square, AlertTriangle, Search, X, Inbox, GripVertical, Settings, ArrowDown, Volume2, VolumeX } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { Session, ChatMessage, Agent, BackendsState } from '../../lib/types';
 import { useChatStore } from '../../store/chat-store';
 import { useProgressToastStore } from '../../store/progress-toast-store';
-import { useT } from '../../lib/i18n';
+import { useT, useI18nStore } from '../../lib/i18n';
+import { useVoice } from '../../hooks/useVoice';
 import MessageList from './MessageList';
 import StreamingMessage from './StreamingMessage';
 import { SessionTitleEditor } from './SessionTitleEditor';
@@ -74,11 +75,46 @@ export default function ChatPane({
   //  - 사용자가 위로 스크롤한 상태에서는 새 메시지/스트리밍이 와도 자동 스크롤 금지
   //  - 하단 근처일 때만 자동으로 맨 아래로 따라감
   //  - atBottom === false 이면 "맨 아래로" 플로팅 버튼 노출
+  //  - 상단 근처로 스크롤 시 hasMoreBefore === true 이면 과거 메시지 페이지 로드
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
   const atBottomRef = useRef(true);
+  const loadingOlderRef = useRef(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
 
-  // Track scroll position to decide if user is near the bottom
+  const loadOlder = useCallback(async () => {
+    const el = chatScrollRef.current;
+    if (!el || !sessionId) return;
+    const data = sessionQ.data;
+    if (!data?.hasMoreBefore || loadingOlderRef.current) return;
+    const oldest = data.messages?.[0]?.ts;
+    if (!oldest) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    // 스크롤 앵커: 바닥에서의 거리. prepend 후 동일 거리 유지 → 시각적 점프 방지.
+    const anchorFromTop = el.scrollHeight - el.scrollTop;
+    try {
+      const res = await api.olderMessages(sessionId, oldest, 50);
+      qc.setQueryData<Session>(['session', sessionId], (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          messages: [...res.messages, ...(old.messages ?? [])],
+          hasMoreBefore: res.hasMoreBefore,
+        };
+      });
+    } finally {
+      // 새 노드 레이아웃 반영 직후 scrollTop 복원.
+      requestAnimationFrame(() => {
+        const cur = chatScrollRef.current;
+        if (cur) cur.scrollTop = cur.scrollHeight - anchorFromTop;
+        loadingOlderRef.current = false;
+        setLoadingOlder(false);
+      });
+    }
+  }, [sessionId, sessionQ.data, qc]);
+
+  // Track scroll position to decide if user is near the bottom / top
   useEffect(() => {
     const el = chatScrollRef.current;
     if (!el) return;
@@ -86,18 +122,20 @@ export default function ChatPane({
       const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       atBottomRef.current = near;
       setAtBottom(near);
+      if (el.scrollTop < 120) loadOlder();
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     // 초기값 세팅
     onScroll();
     return () => el.removeEventListener('scroll', onScroll);
-  }, [sessionId]);
+  }, [sessionId, loadOlder]);
 
   // 메시지/스트리밍 변경 시 — 사용자가 하단 근처일 때만 맨 아래로
   useEffect(() => {
     const el = chatScrollRef.current;
     if (!el) return;
     if (!atBottomRef.current) return; // 사용자가 스크롤 중 → 방해하지 않음
+    if (loadingOlderRef.current) return; // 과거 메시지 prepend 중 → scrollTop 앵커가 복원 처리
     requestAnimationFrame(() => {
       el.scrollTop = el.scrollHeight;
     });
@@ -143,6 +181,40 @@ export default function ChatPane({
   useEffect(() => {
     if (sessionId) markRead(sessionId);
   }, [sessionId, markRead, sessionQ.data?.messages?.length]);
+
+  // Voice — 응답 완료 시 자동으로 읽어주기 (TTS). 언어는 앱 언어 설정을 따라간다.
+  const voiceLang = useI18nStore((s) => (s.lang === 'en' ? 'en-US' : 'ko-KR'));
+  const voice = useVoice(voiceLang);
+  const [ttsEnabled, setTtsEnabled] = useState(
+    () => localStorage.getItem('tts:enabled') === '1'
+  );
+  useEffect(() => {
+    localStorage.setItem('tts:enabled', ttsEnabled ? '1' : '0');
+  }, [ttsEnabled]);
+  // finishRun 이 runtime.streaming 을 비우므로, 실시간 스트리밍 텍스트를 ref 에 캡처
+  const lastStreamingRef = useRef('');
+  useEffect(() => {
+    if (streaming) lastStreamingRef.current = streaming;
+  }, [streaming]);
+  const prevRunningRef = useRef(running);
+  useEffect(() => {
+    if (prevRunningRef.current && !running && ttsEnabled && isActive) {
+      // 연속 대화 모드가 켜져 있으면 ChatInput 이 TTS를 직접 제어 → 중복 방지
+      const convOn = localStorage.getItem('voice:conv') === '1';
+      if (!convOn) {
+        const raw = lastStreamingRef.current;
+        lastStreamingRef.current = '';
+        const text = raw
+          .replace(/```[\s\S]*?```/g, ' 코드 블록 생략. ')
+          .replace(/`[^`]*`/g, '')
+          .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+          .replace(/[#*_>]/g, '')
+          .trim();
+        if (text) voice.speak(text);
+      }
+    }
+    prevRunningRef.current = running;
+  }, [running, ttsEnabled, isActive, voice]);
 
   // Search (per pane)
   const [searchOpen, setSearchOpen] = useState(false);
@@ -314,6 +386,26 @@ export default function ChatPane({
                   )}
                 </div>
               )}
+              {/* TTS 토글 — 응답 완료 시 자동 읽어주기 */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (voice.speaking) voice.stopSpeaking();
+                  setTtsEnabled((v) => !v);
+                }}
+                className={`p-0.5 rounded hover:bg-zinc-800 ${
+                  ttsEnabled ? 'text-sky-300' : 'text-zinc-600 hover:text-zinc-300'
+                }`}
+                title={ttsEnabled ? '응답 읽기 끄기' : '응답 읽기 켜기 (한국어)'}
+              >
+                {voice.speaking ? (
+                  <Volume2 size={12} className="animate-pulse" />
+                ) : ttsEnabled ? (
+                  <Volume2 size={12} />
+                ) : (
+                  <VolumeX size={12} />
+                )}
+              </button>
               {/* Clear pane (remove session from this pane, keep session) */}
               <button
                 onClick={(e) => {
@@ -369,6 +461,11 @@ export default function ChatPane({
                 만들지 않도록 강제. 개별 pre/table 블록은 자체 overflow-x-auto 로 스크롤됨. */}
             <div ref={chatScrollRef} className={`absolute inset-0 overflow-y-auto overflow-x-hidden ${isCompact ? 'px-2 pb-6' : 'px-3 lg:px-6 pb-8'}`}>
               <div className="min-h-full min-w-0 flex flex-col justify-end">
+                {currentSession?.hasMoreBefore && (
+                  <div className="flex items-center justify-center py-2 text-[11px] text-zinc-500">
+                    {loadingOlder ? '이전 메시지 불러오는 중...' : '위로 스크롤하면 이전 메시지 로드'}
+                  </div>
+                )}
                 {currentSession && (
                   <MessageList
                     key={currentSession.id}
@@ -433,9 +530,12 @@ function PaneControls({
   }, [agent, backends]);
 
   const totals = useMemo(() => {
-    if (!session?.messages) return null;
-    const totalIn = session.messages.reduce((s, m) => s + (m.usage?.inputTokens ?? 0), 0);
-    const totalOut = session.messages.reduce((s, m) => s + (m.usage?.outputTokens ?? 0), 0);
+    // Prefer server-aggregated totals (cover the full history), fall back to
+    // summing the locally loaded slice for older sessions without the field.
+    const totalIn = session?.totalInputTokens
+      ?? (session?.messages?.reduce((s, m) => s + (m.usage?.inputTokens ?? 0), 0) ?? 0);
+    const totalOut = session?.totalOutputTokens
+      ?? (session?.messages?.reduce((s, m) => s + (m.usage?.outputTokens ?? 0), 0) ?? 0);
     if (totalIn + totalOut === 0) return null;
     return { in: totalIn, out: totalOut };
   }, [session]);

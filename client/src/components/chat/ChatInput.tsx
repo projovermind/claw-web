@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef, useCallback, KeyboardEvent } from 'react';
-import { Send, Square, X, Paperclip, Loader2, AlertTriangle, FileText } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { Send, Square, X, Paperclip, Loader2, AlertTriangle, FileText, Mic, MicOff, Phone, Headphones } from 'lucide-react';
 import { useUploadsStore } from '../../store/uploads-store';
+import { useChatStore } from '../../store/chat-store';
 import { getAuthToken, api } from '../../lib/api';
 import { useCommands, expandCommand, type SlashCommand } from '../../lib/commands';
-import { useT } from '../../lib/i18n';
+import { useT, useI18nStore } from '../../lib/i18n';
+import { useVoice } from '../../hooks/useVoice';
 import SlashPopover from './SlashPopover';
 import AtFilePopover from './AtFilePopover';
 
@@ -87,6 +89,189 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
   const lastError = useUploadsStore((s) => s.lastError);
   const clearError = useUploadsStore((s) => s.setError);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Voice (Web Speech API — STT + TTS). 언어는 앱 언어 설정을 따라간다.
+  const voiceLang = useI18nStore((s) => (s.lang === 'en' ? 'en-US' : 'ko-KR'));
+  const voice = useVoice(voiceLang);
+
+  // 음성 모드 — 버튼 클릭 시 cycle: off → input → conv → headphone → off
+  //   input     : 단발 녹음, 인식된 텍스트를 입력창에 추가 (자동 전송 X)
+  //   conv      : 연속 대화 (말→전송→TTS→재녹음). 스피커 사용. TTS 중 마이크 OFF.
+  //   headphone : 연속 대화 + TTS 재생 중에도 마이크 유지 (끼어들기 가능)
+  // ESC 키로 언제든 off 로 복귀.
+  type VoiceMode = 'off' | 'input' | 'conv' | 'headphone';
+  const CYCLE: Record<VoiceMode, VoiceMode> = {
+    off: 'input', input: 'conv', conv: 'headphone', headphone: 'off',
+  };
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>(() => {
+    const saved = localStorage.getItem('voice:mode');
+    if (saved === 'input' || saved === 'conv' || saved === 'headphone' || saved === 'off') return saved;
+    return 'off';
+  });
+  useEffect(() => {
+    localStorage.setItem('voice:mode', voiceMode);
+    // ChatPane 의 TTS 중복 억제 로직과의 호환성 유지
+    localStorage.setItem('voice:conv', voiceMode === 'conv' || voiceMode === 'headphone' ? '1' : '0');
+    localStorage.setItem('voice:headphones', voiceMode === 'headphone' ? '1' : '0');
+  }, [voiceMode]);
+
+  // 상태 머신용 파생 플래그
+  const convMode = voiceMode === 'conv' || voiceMode === 'headphone';
+  const headphoneMode = voiceMode === 'headphone';
+  const inputMode = voiceMode === 'input';
+
+  // 'input' 모드 진입 시 단발 녹음 시작 — 녹음이 끝나면 대기 상태로 남음
+  // (재녹음하려면 버튼 한 바퀴 돌리거나 ESC 후 다시 클릭)
+  useEffect(() => {
+    if (!inputMode || disabled) return;
+    if (voice.listening || voice.speaking) return;
+    voice.startListening((text) => {
+      if (!text) return;
+      setValue((prev) => (prev ? `${prev} ${text}` : text));
+      setTimeout(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.style.height = 'auto';
+        ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+        ta.focus();
+      }, 0);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputMode, disabled]);
+
+  // ESC 키 — 음성 모드 종료
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (e.defaultPrevented) return;
+      if (voiceMode === 'off') return;
+      voice.stopListening();
+      voice.stopSpeaking();
+      setVoiceMode('off');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceMode]);
+
+  // 현재 세션의 스트리밍 텍스트를 실시간으로 구독.
+  // finishRun 이 runtime.streaming 을 비우기 때문에, 답변 완료 직전 값을 ref 에 캡처해둬야
+  // "직전 응답" 이 아닌 "방금 완료된 응답" 을 읽어줄 수 있다.
+  const streaming = useChatStore((s) =>
+    sessionId ? s.runtime[sessionId]?.streaming ?? '' : ''
+  );
+  const lastStreamingRef = useRef('');
+  useEffect(() => {
+    if (streaming) lastStreamingRef.current = streaming;
+  }, [streaming]);
+
+  // 대화 모드에서의 제출 헬퍼 — 녹음된 텍스트로 바로 전송
+  const submitVoice = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || disabled) return;
+    // 헤드폰 모드에서 TTS 재생 중 사용자 발화 → 즉시 TTS 중단 (barge-in)
+    voice.stopSpeaking();
+    // 새 질문을 보내기 전에 캡처를 초기화 — 이전 응답이 잘못 읽히는 것 방지
+    lastStreamingRef.current = '';
+    onSend(trimmed, []);
+    if (sessionId) localStorage.removeItem(`draft:${sessionId}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [disabled, onSend, sessionId]);
+
+  // 대화 모드 상태 머신 — 단일 useEffect 로 통합하여 race condition 제거.
+  //
+  // 일반 모드 (스피커):
+  //   IDLE → LISTENING → (submit) → ANSWERING → SPEAKING → IDLE
+  //   SPEAKING 중에는 마이크 OFF (피드백 루프 방지)
+  //
+  // 헤드폰 모드:
+  //   SPEAKING 중에도 마이크 ON 유지 → 사용자 발화 시 즉시 submitVoice
+  //   (submitVoice 내부에서 voice.stopSpeaking 으로 끼어들기)
+  const prevRunningRef = useRef(running);
+  useEffect(() => {
+    if (!convMode) { prevRunningRef.current = running; return; }
+    if (disabled) { prevRunningRef.current = running; return; }
+
+    const justFinishedResponse = prevRunningRef.current && !running;
+    prevRunningRef.current = running;
+
+    // 응답 완료 전환 — 캡처한 응답을 읽는다.
+    if (justFinishedResponse) {
+      // 일반 모드에서만 마이크 강제 종료. 헤드폰 모드는 마이크 유지.
+      if (!headphoneMode) voice.stopListening();
+      const raw = lastStreamingRef.current;
+      lastStreamingRef.current = '';
+      const text = raw
+        .replace(/```[\s\S]*?```/g, ' 코드 블록 생략. ')
+        .replace(/`[^`]*`/g, '')
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/[#*_>]/g, '')
+        .trim();
+      if (text) voice.speak(text);
+      // 헤드폰 모드면 speak 시작과 동시에 녹음도 다시 활성화 (끼어들기 가능)
+      // 일반 모드는 speak 끝난 뒤(speaking=false 전환) 이 효과가 재평가되어 녹음 시작
+      if (headphoneMode && !voice.listening) {
+        voice.startListening((t) => { if (t) submitVoice(t); });
+      }
+      return;
+    }
+
+    // 응답 중이면 아무것도 안 함 (마이크/TTS 모두 대기)
+    if (running) return;
+    // 헤드폰 OFF + TTS 재생 중이면 마이크 절대 금지 (피드백 루프 방지)
+    if (voice.speaking && !headphoneMode) return;
+    // 이미 듣고 있으면 그대로
+    if (voice.listening) return;
+
+    // IDLE → LISTENING. 에코 잔재 피하려 약간 지연 (헤드폰 모드는 즉시).
+    const delay = headphoneMode ? 0 : 250;
+    const t = setTimeout(() => {
+      if (!convMode || disabled || running) return;
+      if (voice.listening) return;
+      if (voice.speaking && !headphoneMode) return;
+      voice.startListening((text) => { if (text) submitVoice(text); });
+    }, delay);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [convMode, disabled, running, voice.speaking, voice.listening, submitVoice, headphoneMode]);
+
+  // 대화 모드 OFF 시 모든 음성 활동 중단
+  useEffect(() => {
+    if (convMode) return;
+    voice.stopListening();
+    voice.stopSpeaking();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [convMode]);
+
+  // 버튼 클릭 = 모드 cycle. 현재 녹음/재생은 모두 정리하고 다음 모드로 전환.
+  const onCycleClick = () => {
+    voice.stopListening();
+    voice.stopSpeaking();
+    setVoiceMode((curr) => CYCLE[curr]);
+  };
+
+  // 현재 음성 모드 UI 스펙
+  const voiceBtnClass = (() => {
+    if (voiceMode === 'off') return 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800';
+    if (voiceMode === 'input') {
+      return voice.listening
+        ? 'bg-red-900/60 text-red-200 animate-pulse'
+        : 'bg-emerald-900/60 text-emerald-200';
+    }
+    // conv / headphone
+    if (voice.listening && voice.speaking) return 'bg-purple-900/60 text-purple-200 animate-pulse';
+    if (voice.listening) return 'bg-red-900/60 text-red-200 animate-pulse';
+    if (voice.speaking) return 'bg-sky-900/60 text-sky-200 animate-pulse';
+    return voiceMode === 'headphone'
+      ? 'bg-amber-900/60 text-amber-200'
+      : 'bg-emerald-900/60 text-emerald-200';
+  })();
+  const voiceBtnTitle = (() => {
+    if (voiceMode === 'off') return '음성 입력 모드 시작 — 클릭해서 cycle (Esc: 종료)';
+    if (voiceMode === 'input') return '음성 입력 모드 — 클릭: 대화 모드로 / Esc: 종료';
+    if (voiceMode === 'conv') return '대화 모드 (스피커) — 클릭: 헤드폰 모드로 / Esc: 종료';
+    return '헤드폰 모드 (TTS 중에도 끼어들기 가능) — 클릭: 종료 / Esc: 종료';
+  })();
 
   // Popover state
   const [popover, setPopover] = useState<PopoverMode>('none');
@@ -221,7 +406,7 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
     setTimeout(() => { if (textareaRef.current) textareaRef.current.style.height = 'auto'; }, 0);
   };
 
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // When a popover is open, arrow keys and Enter control the popover
     if (popover !== 'none') {
       const maxLen = popover === 'slash'
@@ -357,21 +542,37 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
           />
           {/* Bottom bar inside the input box: attach left, send right */}
           <div className="flex items-center justify-between px-2 pb-2">
-            <label className="p-1.5 rounded hover:bg-zinc-800 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors" title={t('chat.input.attachBtn')}>
-              <Paperclip size={18} />
-              <input type="file" multiple className="hidden" onChange={async (e) => {
-                const files = Array.from(e.target.files ?? []);
-                for (const f of files) {
-                  try {
-                    const up = await api.uploadFile(f);
-                    useUploadsStore.getState().add(up);
-                  } catch (err) {
-                    useUploadsStore.getState().setError(`${f.name}: ${(err as Error).message}`);
+            <div className="flex items-center gap-1">
+              <label className="p-1.5 rounded hover:bg-zinc-800 cursor-pointer text-zinc-500 hover:text-zinc-300 transition-colors" title={t('chat.input.attachBtn')}>
+                <Paperclip size={18} />
+                <input type="file" multiple className="hidden" onChange={async (e) => {
+                  const files = Array.from(e.target.files ?? []);
+                  for (const f of files) {
+                    try {
+                      const up = await api.uploadFile(f);
+                      useUploadsStore.getState().add(up);
+                    } catch (err) {
+                      useUploadsStore.getState().setError(`${f.name}: ${(err as Error).message}`);
+                    }
                   }
-                }
-                e.target.value = '';
-              }} />
-            </label>
+                  e.target.value = '';
+                }} />
+              </label>
+              {voice.supported && (
+                <button
+                  type="button"
+                  onClick={onCycleClick}
+                  disabled={disabled}
+                  className={`p-1.5 rounded transition-colors ${voiceBtnClass} disabled:opacity-30`}
+                  title={voiceBtnTitle}
+                >
+                  {voiceMode === 'off' && <Mic size={18} />}
+                  {voiceMode === 'input' && (voice.listening ? <MicOff size={18} /> : <Mic size={18} />)}
+                  {voiceMode === 'conv' && <Phone size={18} />}
+                  {voiceMode === 'headphone' && <Headphones size={18} />}
+                </button>
+              )}
+            </div>
             {running ? (
               <div className="flex gap-1">
                 {/* 응답 중 메시지 → 현재 응답 중단하고 참고해서 이어서 답변 */}

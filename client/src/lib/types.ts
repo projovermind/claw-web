@@ -61,6 +61,29 @@ export interface Session {
   updatedAt: string;
   claudeSessionId: string | null;
   messages: ChatMessage[];
+  /** True iff there are older messages on the server not yet loaded. */
+  hasMoreBefore?: boolean;
+  /** Total message count on the server (messages.length may be less due to pagination). */
+  totalMessageCount?: number;
+  /** Aggregate token totals across ALL messages (not just the loaded slice). */
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  isRunning?: boolean;
+  pinned?: boolean;
+  loop?: LoopConfig | null;
+  isDelegation?: boolean;
+}
+
+/** Lightweight session descriptor returned by GET /api/sessions (no messages). */
+export interface SessionMeta {
+  id: string;
+  agentId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  claudeSessionId: string | null;
+  messageCount: number;
+  recent24hCount: number;
   isRunning?: boolean;
   pinned?: boolean;
   loop?: LoopConfig | null;
