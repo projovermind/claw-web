@@ -150,6 +150,11 @@ export const api = {
   sendMessage: (sessionId: string, message: string, attachmentPaths: string[] = []) =>
     post<{ sessionId: string; status: string }>('/chat', { sessionId, message, attachmentPaths }),
   abortChat: (sessionId: string) => del<{ aborted: boolean }>(`/chat/${sessionId}`),
+  approveTool: (
+    sessionId: string,
+    reqId: string,
+    payload: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string; remember?: boolean }
+  ) => post<{ ok: boolean }>(`/chat/${sessionId}/approval/${reqId}`, payload),
   startLoop: (sessionId: string, prompt: string, maxIterations = 10, completionPromise = 'DONE') =>
     post<{ sessionId: string; loop: string }>(`/sessions/${sessionId}/loop`, {
       prompt,

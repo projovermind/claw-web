@@ -14,12 +14,20 @@ export interface TodoItem {
   activeForm?: string;
 }
 
+export interface PermissionPrompt {
+  reqId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  toolUseId?: string | null;
+}
+
 interface SessionRuntime {
   streaming: string;
   toolCalls: ToolCall[];
   todos: TodoItem[];
   running: boolean;
   error: string | null;
+  permissionPrompt?: PermissionPrompt | null;
 }
 
 export type PaneCount = 1 | 2 | 3 | 4 | 5 | 6;
@@ -86,6 +94,8 @@ interface ChatState {
   finishDelegating: (sessionId: string) => void;
   purgeUnread: (validIds: Set<string>) => void;
   clearAllUnread: () => void;
+  setPermissionPrompt: (sessionId: string, prompt: PermissionPrompt) => void;
+  clearPermissionPrompt: (sessionId: string) => void;
 }
 
 const emptyRuntime = (): SessionRuntime => ({
@@ -93,7 +103,8 @@ const emptyRuntime = (): SessionRuntime => ({
   toolCalls: [],
   todos: [],
   running: false,
-  error: null
+  error: null,
+  permissionPrompt: null
 });
 
 function createPane(agentId: string | null = null, sessionId: string | null = null): Pane {
@@ -391,7 +402,7 @@ export const useChatStore = create<ChatState>()(
           return {
             runtime: {
               ...s.runtime,
-              [sessionId]: { ...emptyRuntime(), error }
+              [sessionId]: { ...emptyRuntime(), error, permissionPrompt: null }
             },
             unread: nextUnread
           };
@@ -432,7 +443,21 @@ export const useChatStore = create<ChatState>()(
           for (const k of orphans) delete next[k];
           return { unread: next };
         }),
-      clearAllUnread: () => set({ unread: {} })
+      clearAllUnread: () => set({ unread: {} }),
+      setPermissionPrompt: (sessionId, prompt) =>
+        set((s) => {
+          const r = { ...(s.runtime[sessionId] ?? emptyRuntime()) };
+          r.permissionPrompt = prompt;
+          return { runtime: { ...s.runtime, [sessionId]: r } };
+        }),
+      clearPermissionPrompt: (sessionId) =>
+        set((s) => {
+          const prev = s.runtime[sessionId];
+          if (!prev?.permissionPrompt) return s;
+          return {
+            runtime: { ...s.runtime, [sessionId]: { ...prev, permissionPrompt: null } }
+          };
+        })
     }),
     {
       name: 'claw-chat',

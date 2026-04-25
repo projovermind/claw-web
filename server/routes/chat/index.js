@@ -26,7 +26,9 @@ export function createChatRouter({
   delegationTracker,
   pushStore,
   webConfig,
-  getBridgeContext
+  getBridgeContext,
+  approvalBroker,
+  bridgeToken
 }) {
   const router = Router();
 
@@ -57,7 +59,9 @@ export function createChatRouter({
     retryCounters,
     reEntryCounters,
     MAX_AUTO_RETRIES,
-    MAX_REENTRY
+    MAX_REENTRY,
+    approvalBroker,
+    bridgeToken
   };
 
   // Wire queue (needs ctx.executeDelegation — resolved later)
@@ -141,8 +145,11 @@ export function createChatRouter({
   });
 
   router.delete('/:sessionId', (req, res) => {
-    const aborted = runner.abort(req.params.sessionId);
-    if (eventBus) eventBus.publish('chat.aborted', { sessionId: req.params.sessionId });
+    const sid = req.params.sessionId;
+    const aborted = runner.abort(sid);
+    // Cancel any pending permission-prompt modal for this session so the UI clears.
+    if (approvalBroker) approvalBroker.cancelForSession(sid, 'session aborted');
+    if (eventBus) eventBus.publish('chat.aborted', { sessionId: sid });
     res.json({ aborted });
   });
 

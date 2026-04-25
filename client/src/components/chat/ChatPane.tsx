@@ -11,6 +11,7 @@ import { useVoice } from '../../hooks/useVoice';
 import MessageList from './MessageList';
 import StreamingMessage from './StreamingMessage';
 import { SessionTitleEditor } from './SessionTitleEditor';
+import PermissionPromptModal from './PermissionPromptModal';
 
 interface Props {
   paneId: string;
@@ -495,6 +496,9 @@ export default function ChatPane({
             )}
           </div>
         </>
+      )}
+      {sessionId && runtime?.permissionPrompt && isActive && (
+        <PermissionPromptModal sessionId={sessionId} prompt={runtime.permissionPrompt} />
       )}
     </div>
   );

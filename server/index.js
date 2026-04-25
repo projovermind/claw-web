@@ -47,6 +47,9 @@ import { createStatsRouter } from './routes/stats.js';
 import { createTasksRouter } from './routes/tasks.js';
 import { createHooksRouter } from './routes/hooks.js';
 import { createMcpRouter } from './routes/mcp.js';
+import { createMcpApprovalRouter } from './routes/mcp-approval.js';
+import { createApprovalBroker } from './lib/approval-broker.js';
+import { nanoid } from 'nanoid';
 import { createWorktreeRouter } from './routes/worktree.js';
 import { createSchedulesRouter } from './routes/schedules.js';
 import { createLspRouter } from './routes/lsp.js';
@@ -286,6 +289,11 @@ async function main() {
   }
   const accountScheduler = createAccountScheduler({ accountsStore });
   const runner = createRunner({ processTracker, accountScheduler });
+  // MCP permission-prompt bridge — shared secret token for the stdio subprocess
+  // to authenticate back to the loopback endpoint. Regenerated every boot so
+  // leaked tokens from prior runs become worthless.
+  const approvalBroker = createApprovalBroker();
+  const bridgeToken = nanoid(32);
   const delegationTracker = createDelegationTracker();
   const pushStore = createPushStore({ webConfig, webConfigPath: WEB_CONFIG_PATH });
   pushStore.setRunnerRef(runner); // 작업 중 알림 억제
@@ -349,9 +357,22 @@ async function main() {
     delegationTracker,
     pushStore,
     webConfig,
+    approvalBroker,
+    bridgeToken,
     getBridgeContext: (workspace) => bridgeRouter.getContextForWorkspace?.(workspace) ?? null
   });
   app.use('/api/chat', chatRouter);
+  // MCP approval — mount at root so `/internal/approval/request` (no /api prefix)
+  // bypasses user auth; `/api/chat/:sessionId/approval/:reqId` still goes through
+  // the `/api` auth middleware registered above.
+  app.use(createMcpApprovalRouter({
+    approvalBroker,
+    eventBus,
+    bridgeToken,
+    sessionsStore,
+    configStore,
+    metadataStore
+  }));
   app.use('/api/backends', createBackendsRouter({ backendsStore, eventBus }));
   app.use('/api/accounts', createAccountsRouter({ accountsStore, eventBus }));
   app.use('/api/uploads', createUploadsRouter({ uploadsDir: UPLOADS_DIR, eventBus }));

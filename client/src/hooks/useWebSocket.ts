@@ -132,6 +132,28 @@ export function useWebSocket() {
             } catch { /* ignore */ }
             return;
           }
+          if (topic === 'chat.permission-prompt') {
+            const sid = msg.sessionId as string;
+            useChatStore.getState().setPermissionPrompt(sid, {
+              reqId: msg.reqId as string,
+              toolName: msg.toolName as string,
+              input: (msg.input as Record<string, unknown>) ?? {},
+              toolUseId: (msg.toolUseId as string | null) ?? null
+            });
+            // 주의 알림음
+            try {
+              const settings = queryClient.getQueryData<{ appearance?: { soundEnabled?: boolean; soundVolume?: number } }>(['settings-appearance']);
+              const ap = settings?.appearance;
+              if (ap?.soundEnabled !== false) {
+                playWarn(ap?.soundVolume ?? 0.2);
+              }
+            } catch { /* ignore */ }
+            return;
+          }
+          if (topic === 'chat.permission-resolved') {
+            useChatStore.getState().clearPermissionPrompt(msg.sessionId as string);
+            return;
+          }
           if (topic === 'chat.exit' || topic === 'chat.aborted') {
             // chat.error가 먼저 왔으면 에러 메시지 유지 (exit가 덮어쓰지 않음)
             const sid = msg.sessionId as string;

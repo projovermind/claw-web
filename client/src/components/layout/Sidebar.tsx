@@ -122,31 +122,45 @@ export default function Sidebar() {
     window.dispatchEvent(event);
   };
 
-  const sidebarContent = (
+  /**
+   * 단일 렌더러. `isCollapsed` 에 따라 텍스트/언어토글만 숨기고
+   * 아이콘과 항목의 수직 위치는 그대로 유지 — collapse 토글 시 y-shift 방지.
+   * Mobile drawer 는 항상 false 로 호출.
+   */
+  const renderContent = (isCollapsed: boolean) => (
     <>
-      <div className="px-5 py-4 border-b border-zinc-800">
-        <div className="flex items-center gap-2">
+      <div className={`${isCollapsed ? 'px-2' : 'px-5'} py-4 border-b border-zinc-800 h-[100px] shrink-0`}>
+        <div className="flex items-center gap-2 h-7">
           <Link
             to="/"
             onClick={() => setMobileOpen(false)}
-            className="text-lg font-semibold tracking-tight flex-1 hover:text-sky-400 transition-colors"
-          >{appName}</Link>
-          {/* Mobile close button — only visible when the drawer is open */}
-          <button
-            onClick={() => setMobileOpen(false)}
-            className="lg:hidden p-1 rounded hover:bg-zinc-800 text-zinc-400"
-            aria-label="Close menu"
+            className={`text-lg font-semibold tracking-tight flex-1 min-w-0 hover:text-sky-400 transition-colors truncate whitespace-nowrap ${isCollapsed ? 'text-center' : ''}`}
+            title={isCollapsed ? appName : undefined}
           >
-            <X size={18} />
-          </button>
+            {isCollapsed ? (appName ?? 'C').charAt(0).toUpperCase() : appName}
+          </Link>
+          {!isCollapsed && (
+            <button
+              onClick={() => setMobileOpen(false)}
+              className="lg:hidden p-1 rounded hover:bg-zinc-800 text-zinc-400"
+              aria-label="Close menu"
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
         <button
           onClick={openPalette}
-          className="mt-3 w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          className={`mt-3 w-full h-7 flex items-center gap-2 ${isCollapsed ? 'justify-center px-0' : 'px-2.5'} rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-500 hover:text-zinc-300 transition-colors`}
+          title={isCollapsed ? `${t('sidebar.searchPlaceholder')} (${isMac ? '⌘K' : 'Ctrl+K'})` : undefined}
         >
-          <Search size={12} />
-          <span className="flex-1 text-left">{t('sidebar.searchPlaceholder')}</span>
-          <kbd className="text-[11px] font-mono text-zinc-600">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
+          <Search size={12} className="shrink-0" />
+          {!isCollapsed && (
+            <>
+              <span className="flex-1 min-w-0 text-left truncate whitespace-nowrap">{t('sidebar.searchPlaceholder')}</span>
+              <kbd className="text-[11px] font-mono text-zinc-600 shrink-0 whitespace-nowrap">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
+            </>
+          )}
         </button>
       </div>
       <nav className="flex-1 p-2 overflow-y-auto">
@@ -162,95 +176,21 @@ export default function Sidebar() {
                   key={to}
                   to={to}
                   end={to === '/'}
+                  title={isCollapsed ? label : undefined}
                   className={({ isActive }) =>
-                    `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors ${
+                    `relative flex items-center gap-3 ${isCollapsed ? 'justify-center px-0' : 'px-3'} h-9 rounded-md text-sm transition-colors ${
                       isActive
                         ? 'bg-zinc-800 text-white'
                         : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
                     }`
                   }
                 >
-                  <Icon size={16} />
-                  <span className="flex-1">{label}</span>
-                  {showChatDot && (
+                  <Icon size={16} className="shrink-0" />
+                  {!isCollapsed && <span className="flex-1 min-w-0 truncate whitespace-nowrap">{label}</span>}
+                  {showChatDot && !isCollapsed && (
                     <span className={`w-2 h-2 rounded-full ${chatDotColor} ${hasError || hasUnread || hasRunning ? 'animate-pulse' : ''}`} />
                   )}
-                </NavLink>
-              );
-            })}
-          </div>
-        ))}
-      </nav>
-      {/* Language toggle */}
-      <div className="p-2 border-t border-zinc-800">
-        <div className="flex items-center gap-1 text-[11px] text-zinc-500 mb-1 px-2">
-          <Languages size={11} />
-          <span>Language</span>
-        </div>
-        <div className="flex gap-1">
-          <button
-            onClick={() => setLang('ko')}
-            className={`flex-1 rounded px-2 py-1.5 text-xs transition-colors ${
-              lang === 'ko' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900'
-            }`}
-          >
-            한국어
-          </button>
-          <button
-            onClick={() => setLang('en')}
-            className={`flex-1 rounded px-2 py-1.5 text-xs transition-colors ${
-              lang === 'en' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900'
-            }`}
-          >
-            English
-          </button>
-        </div>
-      </div>
-    </>
-  );
-
-  const collapsedContent = (
-    <>
-      <div className="px-2 py-4 border-b border-zinc-800 flex flex-col items-center gap-2">
-        <Link
-          to="/"
-          className="text-lg font-bold text-zinc-200 hover:text-sky-400 transition-colors"
-          title={appName}
-        >
-          {(appName ?? 'C').charAt(0).toUpperCase()}
-        </Link>
-        <button
-          onClick={openPalette}
-          className="p-1.5 rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-zinc-500 hover:text-zinc-300 transition-colors"
-          title={`${t('sidebar.searchPlaceholder')} (${isMac ? '⌘K' : 'Ctrl+K'})`}
-        >
-          <Search size={14} />
-        </button>
-      </div>
-      <nav className="flex-1 p-1.5 overflow-y-auto">
-        {GROUPS.map((group, gi) => (
-          <div
-            key={gi}
-            className={`space-y-1 ${gi > 0 ? 'mt-3 pt-3 border-t border-zinc-800/60' : ''}`}
-          >
-            {group.items.map(({ to, icon: Icon, label }) => {
-              const showChatDot = to === '/chat' && chatDotColor;
-              return (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={to === '/'}
-                  title={label}
-                  className={({ isActive }) =>
-                    `relative flex items-center justify-center p-2 rounded-md transition-colors ${
-                      isActive
-                        ? 'bg-zinc-800 text-white'
-                        : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-                    }`
-                  }
-                >
-                  <Icon size={16} />
-                  {showChatDot && (
+                  {showChatDot && isCollapsed && (
                     <span className={`absolute top-1 right-1 w-1.5 h-1.5 rounded-full ${chatDotColor} ${hasError || hasUnread || hasRunning ? 'animate-pulse' : ''}`} />
                   )}
                 </NavLink>
@@ -259,6 +199,32 @@ export default function Sidebar() {
           </div>
         ))}
       </nav>
+      {!isCollapsed && (
+        <div className="p-2 border-t border-zinc-800">
+          <div className="flex items-center gap-1 text-[11px] text-zinc-500 mb-1 px-2">
+            <Languages size={11} />
+            <span>Language</span>
+          </div>
+          <div className="flex gap-1">
+            <button
+              onClick={() => setLang('ko')}
+              className={`flex-1 rounded px-2 py-1.5 text-xs whitespace-nowrap transition-colors ${
+                lang === 'ko' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900'
+              }`}
+            >
+              한국어
+            </button>
+            <button
+              onClick={() => setLang('en')}
+              className={`flex-1 rounded px-2 py-1.5 text-xs whitespace-nowrap transition-colors ${
+                lang === 'en' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900'
+              }`}
+            >
+              English
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 
@@ -299,11 +265,13 @@ export default function Sidebar() {
 
       {/* Desktop sidebar — static, always visible on lg+ */}
       <aside
-        className={`group shrink-0 border-r border-zinc-800 bg-zinc-950/80 hidden lg:flex lg:flex-col relative transition-[width] ${
-          collapsed ? 'w-12' : 'w-60'
+        className={`group shrink-0 border-r border-zinc-800 bg-zinc-950/80 hidden lg:flex relative transition-[width] ${
+          collapsed ? 'w-14' : 'w-60'
         }`}
       >
-        {collapsed ? collapsedContent : sidebarContent}
+        <div className="flex flex-col w-full h-full overflow-hidden">
+          {renderContent(collapsed)}
+        </div>
         {/* Collapse/expand toggle — vertically centered on right edge */}
         <button
           onClick={toggleCollapsed}
@@ -322,7 +290,7 @@ export default function Sidebar() {
             onClick={() => setMobileOpen(false)}
           />
           <aside className="relative w-64 h-full bg-zinc-950 border-r border-zinc-800 flex flex-col shadow-2xl">
-            {sidebarContent}
+            {renderContent(false)}
           </aside>
         </div>
       )}

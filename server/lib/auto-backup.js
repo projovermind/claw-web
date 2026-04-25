@@ -16,7 +16,8 @@ export function createAutoBackup(filePaths) {
 
   async function backupOne(filePath) {
     if (!fssync.existsSync(filePath)) return;
-    const dir = path.dirname(filePath);
+    const dir = path.join(path.dirname(filePath), 'backups');
+    await fs.mkdir(dir, { recursive: true }).catch(() => {});
     const base = path.basename(filePath);
     const ts = new Date().toISOString().replace(/[:.]/g, '').replace('T', '-').slice(0, 15);
     const backupName = `${base}.backup-${ts}`;

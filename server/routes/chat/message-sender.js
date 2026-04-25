@@ -1,3 +1,8 @@
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { logger } from '../../lib/logger.js';
 import { buildCarlContext } from '../../lib/carl-injector.js';
 import { buildSkillContext } from '../../lib/skill-injector.js';
@@ -6,6 +11,47 @@ import { buildPaulContext } from '../../lib/paul-reader.js';
 import { buildPinnedFilesContext, buildGitDiffContext, buildBridgeContext } from '../../lib/working-context-injector.js';
 import { findClaudeSessionFile } from '../../runners/claude-cli-runner.js';
 import { classifyError, resolveAgent, buildConversationSummary } from './utils.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+// server/routes/chat/ → ../../mcp/permission-bridge.js
+const PERMISSION_BRIDGE_PATH = path.resolve(__dirname, '../../mcp/permission-bridge.js');
+
+/**
+ * Builds an ephemeral .mcp.json for this session that registers our stdio
+ * permission-prompt bridge. Returns { configPath, cleanup }.
+ *
+ * The bridge subprocess receives CLAW_BRIDGE_URL/TOKEN/SESSION_ID via env so it
+ * can POST back to /internal/approval/request when Claude asks for permission.
+ */
+function buildMcpPermissionConfig({ sessionId, bridgeToken, port }) {
+  const configPath = path.join(os.tmpdir(), `claw-mcp-${sessionId}.json`);
+  const bridgeUrl = `http://127.0.0.1:${port}/internal/approval/request`;
+  const config = {
+    mcpServers: {
+      claw: {
+        command: process.execPath, // node binary
+        args: [PERMISSION_BRIDGE_PATH],
+        env: {
+          CLAW_BRIDGE_URL: bridgeUrl,
+          CLAW_BRIDGE_TOKEN: bridgeToken,
+          CLAW_SESSION_ID: sessionId
+        }
+      }
+    }
+  };
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(config), 'utf8');
+  } catch (err) {
+    logger.warn({ err: err.message, configPath }, 'mcp-permission: failed to write config (disabling prompt)');
+    return null;
+  }
+  return {
+    configPath,
+    cleanup() {
+      fsp.unlink(configPath).catch(() => {});
+    }
+  };
+}
 
 /**
  * Creates sendRunnerMessage. References ctx.handleDelegation,
@@ -29,7 +75,9 @@ export function createMessageSender(ctx) {
     webConfig,
     getBridgeContext,
     retryCounters,
-    MAX_AUTO_RETRIES
+    MAX_AUTO_RETRIES,
+    approvalBroker,
+    bridgeToken
   } = ctx;
 
   function sendRunnerMessage(sessionId, message, { claudeSessionId } = {}) {
@@ -203,6 +251,29 @@ export function createMessageSender(ctx) {
 
     let accumText = '';
     const toolCalls = [];
+
+    // ── MCP permission-prompt bridge (optional, non-plan mode only) ──
+    // Writes an ephemeral MCP config so Claude CLI spawns our stdio bridge and
+    // routes tool-permission decisions back to the user via WS modal.
+    let mcpPermission = null;
+    if (!agent.planMode && approvalBroker && bridgeToken) {
+      mcpPermission = buildMcpPermissionConfig({
+        sessionId,
+        bridgeToken,
+        port: webConfig?.port || 3838
+      });
+      if (mcpPermission) {
+        agent.mcpConfigPath = mcpPermission.configPath;
+        agent.permissionPromptTool = 'mcp__claw__approval_prompt';
+      }
+    }
+    function cleanupPermissionBridge() {
+      if (mcpPermission) {
+        try { mcpPermission.cleanup(); } catch { /* ignore */ }
+        mcpPermission = null;
+      }
+      if (approvalBroker) approvalBroker.cancelForSession(sessionId, 'session ended');
+    }
 
     eventBus.publish('chat.started', { sessionId });
 
@@ -425,6 +496,7 @@ export function createMessageSender(ctx) {
           }
         },
         onExit({ code } = {}) {
+          cleanupPermissionBridge();
           eventBus.publish('chat.exit', { sessionId, code });
           // Silent exit 감지: Claude CLI 가 exit 0 으로 나갔는데 응답 text 가 비어있음.
           // 과거엔 자동 재시도(3회) 했으나 — 같은 조건이면 무한히 반복되며
@@ -479,6 +551,7 @@ export function createMessageSender(ctx) {
       }
     });
     } catch (err) {
+      cleanupPermissionBridge();
       eventBus.publish('chat.error', { sessionId, error: err.message });
       sessionsStore.appendMessage(sessionId, { role: 'assistant', content: `⚠️ 실행 실패 — ${err.message}` }).catch(() => {});
       eventBus.publish('chat.exit', { sessionId, code: -1 });

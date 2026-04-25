@@ -182,6 +182,13 @@ export function startClaudeRun({
   ];
   if (mergedDisallowed.length) args.push('--disallowedTools', ...mergedDisallowed);
 
+  // MCP permission-prompt bridge: user modal approves tool use at runtime.
+  // plan 모드에서는 도구 실행 자체가 제한되므로 생략.
+  if (!agent.planMode && agent.mcpConfigPath && agent.permissionPromptTool) {
+    args.push('--mcp-config', agent.mcpConfigPath);
+    args.push('--permission-prompt-tool', agent.permissionPromptTool);
+  }
+
   args.push('--model', model);
 
   // 스킬을 시스템 프롬프트로 주입

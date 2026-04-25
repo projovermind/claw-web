@@ -9,15 +9,17 @@ import {
   Settings,
   LayoutDashboard,
   Search,
-  ArrowRight
+  ArrowRight,
+  Palette
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
+import ClaudeDesignModal from './ClaudeDesignModal';
 
 type PaletteItem = {
   id: string;
-  kind: 'nav' | 'agent' | 'project' | 'skill' | 'session';
+  kind: 'nav' | 'agent' | 'project' | 'skill' | 'session' | 'action';
   label: string;
   sublabel?: string;
   icon: LucideIcon;
@@ -43,6 +45,7 @@ export default function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
+  const [designOpen, setDesignOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const t = useT();
@@ -97,6 +100,18 @@ export default function CommandPalette() {
 
   const items = useMemo<PaletteItem[]>(() => {
     const out: PaletteItem[] = [];
+
+    // Actions — UI commands triggered from the palette
+    out.push({
+      id: 'action:design',
+      kind: 'action',
+      label: t('palette.action.design'),
+      sublabel: t('palette.action.design.sub'),
+      icon: Palette,
+      iconColor: 'text-orange-400',
+      action: () => setDesignOpen(true),
+      searchBlob: '/design design 디자인 claude 요청 prompt 프롬프트'
+    });
 
     // Static navigation
     const nav: { label: string; path: string; icon: LucideIcon; color: string }[] = [
@@ -182,7 +197,7 @@ export default function CommandPalette() {
     }
 
     return out;
-  }, [agents, projects, skills, sessionsData, navigate]);
+  }, [agents, projects, skills, sessionsData, navigate, t]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -214,9 +229,12 @@ export default function CommandPalette() {
     }
   };
 
-  if (!open) return null;
+  // open/design modal both rendered via conditional JSX below
 
   return (
+    <>
+      <ClaudeDesignModal open={designOpen} onClose={() => setDesignOpen(false)} />
+      {open && (
     <div
       className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start justify-center z-[90] p-4 pt-[15vh]"
       onClick={() => setOpen(false)}
@@ -283,5 +301,7 @@ export default function CommandPalette() {
         </div>
       </div>
     </div>
+      )}
+    </>
   );
 }

@@ -12,6 +12,26 @@ export default defineConfig({
       '/ws': { target: 'ws://localhost:3838', ws: true }
     }
   },
+  build: {
+    // Route-level splits (React.lazy in App.tsx) produce per-page chunks.
+    // manualChunks below groups heavy shared libs that would otherwise
+    // inflate every page chunk they're imported from.
+    chunkSizeWarningLimit: 700,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          icons: ['lucide-react'],
+          query: ['@tanstack/react-query'],
+          dnd: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
+          terminal: ['@xterm/xterm', '@xterm/addon-fit'],
+          markdown: ['react-markdown', 'rehype-highlight', 'remark-gfm'],
+          diff: ['diff'],
+          state: ['zustand']
+        }
+      }
+    }
+  },
   test: {
     environment: 'jsdom',
     globals: true
