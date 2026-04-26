@@ -1,5 +1,5 @@
-import { lazy, Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { lazy, Suspense, useEffect } from 'react';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
 import AppShell from './components/layout/AppShell';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useGlobalFileDrop } from './hooks/useGlobalFileDrop';
@@ -46,6 +46,20 @@ export default function App() {
   useAppearance();
   useUndoShortcut();
   useActivityPing();
+
+  // 푸시 알림 클릭 → SW 가 postMessage 로 url 전달 → react-router 로 soft-navigate
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+    const handler = (ev: MessageEvent) => {
+      if (ev.data?.type === 'sw-navigate' && typeof ev.data.url === 'string') {
+        navigate(ev.data.url);
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handler);
+    return () => navigator.serviceWorker.removeEventListener('message', handler);
+  }, [navigate]);
+
   return (
     <>
       <LoginDialog />

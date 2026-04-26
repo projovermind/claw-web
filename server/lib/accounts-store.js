@@ -3,6 +3,7 @@
  * Maintains backward-compatible API for account-scheduler and accounts router.
  */
 import { nanoid } from 'nanoid';
+import { inspectCreds } from './cred-inspector.js';
 
 const newId = () => `acc_${nanoid(12)}`;
 
@@ -14,12 +15,14 @@ function toIso(val) {
 }
 
 /** Convert a claude-cli backend entry to the "account" shape expected by callers. */
-function toAccount(id, b) {
+function toAccount(id, b, { backendsStore } = {}) {
   const cooldownUntil = b.cooldownUntil ?? null;
   const cooldownRemaining = (cooldownUntil && cooldownUntil > Date.now())
     ? Math.ceil((cooldownUntil - Date.now()) / 1000)
     : null;
   const usage = b.usage ?? { windowStart: null, messagesUsed: 0 };
+  const managedOAuth = backendsStore?.getOAuthToken?.(id) ? true : false;
+  const cred = inspectCreds(b.configDir ?? null, { managedOAuth });
   return {
     id,
     label: b.label ?? id,
@@ -32,6 +35,7 @@ function toAccount(id, b) {
     cooldownRemaining,
     createdAt: b.createdAt ?? null,
     updatedAt: b.updatedAt ?? null,
+    cred, // { has, source, expiresAt?, expiringSoon?, accountEmail? }
   };
 }
 
@@ -44,7 +48,7 @@ export async function createAccountsStore(_filePath, { backendsStore } = {}) {
     const raw = backendsStore.getRaw();
     return Object.entries(raw.backends ?? {})
       .filter(([, b]) => b.type === 'claude-cli')
-      .map(([id, b]) => toAccount(id, b));
+      .map(([id, b]) => toAccount(id, b, { backendsStore }));
   }
 
   return {
@@ -53,7 +57,7 @@ export async function createAccountsStore(_filePath, { backendsStore } = {}) {
     getById: (id) => {
       const b = backendsStore.getBackend(id);
       if (!b || b.type !== 'claude-cli') return null;
-      return toAccount(id, b);
+      return toAccount(id, b, { backendsStore });
     },
 
     async create({ label, configDir, priority = 50, models = {}, status = 'disabled' }) {
@@ -73,7 +77,7 @@ export async function createAccountsStore(_filePath, { backendsStore } = {}) {
         updatedAt: now,
       });
       const b = backendsStore.getBackend(id);
-      return toAccount(id, b);
+      return toAccount(id, b, { backendsStore });
     },
 
     async update(id, patch) {
@@ -85,7 +89,7 @@ export async function createAccountsStore(_filePath, { backendsStore } = {}) {
         ...patch,
         updatedAt: new Date().toISOString(),
       });
-      return toAccount(id, updated ?? backendsStore.getBackend(id));
+      return toAccount(id, updated ?? backendsStore.getBackend(id), { backendsStore });
     },
 
     async delete(id) {

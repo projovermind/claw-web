@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Server, KeyRound, ToggleRight, Webhook, Plug, Clock, Palette, Bell, ChevronRight } from 'lucide-react';
 import { BackendsTab } from '../components/settings/BackendsTab';
 import { AccessTab } from '../components/settings/AccessTab';
@@ -12,9 +13,28 @@ import { useT } from '../lib/i18n';
 
 type Tab = 'appearance' | 'backends' | 'access' | 'features' | 'hooks' | 'mcp' | 'schedules' | 'notifications';
 
+const TAB_VALUES: Tab[] = ['appearance', 'backends', 'access', 'features', 'hooks', 'mcp', 'schedules', 'notifications'];
+
 export default function SettingsPage() {
-  const [tab, setTab] = useState<Tab>('appearance');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = (TAB_VALUES.includes(searchParams.get('tab') as Tab) ? (searchParams.get('tab') as Tab) : 'appearance');
+  const [tab, setTabState] = useState<Tab>(initialTab);
   const t = useT();
+
+  // URL ?tab= 변경에 반응 (push 알림 클릭 등 외부 진입)
+  useEffect(() => {
+    const urlTab = searchParams.get('tab') as Tab | null;
+    if (urlTab && TAB_VALUES.includes(urlTab) && urlTab !== tab) {
+      setTabState(urlTab);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  const setTab = (next: Tab) => {
+    setTabState(next);
+    // 탭 직접 클릭 시: tab 외의 deep-link 쿼리(authBackend 등) 정리
+    setSearchParams({ tab: next }, { replace: true });
+  };
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollRight, setCanScrollRight] = useState(false);
 

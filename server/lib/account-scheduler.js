@@ -63,6 +63,19 @@ function defaultClaudeHasCredentials() {
 }
 
 export function createAccountScheduler({ accountsStore, backendsStore }) {
+  /**
+   * 인증 가능 여부 — 다음 중 하나라도 만족하면 true:
+   *   1. backend 에 managed OAuth 토큰이 저장돼 있음 (secrets.json)
+   *   2. configDir 에 .credentials.json 또는 oauthAccount 가 있음
+   *   3. configDir 미지정 (기본 ~/.claude/ 사용)
+   */
+  function hasAuth(idAndConfigDir) {
+    const id = idAndConfigDir?.id;
+    const configDir = idAndConfigDir?.configDir ?? null;
+    if (id && backendsStore?.getOAuthToken?.(id)) return true;
+    return hasCredentials(configDir);
+  }
+
   async function autoRestoreCooldowns() {
     const now = Date.now();
     for (const acc of accountsStore.getAll()) {
@@ -120,7 +133,7 @@ export function createAccountScheduler({ accountsStore, backendsStore }) {
     // 1. 에이전트 명시 accountId
     if (agent.accountId) {
       const acc = accountsStore.getById(agent.accountId);
-      if (acc && acc.status !== 'disabled' && hasCredentials(acc.configDir)) return acc;
+      if (acc && acc.status !== 'disabled' && hasAuth(acc)) return acc;
     }
 
     // 2. backendId가 claude-cli 타입 계정이면 해당 계정 직접 사용
@@ -130,11 +143,11 @@ export function createAccountScheduler({ accountsStore, backendsStore }) {
     if (agent.backendId && backendsStore) {
       const b = backendsStore.getBackend(agent.backendId);
       if (b?.type === 'claude-cli') {
-        if (hasCredentials(b.configDir)) {
+        if (hasAuth({ id: agent.backendId, configDir: b.configDir })) {
           // accountsStore 에서 찾거나 직접 configDir 포함 객체 반환
           const acc = accountsStore.getById(agent.backendId);
           logger.info(
-            { agentId: agent.id, backendId: agent.backendId, status: b.status, configDir: b.configDir },
+            { agentId: agent.id, backendId: agent.backendId, status: b.status, configDir: b.configDir, oauth: !!backendsStore.getOAuthToken?.(agent.backendId) },
             '[scheduler] using explicitly specified claude-cli backend'
           );
           return acc ?? { id: agent.backendId, configDir: b.configDir ?? null };
@@ -152,13 +165,15 @@ export function createAccountScheduler({ accountsStore, backendsStore }) {
     // 3. 프로젝트 레벨 accountId
     if (agent.projectAccountId) {
       const acc = accountsStore.getById(agent.projectAccountId);
-      if (acc && acc.status !== 'disabled' && hasCredentials(acc.configDir)) return acc;
+      if (acc && acc.status !== 'disabled' && hasAuth(acc)) return acc;
     }
 
     const active = accountsStore
       .getAll()
       .filter((a) => {
         if (a.status !== 'active') return false;
+        // managed OAuth 토큰이 있으면 configDir 무관하게 사용 가능
+        if (backendsStore?.getOAuthToken?.(a.id)) return true;
         // configDir이 있는 서브계정은 credentials.json 있어야 사용 가능
         if (a.configDir && !hasCredentials(a.configDir)) {
           logger.warn({ accountId: a.id, configDir: a.configDir },

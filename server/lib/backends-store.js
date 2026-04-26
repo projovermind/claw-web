@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import fssync from 'node:fs';
 import EventEmitter from 'node:events';
 import lockfile from 'proper-lockfile';
+import { inspectCreds } from './cred-inspector.js';
 
 const EMPTY = () => ({
   version: 1,
@@ -66,17 +67,25 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
             : 'none';
 
       // Claude CLI: OAuth 토큰 상태도 체크
+      // 우선순위: managed (per-backend secrets.json) > shell (process.env)
       let oauthStatus = 'unset';
       let oauthSource = 'none';
       if (b.type === 'claude-cli') {
         const oauthKey = 'CLAUDE_CODE_OAUTH_TOKEN';
-        oauthStatus = process.env[oauthKey] ? 'set' : 'unset';
-        oauthSource = secretsStore?._getState?.().backends?.[`${id}_oauth`]?.value
-          ? 'managed'
-          : process.env[oauthKey]
-            ? 'shell'
-            : 'none';
+        const managed = secretsStore?.hasOAuth?.(id) ?? false;
+        if (managed) {
+          oauthStatus = 'set';
+          oauthSource = 'managed';
+        } else if (process.env[oauthKey]) {
+          oauthStatus = 'set';
+          oauthSource = 'shell';
+        }
       }
+
+      // Claude CLI: cred 정보(파일 존재 + 만료시각) 도 함께 노출 → UI 배지/상태 표시
+      const cred = b.type === 'claude-cli'
+        ? inspectCreds(b.configDir ?? null, { managedOAuth: oauthSource === 'managed' })
+        : undefined;
 
       backends[id] = {
         id,
@@ -88,7 +97,7 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
         secretSource,
         models: b.models ?? {},
         fallback: b.fallback ?? null,
-        ...(b.type === 'claude-cli' ? { oauthStatus, oauthSource } : {})
+        ...(b.type === 'claude-cli' ? { oauthStatus, oauthSource, cred, configDir: b.configDir ?? null, status: b.status ?? 'active', priority: b.priority ?? 50, lastUsedAt: b.lastUsedAt ?? null, usage: b.usage ?? null, cooldownUntil: b.cooldownUntil ?? null } : {})
       };
     }
     return {
@@ -203,6 +212,23 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
       if (!b) throw new Error(`Unknown backend ${id}`);
       if (!b.envKey) throw new Error(`Backend ${id} has no envKey (cannot store a secret)`);
       await secretsStore.set(id, b.envKey, value);
+    },
+
+    /**
+     * Set or clear a managed OAuth token (CLAUDE_CODE_OAUTH_TOKEN) for a
+     * claude-cli backend. The token is stored per-backend (does NOT touch
+     * process.env to avoid collisions); the runner injects it at spawn time.
+     */
+    async setOAuthToken(id, token) {
+      if (!secretsStore) throw new Error('secrets store not configured');
+      const b = cache.backends?.[id];
+      if (!b) throw new Error(`Unknown backend ${id}`);
+      if (b.type !== 'claude-cli') throw new Error(`Backend ${id} is not claude-cli`);
+      await secretsStore.setOAuth(id, token);
+    },
+
+    getOAuthToken(id) {
+      return secretsStore?.getOAuth?.(id) ?? null;
     },
 
     async setActive(backendId) {

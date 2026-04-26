@@ -4,7 +4,7 @@ export const ClaudeCliBackendSchema = z.object({
   type: z.literal('claude-cli'),
   label: z.string(),
   configDir: z.string().nullable().optional(),
-  status: z.enum(['active', 'cooldown', 'disabled']).default('active'),
+  status: z.enum(['active', 'cooldown', 'disabled', 'needs-relogin']).default('active'),
   lastUsedAt: z.number().nullable().default(null),
   usage: z.object({
     windowStart: z.number().nullable().default(null),

@@ -34,14 +34,15 @@ export async function createSecretsStore({ filePath }) {
     fssync.mkdirSync(dir, { recursive: true });
   }
 
-  let state = { version: 1, backends: {} };
+  let state = { version: 1, backends: {}, oauth: {} };
   if (fssync.existsSync(filePath)) {
     try {
       state = JSON.parse(await fs.readFile(filePath, 'utf8'));
       if (!state.backends) state.backends = {};
+      if (!state.oauth) state.oauth = {};
     } catch (err) {
       logger.warn({ err, filePath }, 'secrets-store: parse failed, starting empty');
-      state = { version: 1, backends: {} };
+      state = { version: 1, backends: {}, oauth: {} };
     }
   } else {
     await fs.writeFile(filePath, JSON.stringify(state, null, 2), { mode: 0o600 });
@@ -113,10 +114,38 @@ export async function createSecretsStore({ filePath }) {
      */
     async forget(backendId) {
       const info = state.backends[backendId];
-      if (!info) return;
-      delete state.backends[backendId];
-      if (info.envKey) delete process.env[info.envKey];
+      if (info) {
+        delete state.backends[backendId];
+        if (info.envKey) delete process.env[info.envKey];
+      }
+      // Also forget any managed OAuth token
+      if (state.oauth[backendId]) {
+        delete state.oauth[backendId];
+      }
       await flush();
+    },
+
+    // ── Managed OAuth tokens (Claude CLI: CLAUDE_CODE_OAUTH_TOKEN) ──
+    // Each Claude CLI backend can carry its own long-lived OAuth token (from
+    // Anthropic Console). These are NOT hydrated into process.env (they would
+    // collide — they all share the same env key). Instead, the runner looks
+    // up the right token per-spawn via getOAuth().
+    getOAuth(backendId) {
+      return state.oauth?.[backendId] ?? null;
+    },
+
+    async setOAuth(backendId, token) {
+      if (!backendId) throw new Error('backendId is required');
+      if (!token) {
+        delete state.oauth[backendId];
+      } else {
+        state.oauth[backendId] = token;
+      }
+      await flush();
+    },
+
+    hasOAuth(backendId) {
+      return !!state.oauth?.[backendId];
     },
 
     _getState: () => state

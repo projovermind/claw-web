@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { execFile } from 'node:child_process';
+import { execFile, spawn as cpSpawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import fs from 'node:fs/promises';
 import fssync from 'node:fs';
@@ -19,9 +19,20 @@ const createSchema = z.object({
 const updateSchema = z.object({
   label: z.string().min(1).max(80).optional(),
   configDir: z.string().max(500).optional(),
-  status: z.enum(['active', 'cooldown', 'disabled']).optional(),
+  status: z.enum(['active', 'cooldown', 'disabled', 'needs-relogin']).optional(),
   priority: z.number().int().min(0).max(999).optional(),
   models: z.record(z.string().max(200)).optional(),
+}).strict();
+
+const oauthTokenSchema = z.object({
+  // null/'' 이면 토큰 제거. 형식 검증은 길이만 (실제 검증은 사용 시점)
+  token: z.string().max(2000).nullable(),
+}).strict();
+
+const importSchema = z.object({
+  // base64 로 인코드된 파일 내용 — 보통 .credentials.json
+  credentialsJson: z.string().max(50_000).optional(),
+  claudeJson: z.string().max(2_000_000).optional(),
 }).strict();
 
 function findClaudeBin() {
@@ -38,7 +49,7 @@ function findClaudeBin() {
 
 const CLAUDE_BIN = findClaudeBin();
 
-export function createAccountsRouter({ accountsStore, eventBus }) {
+export function createAccountsRouter({ accountsStore, eventBus, backendsStore }) {
   const router = Router();
 
   router.get('/', (req, res) => {
@@ -135,22 +146,41 @@ export function createAccountsRouter({ accountsStore, eventBus }) {
     }
   });
 
-  // POST /:id/test — run `claude --version` with account's CLAUDE_CONFIG_DIR
+  // POST /:id/test — run `claude --version` with account's CLAUDE_CONFIG_DIR.
+  // 추가로 토큰 유효성을 확인하고 disabled/needs-relogin 상태였다면 active 로 자동 승격.
   router.post('/:id/test', async (req, res, next) => {
     try {
       const acc = accountsStore.getById(req.params.id);
       if (!acc) return next(new HttpError(404, 'Account not found', 'NOT_FOUND'));
 
-      const env = { ...process.env, CLAUDE_CONFIG_DIR: acc.configDir };
+      // managed OAuth 가 있으면 token, 없으면 configDir 사용
+      const env = { ...process.env };
+      const managedToken = backendsStore?.getOAuthToken?.(acc.id);
+      if (managedToken) {
+        env.CLAUDE_CODE_OAUTH_TOKEN = managedToken;
+        delete env.CLAUDE_CONFIG_DIR;
+      } else if (acc.configDir) {
+        env.CLAUDE_CONFIG_DIR = acc.configDir;
+        delete env.CLAUDE_CODE_OAUTH_TOKEN;
+      }
+
       const { stdout, stderr } = await execFileAsync(CLAUDE_BIN, ['--version'], {
         env,
         timeout: 10_000,
       });
 
+      // 성공 → cred 도 보유 → disabled / needs-relogin 자동 활성화
+      const fresh = accountsStore.getById(acc.id);
+      if (fresh && fresh.cred?.has && (fresh.status === 'disabled' || fresh.status === 'needs-relogin')) {
+        await accountsStore.update(acc.id, { status: 'active' }).catch(() => {});
+        eventBus?.publish('accounts.updated', {});
+      }
+
       res.json({
         ok: true,
         configDir: acc.configDir,
         output: (stdout || stderr || '').trim(),
+        autoActivated: fresh?.status === 'disabled' || fresh?.status === 'needs-relogin',
       });
     } catch (err) {
       const acc = accountsStore.getById(req.params.id);
@@ -160,6 +190,215 @@ export function createAccountsRouter({ accountsStore, eventBus }) {
         error: err.message,
       });
     }
+  });
+
+  // ── Managed OAuth 토큰 (CLAUDE_CODE_OAUTH_TOKEN 직접 붙여넣기) ──
+  // PUT /:id/oauth-token  body: { token: string | null }
+  router.put('/:id/oauth-token', async (req, res, next) => {
+    try {
+      if (!backendsStore) return next(new HttpError(500, 'backends store not configured', 'NO_BACKENDS_STORE'));
+      const { token } = oauthTokenSchema.parse(req.body);
+      const acc = accountsStore.getById(req.params.id);
+      if (!acc) return next(new HttpError(404, 'Account not found', 'NOT_FOUND'));
+      await backendsStore.setOAuthToken(req.params.id, token || null);
+      // 토큰 저장 후 status 가 disabled / needs-relogin 이면 active 로 자동 승격
+      if (token && (acc.status === 'disabled' || acc.status === 'needs-relogin')) {
+        await accountsStore.update(req.params.id, { status: 'active' }).catch(() => {});
+      }
+      eventBus?.publish('accounts.updated', {});
+      res.json({ ok: true, hasToken: !!token, account: accountsStore.getById(req.params.id) });
+    } catch (err) {
+      if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
+      next(err);
+    }
+  });
+
+  // ── Backup / Restore ──
+  // GET /:id/export — return base64 of .credentials.json + .claude.json + managed OAuth token
+  router.get('/:id/export', async (req, res, next) => {
+    try {
+      const acc = accountsStore.getById(req.params.id);
+      if (!acc) return next(new HttpError(404, 'Account not found', 'NOT_FOUND'));
+      const out = {
+        accountId: acc.id,
+        label: acc.label,
+        exportedAt: new Date().toISOString(),
+      };
+      if (acc.configDir) {
+        try {
+          const credsPath = path.join(acc.configDir, '.credentials.json');
+          if (fssync.existsSync(credsPath)) {
+            out.credentialsJson = (await fs.readFile(credsPath)).toString('base64');
+          }
+          const claudeJsonPath = path.join(acc.configDir, '.claude.json');
+          if (fssync.existsSync(claudeJsonPath)) {
+            out.claudeJson = (await fs.readFile(claudeJsonPath)).toString('base64');
+          }
+        } catch (err) {
+          // 부분 실패 허용 — 가능한 만큼만 export
+          out.warn = `partial export: ${err.message}`;
+        }
+      }
+      const managed = backendsStore?.getOAuthToken?.(acc.id);
+      if (managed) out.managedOAuthToken = managed;
+      res.json(out);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // POST /:id/import  body: { credentialsJson?: base64, claudeJson?: base64 }
+  router.post('/:id/import', async (req, res, next) => {
+    try {
+      const data = importSchema.parse(req.body);
+      const acc = accountsStore.getById(req.params.id);
+      if (!acc) return next(new HttpError(404, 'Account not found', 'NOT_FOUND'));
+      if (!acc.configDir) return next(new HttpError(400, 'configDir is not set', 'NO_CONFIG_DIR'));
+      await fs.mkdir(acc.configDir, { recursive: true });
+      const written = [];
+      if (data.credentialsJson) {
+        const buf = Buffer.from(data.credentialsJson, 'base64');
+        // 형식 검증: JSON 파싱 가능해야 함
+        try { JSON.parse(buf.toString('utf8')); } catch {
+          return next(new HttpError(400, 'credentialsJson is not valid JSON', 'INVALID_BODY'));
+        }
+        const target = path.join(acc.configDir, '.credentials.json');
+        await fs.writeFile(target, buf, { mode: 0o600 });
+        written.push('.credentials.json');
+      }
+      if (data.claudeJson) {
+        const buf = Buffer.from(data.claudeJson, 'base64');
+        try { JSON.parse(buf.toString('utf8')); } catch {
+          return next(new HttpError(400, 'claudeJson is not valid JSON', 'INVALID_BODY'));
+        }
+        const target = path.join(acc.configDir, '.claude.json');
+        await fs.writeFile(target, buf, { mode: 0o600 });
+        written.push('.claude.json');
+      }
+      // 복원 후 disabled/needs-relogin 이면 active 로 자동 승격
+      const fresh = accountsStore.getById(acc.id);
+      if (fresh?.cred?.has && (fresh.status === 'disabled' || fresh.status === 'needs-relogin')) {
+        await accountsStore.update(acc.id, { status: 'active' }).catch(() => {});
+      }
+      eventBus?.publish('accounts.updated', {});
+      res.json({ ok: true, written, account: accountsStore.getById(acc.id) });
+    } catch (err) {
+      if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
+      next(err);
+    }
+  });
+
+  // ── Headless OAuth login (Phase 3) ──
+  // 세션 메모리에 진행 중인 login 프로세스를 보관. 한 계정당 동시 1개.
+  const loginSessions = new Map(); // accountId -> { proc, output, status, urls }
+
+  function extractUrls(text) {
+    const matches = text.match(/https?:\/\/[^\s)>'"]+/g);
+    return matches ?? [];
+  }
+
+  // POST /:id/login/headless — spawn `claude login` with stdio pipes, capture URL
+  router.post('/:id/login/headless', async (req, res, next) => {
+    try {
+      const acc = accountsStore.getById(req.params.id);
+      if (!acc) return next(new HttpError(404, 'Account not found', 'NOT_FOUND'));
+      if (!acc.configDir) return next(new HttpError(400, 'configDir is not set', 'NO_CONFIG_DIR'));
+
+      // 기존 진행 중 세션이 있으면 종료
+      const existing = loginSessions.get(acc.id);
+      if (existing?.proc) {
+        try { existing.proc.kill('SIGTERM'); } catch { /* ignore */ }
+      }
+
+      // ⚠️ Note: `claude login` 은 보통 TTY 를 요구함. 일반 spawn 은 일부 버전에서
+      //         "non-interactive" 거부할 수 있음. 동작 안 하면 클라이언트는 fallback
+      //         (수동 Terminal command 표시) 으로 안내. 향후 node-pty 도입 검토.
+      const env = { ...process.env, CLAUDE_CONFIG_DIR: acc.configDir };
+      const child = cpSpawn(CLAUDE_BIN, ['login'], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+
+      const session = {
+        proc: child,
+        output: '',
+        status: 'running',
+        urls: [],
+        startedAt: Date.now(),
+      };
+      loginSessions.set(acc.id, session);
+
+      const onData = (d) => {
+        const chunk = d.toString();
+        session.output += chunk;
+        const newUrls = extractUrls(chunk).filter(u => !session.urls.includes(u));
+        if (newUrls.length) session.urls.push(...newUrls);
+      };
+      child.stdout?.on('data', onData);
+      child.stderr?.on('data', onData);
+      child.on('close', (code) => {
+        session.status = code === 0 ? 'success' : 'failed';
+        session.exitCode = code;
+        if (code === 0) {
+          // 성공 → status 자동 활성화
+          accountsStore.update(acc.id, { status: 'active' }).catch(() => {});
+          eventBus?.publish('accounts.updated', {});
+        }
+      });
+      child.on('error', (err) => {
+        session.status = 'failed';
+        session.error = err.message;
+      });
+
+      // 짧은 대기로 초기 출력 확보 (URL 캡쳐)
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
+      res.json({
+        ok: true,
+        status: session.status,
+        urls: session.urls,
+        output: session.output,
+        // 호스트 OS 가 대화형 TTY 없이 거부한 경우 클라이언트에 명확히 알림
+        ttyRequired: /TTY|tty|terminal|interactive/i.test(session.output) && session.urls.length === 0,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // GET /:id/login/headless — poll current state
+  router.get('/:id/login/headless', (req, res) => {
+    const session = loginSessions.get(req.params.id);
+    if (!session) return res.json({ ok: false, status: 'none' });
+    res.json({
+      ok: true,
+      status: session.status,
+      urls: session.urls,
+      output: session.output.slice(-4000), // tail
+      exitCode: session.exitCode,
+      error: session.error,
+    });
+  });
+
+  // POST /:id/login/headless/code  body: { code: string }
+  router.post('/:id/login/headless/code', async (req, res, next) => {
+    try {
+      const code = String(req.body?.code ?? '').trim();
+      if (!code) return next(new HttpError(400, 'code required', 'INVALID_BODY'));
+      const session = loginSessions.get(req.params.id);
+      if (!session?.proc) return next(new HttpError(404, 'No active login session', 'NOT_FOUND'));
+      session.proc.stdin.write(code + '\n');
+      res.json({ ok: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // DELETE /:id/login/headless — abort
+  router.delete('/:id/login/headless', (req, res) => {
+    const session = loginSessions.get(req.params.id);
+    if (session?.proc) {
+      try { session.proc.kill('SIGTERM'); } catch { /* ignore */ }
+    }
+    loginSessions.delete(req.params.id);
+    res.json({ ok: true });
   });
 
   return router;

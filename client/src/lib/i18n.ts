@@ -443,6 +443,11 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.choices.custom': '기타 (직접 입력)',
     'chat.choices.customPlaceholder': '직접 입력...',
     'chat.choices.send': '전송',
+    'chat.choices.edit': '수정',
+    'chat.choices.editTooltip': '선택지를 수정해서 보내기',
+    'chat.choices.cancel': '취소',
+    'chat.choices.sending': '전송 중...',
+    'chat.choices.selected': '선택됨',
     // Queued message badge
     'chat.queued': '대기 중',
 
@@ -1271,6 +1276,11 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.choices.custom': 'Other (type your own)',
     'chat.choices.customPlaceholder': 'Type your answer...',
     'chat.choices.send': 'Send',
+    'chat.choices.edit': 'Edit',
+    'chat.choices.editTooltip': 'Edit and send this choice',
+    'chat.choices.cancel': 'Cancel',
+    'chat.choices.sending': 'Sending...',
+    'chat.choices.selected': 'Selected',
     // Queued message badge
     'chat.queued': 'Queued',
 

@@ -89,12 +89,14 @@ export function startClaudeRun({
   spawn = nodeSpawn,
   accountScheduler = null,
 }) {
-  const { onText, onToolUse, onResult, onError, onExit, onRateLimit } = callbacks;
+  const { onText, onToolUse, onResult, onError, onExit, onRateLimit, onAuthExpired } = callbacks;
 
   // ── 환경변수 설정 (봇 bot.js 라인 2325-2349 동일) ──
   const cleanEnv = { ...process.env };
   delete cleanEnv.CLAUDECODE;
   delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
+  // OAuth 토큰: 기본은 제거 (configDir 인증 방식 우선). 백엔드별 managed 토큰이
+  // 있으면 아래에서 다시 주입. 이렇게 함으로써 부모 프로세스의 ENV 가 누수되지 않음.
   delete cleanEnv.CLAUDE_CODE_OAUTH_TOKEN;
 
   // PATH 보강 (launchctl에서 제한적)
@@ -131,6 +133,22 @@ export function startClaudeRun({
 
   // 백엔드 스케줄러: backendsStore 기반 pickBackend 지원
   let pickedBackendId = agent.backendId ?? agent.accountId ?? null;
+
+  // ── Managed OAuth 토큰 주입 ──
+  // 백엔드별로 secrets.json 에 저장된 long-lived OAuth 토큰이 있으면 spawn env 에 주입.
+  // 이 경우 configDir 인증보다 우선 — Anthropic Console 에서 발급한 토큰을 직접 사용.
+  // (process.env 는 건드리지 않음 — 백엔드 간 토큰 충돌 방지)
+  const _backendsStore = envOverrides?._backendsStore;
+  if (_backendsStore && pickedBackendId) {
+    try {
+      const managedOAuth = _backendsStore.getOAuthToken?.(pickedBackendId);
+      if (managedOAuth) {
+        cleanEnv.CLAUDE_CODE_OAUTH_TOKEN = managedOAuth;
+        // managed 토큰을 쓸 때는 configDir 충돌 방지 — 토큰이 우선이므로 configDir 제거
+        delete cleanEnv.CLAUDE_CONFIG_DIR;
+      }
+    } catch { /* ignore */ }
+  }
 
   // ── 모델 결정 (봇 bot.js 라인 2391-2410 동일) ──
   // 항상 MODEL_ID_MAP으로 변환 — Z.AI anthropic 프록시도 claude-sonnet-4-6을 받음
@@ -408,7 +426,10 @@ export function startClaudeRun({
       pendingToolUse = false;
       resultText = event.result ?? null;
       // 실제 rate-limit 오류만 감지 — is_error: true 인 result 이벤트에서만 체크
-      if (event.is_error && resultText) handleRateLimit(resultText);
+      if (event.is_error && resultText) {
+        handleRateLimit(resultText);
+        handleAuthExpired(resultText);
+      }
       resultSessionId = event.session_id || null;
       if (!resultModel) resultModel = event.model || null;
       if (event.usage) {
@@ -437,10 +458,37 @@ export function startClaudeRun({
   });
 
   const stderrChunks = [];
+  let authExpiredDetected = false;
+  // OAuth 토큰 만료/무효 패턴 — 401, "OAuth token expired", "re-authenticate", 등.
+  // rate-limit 와는 다른 신호 (rate-limit 은 일시적, 만료는 영구) → 별도 핸들링.
+  const AUTH_EXPIRED_PATTERNS = [
+    /OAuth\s+token\s+(?:has\s+)?expired/i,
+    /token\s+(?:is\s+)?(?:invalid|expired)/i,
+    /401\s+unauthorized/i,
+    /authentication\s+failed/i,
+    /please\s+(?:re-?)?(?:login|authenticate)/i,
+    /run\s+`?claude\s+login`?/i,
+  ];
+  function handleAuthExpired(text) {
+    if (authExpiredDetected) return;
+    if (!AUTH_EXPIRED_PATTERNS.some((p) => p.test(text))) return;
+    authExpiredDetected = true;
+    logger.warn(
+      { accountId: pickedAccountId, backendId: pickedBackendId },
+      '[runner] OAuth token expired — flagging backend for re-login'
+    );
+    // 백엔드 status 를 needs-relogin 으로 마킹
+    if (_backendsStore && pickedBackendId) {
+      _backendsStore.updateBackend(pickedBackendId, { status: 'needs-relogin' }).catch(() => {});
+    }
+    onAuthExpired?.({ accountId: pickedAccountId, backendId: pickedBackendId });
+  }
+
   proc.stderr.on('data', (d) => {
     const chunk = d.toString();
     stderrChunks.push(chunk);
     handleRateLimit(chunk);
+    handleAuthExpired(chunk);
     // stderr activity (debug logs, warnings) 도 활동 신호로 간주 → idle timeout 리셋
     resetIdleTimer();
   });

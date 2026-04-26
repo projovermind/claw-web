@@ -187,7 +187,7 @@ export type BackendPublic =
       label: string;
       configDir: string;
       models: Record<string, string>;
-      status: 'active' | 'cooldown' | 'disabled';
+      status: 'active' | 'cooldown' | 'disabled' | 'needs-relogin';
       lastUsedAt: number;
       usage?: { windowStart: string | null; messagesUsed: number };
       priority: number;
@@ -195,6 +195,16 @@ export type BackendPublic =
       cooldownRemaining?: number;
       /** 'ok' = configDir exists, 'missing' = not found */
       envStatus: 'ok' | 'missing';
+      /** managed OAuth token 보유 여부 */
+      oauthStatus?: 'set' | 'unset';
+      oauthSource?: 'managed' | 'shell' | 'none';
+      cred?: {
+        has: boolean;
+        source: 'credentials.json' | 'oauthAccount' | 'managed' | 'shell' | 'none';
+        expiresAt?: string;
+        expiringSoon?: boolean;
+        accountEmail?: string | null;
+      };
     };
 
 export type ClaudeCliBackend = Extract<BackendPublic, { type: 'claude-cli' }>;
@@ -210,13 +220,20 @@ export interface Account {
   id: string;
   label: string;
   configDir: string;
-  status: 'active' | 'cooldown' | 'disabled';
+  status: 'active' | 'cooldown' | 'disabled' | 'needs-relogin';
   priority: number;
   lastUsedAt: string | null;
   usage: { windowStart: string | null; messagesUsed: number };
   cooldownRemaining?: number | null;
   createdAt: string;
   updatedAt: string;
+  cred?: {
+    has: boolean;
+    source: 'credentials.json' | 'oauthAccount' | 'managed' | 'shell' | 'none';
+    expiresAt?: string;
+    expiringSoon?: boolean;
+    accountEmail?: string | null;
+  };
 }
 
 export interface BackendsState {

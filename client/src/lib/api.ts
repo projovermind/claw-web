@@ -342,9 +342,29 @@ export const api = {
   deleteAccount: (id: string) =>
     del<void>(`/accounts/${id}`),
   testAccount: (id: string) =>
-    post<{ ok: boolean; configDir: string; output?: string; error?: string }>(`/accounts/${id}/test`, {}),
+    post<{ ok: boolean; configDir: string; output?: string; error?: string; autoActivated?: boolean }>(`/accounts/${id}/test`, {}),
   loginAccount: (id: string) =>
     post<{ ok: boolean; message?: string; command?: string; error?: string; manual?: boolean }>(`/accounts/${id}/login`, {}),
+  setAccountOAuthToken: (id: string, token: string | null) =>
+    req<{ ok: boolean; hasToken: boolean; account: import('./types').Account }>(`/accounts/${id}/oauth-token`, {
+      method: 'PUT',
+      body: JSON.stringify({ token }),
+    }),
+  exportAccount: (id: string) =>
+    get<{
+      accountId: string; label: string; exportedAt: string;
+      credentialsJson?: string; claudeJson?: string; managedOAuthToken?: string; warn?: string;
+    }>(`/accounts/${id}/export`),
+  importAccount: (id: string, data: { credentialsJson?: string; claudeJson?: string }) =>
+    post<{ ok: boolean; written: string[]; account: import('./types').Account }>(`/accounts/${id}/import`, data),
+  startHeadlessLogin: (id: string) =>
+    post<{ ok: boolean; status: string; urls: string[]; output: string; ttyRequired: boolean }>(`/accounts/${id}/login/headless`, {}),
+  pollHeadlessLogin: (id: string) =>
+    get<{ ok: boolean; status: string; urls?: string[]; output?: string; exitCode?: number; error?: string }>(`/accounts/${id}/login/headless`),
+  sendHeadlessLoginCode: (id: string, code: string) =>
+    post<{ ok: boolean }>(`/accounts/${id}/login/headless/code`, { code }),
+  abortHeadlessLogin: (id: string) =>
+    del<{ ok: boolean }>(`/accounts/${id}/login/headless`),
 
   delegations: () => get<{ delegations: import('./types').DelegationEntry[] }>('/delegations').then(r => r.delegations),
 

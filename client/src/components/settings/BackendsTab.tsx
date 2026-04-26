@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useProgressMutation } from '../../lib/useProgressMutation';
-import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, LogIn, Settings2 } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, Settings2, Key, AlertTriangle } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { ClaudeCliBackend } from '../../lib/types';
 import { BackendCard } from './BackendCard';
 import { ModelRow } from './ModelRow';
 import { AddBackendModal } from './AddBackendModal';
+import { AccountAuthModal } from './AccountAuthModal';
 import { ClaudeStatusCard } from './ClaudeStatusCard';
 import PathPicker from '../common/PathPicker';
 import { useT } from '../../lib/i18n';
@@ -40,11 +42,13 @@ const STATUS_BADGE: Record<ClaudeCliBackend['status'], string> = {
   active: 'bg-emerald-900/60 text-emerald-300 border border-emerald-800',
   cooldown: 'bg-amber-900/60 text-amber-300 border border-amber-800',
   disabled: 'bg-zinc-800 text-zinc-500 border border-zinc-700',
+  'needs-relogin': 'bg-red-900/60 text-red-300 border border-red-800 animate-pulse',
 };
 const STATUS_LABEL: Record<ClaudeCliBackend['status'], string> = {
   active: '활성',
   cooldown: '쿨다운',
   disabled: '비활성',
+  'needs-relogin': '재로그인 필요',
 };
 
 export function BackendsTab() {
@@ -55,6 +59,8 @@ export function BackendsTab() {
   const [loginHint, setLoginHint] = useState<{ configDir: string } | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [authModalId, setAuthModalId] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Cooldown countdown — seeded from polled data, ticks every second
   const [countdowns, setCountdowns] = useState<Record<string, number>>({});
@@ -63,6 +69,7 @@ export function BackendsTab() {
     ? (Object.values(data.backends).filter((b) => b.type === 'claude-cli') as unknown as ClaudeCliBackend[])
     : [];
   const editingBackend = editingId ? (claudeCliList.find((b) => b.id === editingId) ?? null) : null;
+  const authBackend = authModalId ? (claudeCliList.find((b) => b.id === authModalId) ?? null) : null;
 
   useEffect(() => {
     setCountdowns((prev) => {
@@ -91,6 +98,26 @@ export function BackendsTab() {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // URL ?authBackend=ID 로 진입 시 (push 알림 클릭 등) 해당 백엔드의 인증 모달 자동 오픈
+  useEffect(() => {
+    const target = searchParams.get('authBackend');
+    if (!target) return;
+    if (claudeCliList.some((b) => b.id === target)) {
+      setAuthModalId(target);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, claudeCliList.length]);
+
+  // 모달 닫힐 때 URL 쿼리 정리
+  const closeAuthModal = () => {
+    setAuthModalId(null);
+    if (searchParams.get('authBackend')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('authBackend');
+      setSearchParams(next, { replace: true });
+    }
+  };
 
   const setActive = useProgressMutation<unknown, Error, string>({
     title: '백엔드 전환 중...',
@@ -127,21 +154,6 @@ export function BackendsTab() {
       setTestResults((prev) => ({
         ...prev,
         [id]: { ok: res.ok, msg: res.output || res.error || '' },
-      }));
-    },
-  });
-
-  const loginMut = useProgressMutation<{ ok: boolean; message?: string; command?: string; manual?: boolean; error?: string }, Error, string>({
-    title: '로그인 창 여는 중...',
-    successMessage: 'Terminal에서 로그인 진행하세요',
-    mutationFn: (id: string) => api.loginAccount(id),
-    onSuccess: (res, id) => {
-      if (res.manual && res.command) {
-        setLoginHint({ configDir: res.command });
-      }
-      setTestResults((prev) => ({
-        ...prev,
-        [id]: { ok: res.ok, msg: res.message || res.error || '' },
       }));
     },
   });
@@ -246,8 +258,26 @@ export function BackendsTab() {
         {claudeCliList.map((b) => {
           const countdown = countdowns[b.id];
           const testRes = testResults[b.id];
+          const cred = b.cred;
+          const credHas = cred?.has ?? false;
+          const credExpiringSoon = cred?.expiringSoon ?? false;
+          const needsRelogin = b.status === 'needs-relogin';
+          const authLabel = !credHas ? '최초 연결' : (needsRelogin || credExpiringSoon) ? '토큰 갱신' : '인증';
+          const authBtnClass = needsRelogin
+            ? 'bg-red-900/60 hover:bg-red-800/70 text-red-200 border-red-800/60 animate-pulse'
+            : credExpiringSoon
+            ? 'bg-amber-900/50 hover:bg-amber-800/60 text-amber-200 border-amber-800/60'
+            : credHas
+            ? 'bg-emerald-900/40 hover:bg-emerald-900/60 text-emerald-200 border-emerald-800/50'
+            : 'bg-sky-900/50 hover:bg-sky-800/60 text-sky-300 border-sky-800/50';
           return (
-            <div key={b.id} className="border border-zinc-800 rounded-lg p-3 space-y-2 bg-zinc-900/40">
+            <div key={b.id} className={`border rounded-lg p-3 space-y-2 ${needsRelogin ? 'border-red-800/60 bg-red-950/10' : 'border-zinc-800 bg-zinc-900/40'}`}>
+              {needsRelogin && (
+                <div className="flex items-start gap-1.5 text-[11px] text-red-300 bg-red-950/40 border border-red-900/50 rounded px-2 py-1">
+                  <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                  <span>토큰이 만료되었거나 인증이 필요합니다 — 우측 <strong>인증</strong> 버튼을 눌러 갱신하세요.</span>
+                </div>
+              )}
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded shrink-0 ${STATUS_BADGE[b.status]}`}>
@@ -256,18 +286,19 @@ export function BackendsTab() {
                       <span className="ml-1 opacity-70">{fmtSeconds(countdown)}</span>
                     )}
                   </span>
+                  {/* 자격증명 배지 */}
+                  <CredBadge cred={cred} />
                   <span className="font-medium text-sm truncate">{b.label}</span>
                   <span className="text-[10px] text-zinc-600 font-mono shrink-0">{b.id}</span>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <button
-                    title="Claude 로그인 (Terminal 열기)"
-                    onClick={() => loginMut.mutate(b.id)}
-                    disabled={loginMut.isPending && loginMut.variables === b.id}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-sky-900/50 hover:bg-sky-800/60 text-sky-300 text-xs border border-sky-800/50"
+                    title="인증 관리 — 토큰 붙여넣기 / 헤드리스 / Terminal / 백업"
+                    onClick={() => setAuthModalId(b.id)}
+                    className={`flex items-center gap-1 px-2 py-0.5 rounded text-xs border ${authBtnClass}`}
                   >
-                    <LogIn size={12} />
-                    연결
+                    <Key size={12} />
+                    {authLabel}
                   </button>
                   <button
                     title="연결 테스트"
@@ -365,7 +396,52 @@ export function BackendsTab() {
           onClose={() => setEditingId(null)}
         />
       )}
+
+      {/* 인증 관리 모달 — 토큰/헤드리스/Terminal/백업 통합 */}
+      {authBackend && (
+        <AccountAuthModal
+          backend={authBackend}
+          onClose={closeAuthModal}
+        />
+      )}
     </div>
+  );
+}
+
+/** 자격증명 보유 + 만료 임박 + 출처를 한 줄 배지로 */
+function CredBadge({ cred }: { cred?: ClaudeCliBackend['cred'] }) {
+  if (!cred) return null;
+  if (!cred.has) {
+    return (
+      <span title="자격증명 없음 — 인증 필요" className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 border border-zinc-700 shrink-0">
+        ❌ 미인증
+      </span>
+    );
+  }
+  if (cred.expiringSoon) {
+    return (
+      <span
+        title={cred.expiresAt ? `만료 임박 (${new Date(cred.expiresAt).toLocaleString()})` : '만료 임박'}
+        className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 border border-amber-800/60 shrink-0"
+      >
+        ⚠️ 만료 임박
+      </span>
+    );
+  }
+  const sourceLabel: Record<string, string> = {
+    'managed': '🔑 토큰',
+    'credentials.json': '✅ 인증',
+    'oauthAccount': '✅ 인증',
+    'shell': '✅ shell',
+    'none': '❌ 미인증',
+  };
+  return (
+    <span
+      title={cred.accountEmail ? `${cred.source} (${cred.accountEmail})` : cred.source}
+      className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/40 text-emerald-300 border border-emerald-800/50 shrink-0"
+    >
+      {sourceLabel[cred.source] ?? '✅ 인증'}
+    </span>
   );
 }
 

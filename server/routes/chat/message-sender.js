@@ -302,6 +302,22 @@ export function createMessageSender(ctx) {
           eventBus.publish('chat.account-ratelimit', { sessionId, accountId, backendId: backendId ?? accountId ?? null, nextAccountId });
           logger.info({ sessionId, accountId, backendId, nextAccountId }, 'chat: account rate-limited, broadcasting switch');
         },
+        onAuthExpired({ accountId, backendId }) {
+          const targetId = backendId ?? accountId;
+          eventBus.publish('chat.account-auth-expired', { sessionId, accountId, backendId: targetId });
+          logger.warn({ sessionId, accountId, backendId: targetId }, 'chat: account OAuth token expired — push notify');
+          if (pushStore && targetId) {
+            const backend = backendsStore?.getBackend?.(targetId);
+            const label = backend?.label || targetId;
+            // 알림 클릭 시 Settings → Backends 탭에서 해당 백엔드의 인증 모달이 자동으로 열리도록 deep-link
+            const url = `/settings?tab=backends&authBackend=${encodeURIComponent(targetId)}`;
+            pushStore.sendPushToAll(
+              `재로그인 필요 — ${label}`,
+              'OAuth 토큰이 만료되었습니다. 클릭해 갱신하세요.',
+              { url, skipIdleCheck: true, skipRunnerCheck: true }
+            ).catch(() => {});
+          }
+        },
         async onResult(result) {
           retryCounters.delete(sessionId);
           // prompt cache 검증 로그 — cache_creation / cache_read 토큰 추적

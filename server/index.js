@@ -630,7 +630,7 @@ async function main() {
     metadataStore
   }));
   app.use('/api/backends', createBackendsRouter({ backendsStore, eventBus }));
-  app.use('/api/accounts', createAccountsRouter({ accountsStore, eventBus }));
+  app.use('/api/accounts', createAccountsRouter({ accountsStore, eventBus, backendsStore }));
   app.use('/api/uploads', createUploadsRouter({ uploadsDir: UPLOADS_DIR, eventBus }));
   app.use(
     '/api/skills',

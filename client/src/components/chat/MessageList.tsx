@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle, Loader2, Maximize2 } from 'lucide-react';
+import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle, Loader2, Maximize2, Pencil, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { ChatMessage, SessionMeta } from '../../lib/types';
@@ -98,15 +98,23 @@ function ToolCallsCollapsed({ toolCalls, ts }: { toolCalls: { name: string; inpu
 }
 
 // 선택지 + 기타(직접 입력) 컴포넌트
-export function ChoicesList({ choices, onChoice }: { choices: ChoiceItem[]; onChoice: (c: string) => void }) {
+// alreadySent: 다음 user 메시지에서 derive 한 "이미 전송된 선택지" — 새로고침/리마운트/스트리밍 전환을 견딘다.
+export function ChoicesList({ choices, onChoice, alreadySent }: { choices: ChoiceItem[]; onChoice: (c: string) => void; alreadySent?: string | null }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [custom, setCustom] = useState('');
-  const [selected, setSelected] = useState<string | null>(null);
+  // 로컬 pending: 클릭 직후 ~ 다음 user 메시지가 history 에 들어오기 전까지 시각 피드백
+  const [pendingSent, setPendingSent] = useState<string | null>(null);
+  const [editingIdx, setEditingIdx] = useState<number | null>(null);
+  const [editText, setEditText] = useState('');
   const t = useT();
 
+  const sent = alreadySent ?? pendingSent;
+
   const handleChoice = (text: string) => {
-    setSelected(text);
+    if (sent) return; // 이미 보낸 후엔 무시 (멱등 가드)
+    setPendingSent(text);
     setCustomOpen(false);
+    setEditingIdx(null);
     onChoice(text);
   };
 
@@ -117,51 +125,109 @@ export function ChoicesList({ choices, onChoice }: { choices: ChoiceItem[]; onCh
     setCustom('');
   };
 
+  const startEdit = (i: number, text: string) => {
+    setEditingIdx(i);
+    setEditText(text);
+  };
+  const cancelEdit = () => {
+    setEditingIdx(null);
+    setEditText('');
+  };
+  const submitEdit = () => {
+    const v = editText.trim();
+    if (!v) return;
+    handleChoice(v);
+    cancelEdit();
+  };
+
   return (
     <div className="mt-3 flex flex-col gap-1.5">
       {choices.map((c, i) => {
-        const isSelected = selected === c.text;
-        const isDisabled = selected !== null && !isSelected;
+        const isSelected = sent === c.text;
+        const isDisabled = sent !== null && !isSelected;
+        const isEditing = editingIdx === i;
+        const isPending = pendingSent === c.text && !alreadySent;
+
+        if (isEditing) {
+          return (
+            <div key={i} className="flex gap-1">
+              <input
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') submitEdit();
+                  if (e.key === 'Escape') cancelEdit();
+                }}
+                autoFocus
+                className="flex-1 bg-zinc-950 border border-amber-600 rounded px-2 py-2 text-xs outline-none focus:border-amber-400"
+              />
+              <button
+                onClick={submitEdit}
+                disabled={!editText.trim()}
+                className="px-3 rounded bg-amber-700 hover:bg-amber-600 disabled:opacity-30 text-white text-xs"
+              >{t('chat.choices.send')}</button>
+              <button
+                onClick={cancelEdit}
+                className="px-2 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs"
+                title={t('chat.choices.cancel')}
+              ><X size={12} /></button>
+            </div>
+          );
+        }
+
         return (
-          <button
-            key={i}
-            onClick={() => !selected && handleChoice(c.text)}
-            disabled={isDisabled}
-            className={`text-left px-3 py-2 rounded border text-xs transition-colors relative ${
-              isSelected
-                ? c.recommended
-                  ? 'border-amber-400 bg-amber-900/40 text-amber-50 shadow-[0_0_16px_rgba(251,191,36,0.3)] ring-1 ring-amber-500/50'
-                  : 'border-emerald-500 bg-emerald-900/30 text-zinc-100 ring-1 ring-emerald-500/50'
-                : isDisabled
-                  ? 'border-zinc-800 bg-zinc-900/20 text-zinc-600 cursor-not-allowed opacity-40'
-                  : c.recommended
-                    ? 'border-amber-500/60 bg-amber-900/20 hover:border-amber-400 hover:bg-amber-900/30 text-amber-50 shadow-[0_0_12px_rgba(251,191,36,0.2)] cursor-pointer'
-                    : 'border-zinc-700 bg-zinc-800/40 hover:border-emerald-600 hover:bg-emerald-900/20 text-zinc-200 cursor-pointer'
-            }`}
-          >
-            <span className={`font-mono mr-2 ${isSelected ? (c.recommended ? 'text-amber-300' : 'text-emerald-400') : isDisabled ? 'text-zinc-600' : c.recommended ? 'text-amber-300' : 'text-emerald-400'}`}>
-              {isSelected ? '✓' : c.recommended ? '⭐' : `${i + 1}.`}
-            </span>
-            <span className="markdown-body inline-block" style={{ display: 'inline' }}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}
-                components={{ p: ({children}) => <span>{children}</span> }}>
-                {c.text}
-              </ReactMarkdown>
-            </span>
-            {c.recommended && !isSelected && (
-              <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-amber-500 text-zinc-900 text-[10px] font-bold">
-                {t('chat.choices.recommended')}
+          <div key={i} className="flex items-stretch gap-1">
+            <button
+              onClick={() => handleChoice(c.text)}
+              disabled={isDisabled}
+              className={`flex-1 text-left px-3 py-2 rounded border text-xs transition-colors relative ${
+                isSelected
+                  ? c.recommended
+                    ? 'border-amber-400 bg-amber-900/40 text-amber-50 shadow-[0_0_16px_rgba(251,191,36,0.3)] ring-1 ring-amber-500/50'
+                    : 'border-emerald-500 bg-emerald-900/30 text-zinc-100 ring-1 ring-emerald-500/50'
+                  : isDisabled
+                    ? 'border-zinc-800 bg-zinc-900/20 text-zinc-600 cursor-not-allowed opacity-40'
+                    : c.recommended
+                      ? 'border-amber-500/60 bg-amber-900/20 hover:border-amber-400 hover:bg-amber-900/30 text-amber-50 shadow-[0_0_12px_rgba(251,191,36,0.2)] cursor-pointer'
+                      : 'border-zinc-700 bg-zinc-800/40 hover:border-emerald-600 hover:bg-emerald-900/20 text-zinc-200 cursor-pointer'
+              }`}
+            >
+              <span className={`font-mono mr-2 ${isSelected ? (c.recommended ? 'text-amber-300' : 'text-emerald-400') : isDisabled ? 'text-zinc-600' : c.recommended ? 'text-amber-300' : 'text-emerald-400'}`}>
+                {isPending ? <Loader2 size={11} className="inline animate-spin" /> : isSelected ? '✓' : c.recommended ? '⭐' : `${i + 1}.`}
               </span>
-            )}
-            {isSelected && (
-              <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-emerald-500 text-zinc-900 text-[10px] font-bold">
-                선택됨
+              <span className="markdown-body inline-block" style={{ display: 'inline' }}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}
+                  components={{ p: ({children}) => <span>{children}</span> }}>
+                  {c.text}
+                </ReactMarkdown>
               </span>
+              {c.recommended && !isSelected && (
+                <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-amber-500 text-zinc-900 text-[10px] font-bold">
+                  {t('chat.choices.recommended')}
+                </span>
+              )}
+              {isPending && (
+                <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-sky-500 text-zinc-900 text-[10px] font-bold animate-pulse">
+                  {t('chat.choices.sending')}
+                </span>
+              )}
+              {isSelected && !isPending && (
+                <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-emerald-500 text-zinc-900 text-[10px] font-bold">
+                  {t('chat.choices.selected')}
+                </span>
+              )}
+            </button>
+            {!sent && (
+              <button
+                onClick={() => startEdit(i, c.text)}
+                title={t('chat.choices.editTooltip')}
+                className="shrink-0 px-2 rounded border border-zinc-700 bg-zinc-900/40 hover:border-amber-500 hover:bg-amber-900/20 text-zinc-400 hover:text-amber-300 transition-colors"
+              ><Pencil size={11} /></button>
             )}
-          </button>
+          </div>
         );
       })}
-      {selected === null && (customOpen ? (
+      {!sent && (customOpen ? (
         <div className="flex gap-1">
           <input
             value={custom}
@@ -275,9 +341,6 @@ export default function MessageList({ messages, searchQuery, onChoice }: Message
     return messages.filter((m) => m.content.toLowerCase().includes(q));
   }, [messages, searchQuery]);
 
-  // 마지막 assistant 메시지에만 선택지 버튼 활성화
-  const lastAssistantIdx = filtered.map((m, i) => m.role === 'assistant' ? i : -1).filter(i => i !== -1).pop() ?? -1;
-
   return (
     <div
       ref={containerRef}
@@ -292,12 +355,16 @@ export default function MessageList({ messages, searchQuery, onChoice }: Message
           && /^\[위임 결과 보고\]/.test(prevContent);
         const isEscalateResponse = m.role === 'assistant' && prev?.role === 'user'
           && /^\[위임 에스컬레이션\]/.test(prevContent);
+        // 이 assistant 메시지 다음의 user 메시지 — 선택지 "이미 보낸" 판정용
+        const next = i + 1 < filtered.length ? filtered[i + 1] : null;
+        const nextUserContent = next?.role === 'user' ? next.content : null;
         return (
         <MessageBubble
           key={i}
           message={m}
           searchQuery={searchQuery}
-          onChoice={i === lastAssistantIdx ? onChoice : undefined}
+          onChoice={onChoice}
+          nextUserContent={nextUserContent}
           delegationStage={isReportResponse ? 'final' : isEscalateResponse ? 'escalate-resolution' : undefined}
           runningSessionIds={runningSessionIds}
         />
@@ -335,10 +402,12 @@ function HighlightText({ text, query }: { text: string; query: string }) {
   );
 }
 
-function MessageBubble({ message, searchQuery, onChoice, delegationStage, runningSessionIds }: {
+function MessageBubble({ message, searchQuery, onChoice, nextUserContent, delegationStage, runningSessionIds }: {
   message: ChatMessage;
   searchQuery?: string;
   onChoice?: (c: string) => void;
+  /** 다음 user 메시지 본문 — 선택지 "이미 전송됨" 판정용 */
+  nextUserContent?: string | null;
   /** 이전 메시지 컨텍스트 기반 위임 단계 배지 */
   delegationStage?: 'final' | 'escalate-resolution';
   /** 현재 러닝 중인 세션 ID 집합 (위임 카드의 라이브 작업 중 표시) */
@@ -433,7 +502,13 @@ function MessageBubble({ message, searchQuery, onChoice, delegationStage, runnin
           </div>
         )}
         {!isUser && choices.length > 0 && onChoice && (
-          <ChoicesList choices={choices} onChoice={onChoice} />
+          <ChoicesList
+            choices={choices}
+            onChoice={onChoice}
+            // 다음 user 메시지가 존재하면 이미 응답한 것 — 전체 lock.
+            // 매칭되는 선택지는 ✓ 표시, 편집/직접입력으로 응답한 경우 일치 항목은 없지만 lock 유지.
+            alreadySent={nextUserContent ?? null}
+          />
         )}
         {message.toolCalls && message.toolCalls.length > 0 && (
           <ToolCallsCollapsed toolCalls={message.toolCalls} ts={message.ts ?? ''} />
