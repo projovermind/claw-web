@@ -214,6 +214,7 @@ export function startClaudeRun({
   if (agent.pinnedFilesContext) parts.push(agent.pinnedFilesContext);
   if (agent.dashboardHint) parts.push(agent.dashboardHint);
   if (agent.choicesHint) parts.push(agent.choicesHint);
+  if (agent.downloadHint) parts.push(agent.downloadHint);
   if (agent.delegateHint) parts.push(agent.delegateHint);
   if (!agent.lightweightMode && agent.systemPrompt) {
     parts.push(agent.systemPrompt);

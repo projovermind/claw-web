@@ -7,6 +7,8 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { ChatMessage, SessionMeta } from '../../lib/types';
 import ToolCallCard from './ToolCallCard';
+import DownloadCard from './DownloadCard';
+import { extractDownloads, type DownloadItem } from '../../lib/parse-downloads';
 import { useT } from '../../lib/i18n';
 import { linkifyFilePaths, useEditorConfig, openFileDiff, pathFromEditorUrl } from '../../lib/editor';
 
@@ -357,10 +359,11 @@ function MessageBubble({ message, searchQuery, onChoice, delegationStage, runnin
     return <SystemTriggerCard content={message.content} />;
   }
   const editorCfg = useEditorConfig();
-  const { body, choices } = useMemo(() => {
-    if (isUser) return { body: message.content, choices: [] };
-    const parsed = extractChoices(message.content);
-    return { body: linkifyFilePaths(parsed.body, editorCfg), choices: parsed.choices };
+  const { body, choices, downloads } = useMemo(() => {
+    if (isUser) return { body: message.content, choices: [], downloads: [] as DownloadItem[] };
+    const dl = extractDownloads(message.content);
+    const parsed = extractChoices(dl.body);
+    return { body: linkifyFilePaths(parsed.body, editorCfg), choices: parsed.choices, downloads: dl.items };
   }, [message.content, isUser, editorCfg]);
   // 에러 메시지 감지: ⚠️ 로 시작하는 assistant 메시지
   const isError = !isUser && /^⚠️/.test(message.content.trim());
@@ -420,6 +423,13 @@ function MessageBubble({ message, searchQuery, onChoice, delegationStage, runnin
             <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
               {body}
             </ReactMarkdown>
+          </div>
+        )}
+        {!isUser && downloads.length > 0 && (
+          <div className="mt-2 flex flex-col gap-1">
+            {downloads.map((d, i) => (
+              <DownloadCard key={`${d.path}-${i}`} item={d} />
+            ))}
           </div>
         )}
         {!isUser && choices.length > 0 && onChoice && (
