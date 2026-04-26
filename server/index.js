@@ -292,6 +292,31 @@ for (const d of [DATA_DIR, PRIVATE_DIR, USER_DIR, SHARED_DIR]) {
   logger.info({ source, dest: REPO_ROOT }, 'auto-migration complete');
 })();
 
+// ═══════════════════════════════════════════════════════
+// Template seeding — data/shared/*.template.json 을 data/user/*.json 으로
+// 시드 (해당 user 파일이 없을 때만). 신규 설치자에게 깨끗한 기본값 제공.
+// data/shared/ 는 git tracked, 절대 코드에서 *write* 하지 않음 (read-only).
+// ═══════════════════════════════════════════════════════
+(function seedFromTemplates() {
+  const SEEDS = [
+    { template: 'skills.template.json', user: 'skills.json' },
+    { template: 'backends.template.json', user: 'backends.json' },
+    { template: 'agents-config.template.json', user: 'agents-config.json' }
+  ];
+  for (const { template, user } of SEEDS) {
+    const tmpl = path.join(SHARED_DIR, template);
+    const dst = path.join(USER_DIR, user);
+    if (fssync.existsSync(dst)) continue;
+    if (!fssync.existsSync(tmpl)) continue;
+    try {
+      fssync.copyFileSync(tmpl, dst);
+      logger.info({ template, dst }, 'seeded user file from shared template');
+    } catch (err) {
+      logger.warn({ template, dst, err: err.message }, 'seed failed');
+    }
+  }
+})();
+
 // ── 데이터 파일 경로 (v1.8+ nested layout) ─────────────
 const WEB_CONFIG_PATH = path.join(PRIVATE_DIR, 'web-config.json');
 const SESSIONS_PATH = path.join(PRIVATE_DIR, 'sessions.json');
@@ -305,6 +330,18 @@ const SKILLS_PATH = path.join(USER_DIR, 'skills.json');
 const UPLOADS_DIR = path.join(USER_DIR, 'uploads');
 const ACTIVITY_PATH = path.join(USER_DIR, 'logs', 'activity.jsonl');
 const PROCESS_TRACKER_PATH = path.join(USER_DIR, 'logs', 'running-processes.json');
+
+// SHARED_DIR 은 read-only (템플릿 전용). 모든 store path 는 PRIVATE_DIR 또는 USER_DIR
+// 아래여야 함. 미래에 누가 실수로 SHARED_DIR 로 쓰기 경로를 만들면 부팅 시 즉시 차단.
+for (const p of [
+  WEB_CONFIG_PATH, SESSIONS_PATH, SECRETS_PATH, ACCOUNTS_PATH,
+  METADATA_PATH, PROJECTS_PATH, BACKENDS_PATH, SKILLS_PATH,
+  UPLOADS_DIR, ACTIVITY_PATH, PROCESS_TRACKER_PATH
+]) {
+  if (p === SHARED_DIR || p.startsWith(SHARED_DIR + path.sep)) {
+    throw new Error(`misconfiguration: store path points at read-only SHARED_DIR: ${p}`);
+  }
+}
 
 async function main() {
   const webConfig = loadWebConfig(WEB_CONFIG_PATH);

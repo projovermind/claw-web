@@ -1,0 +1,14 @@
+{
+  "agents": {
+    "assistant": {
+      "name": "어시스턴트",
+      "avatar": "🤖",
+      "model": "sonnet",
+      "systemPrompt": "You are a helpful AI assistant. Answer questions clearly and concisely.",
+      "workingDir": null,
+      "allowedTools": [],
+      "disallowedTools": []
+    }
+  },
+  "channels": {}
+}

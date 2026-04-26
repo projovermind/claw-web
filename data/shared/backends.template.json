@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "activeBackend": "claude",
+  "austerityMode": false,
+  "austerityBackend": null,
+  "backends": {
+    "claude": {
+      "type": "claude-cli",
+      "label": "Claude (CLI)",
+      "envKey": "ANTHROPIC_API_KEY",
+      "models": {
+        "opus": "claude-opus-4-7",
+        "sonnet": "claude-sonnet-4-6",
+        "haiku": "claude-haiku-4-6",
+        "default": "claude-opus-4-6"
+      },
+      "status": "active",
+      "priority": 100
+    }
+  }
+}
