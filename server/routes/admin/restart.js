@@ -40,7 +40,7 @@ export function registerRestartRoute(router, { runner }) {
     res.json(respBody);
 
     setTimeout(() => {
-      const logsDir = path.join(REPO_ROOT, 'logs');
+      const logsDir = path.join(REPO_ROOT, 'data', 'user', 'logs');
       try { fssync.mkdirSync(logsDir, { recursive: true }); } catch { /* ignore */ }
       if (force) {
         // 강제 재시작: pending-resume 삭제 + 활성 에이전트 abort + 즉시 exit

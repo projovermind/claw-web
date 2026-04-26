@@ -73,6 +73,103 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 
 // ═══════════════════════════════════════════════════════
+// Data layout (v1.8+)
+//   data/private/   — 개인·민감 (gitignored, 절대 공유 X)
+//                     secrets, accounts, web-config, push-subscriptions, sessions
+//   data/user/      — 개인 작업물 (gitignored, 보존)
+//                     projects, web-metadata, hooks, schedules,
+//                     agents-config, backends, skills, uploads, logs, backups
+//   data/shared/    — 공유 가능 템플릿 (git committed)
+// ═══════════════════════════════════════════════════════
+const DATA_DIR = path.join(REPO_ROOT, 'data');
+const PRIVATE_DIR = path.join(DATA_DIR, 'private');
+const USER_DIR = path.join(DATA_DIR, 'user');
+const SHARED_DIR = path.join(DATA_DIR, 'shared');
+
+// 디렉토리 보장 (신규 설치 또는 재구조 후 첫 부팅)
+for (const d of [DATA_DIR, PRIVATE_DIR, USER_DIR, SHARED_DIR]) {
+  if (!fssync.existsSync(d)) {
+    try { fssync.mkdirSync(d, { recursive: true }); } catch { /* ignore */ }
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// Layout migration — flat REPO_ROOT/*.json 을 data/{private,user}/ 로 이동
+// 한 번만 동작 (.layout-migration-done 마커).
+// ═══════════════════════════════════════════════════════
+(function migrateLayout() {
+  const marker = path.join(DATA_DIR, '.layout-migration-done');
+  if (fssync.existsSync(marker)) return;
+
+  const PRIVATE_FILES = [
+    'secrets.json', 'accounts.json', 'web-config.json',
+    'push-subscriptions.json', 'sessions.json'
+  ];
+  const PRIVATE_DIRS = ['sessions-store'];
+  const USER_FILES = [
+    'projects.json', 'web-metadata.json', 'hooks.json', 'schedules.json',
+    'agents-config.json', 'backends.json', 'skills.json'
+  ];
+  const USER_DIRS = ['uploads', 'logs', 'backups', 'agents-config-backups'];
+
+  function moveIfNeeded(src, dst) {
+    try {
+      if (!fssync.existsSync(src)) return false;
+      if (fssync.existsSync(dst)) return false; // 충돌 — 새 파일이 이미 있으면 건드리지 않음
+      fssync.renameSync(src, dst);
+      return true;
+    } catch (err) {
+      try {
+        // rename 실패 시(예: cross-device) 복사 + 삭제
+        if (fssync.statSync(src).isDirectory()) {
+          fssync.cpSync(src, dst, { recursive: true });
+          fssync.rmSync(src, { recursive: true, force: true });
+        } else {
+          fssync.copyFileSync(src, dst);
+          fssync.unlinkSync(src);
+        }
+        return true;
+      } catch (err2) {
+        logger.warn({ src, dst, err: err2.message }, 'layout-migration: move failed');
+        return false;
+      }
+    }
+  }
+
+  let moved = 0;
+  for (const f of PRIVATE_FILES) {
+    if (moveIfNeeded(path.join(REPO_ROOT, f), path.join(PRIVATE_DIR, f))) moved++;
+    // *.backup-* 도 같이 이동
+    try {
+      const re = new RegExp('^' + f.replace(/\./g, '\\.') + '\\.backup-');
+      for (const name of fssync.readdirSync(REPO_ROOT)) {
+        if (re.test(name)) moveIfNeeded(path.join(REPO_ROOT, name), path.join(PRIVATE_DIR, name));
+      }
+    } catch { /* ignore */ }
+  }
+  for (const d of PRIVATE_DIRS) {
+    if (moveIfNeeded(path.join(REPO_ROOT, d), path.join(PRIVATE_DIR, d))) moved++;
+  }
+  for (const f of USER_FILES) {
+    if (moveIfNeeded(path.join(REPO_ROOT, f), path.join(USER_DIR, f))) moved++;
+    try {
+      const re = new RegExp('^' + f.replace(/\./g, '\\.') + '\\.backup-');
+      for (const name of fssync.readdirSync(REPO_ROOT)) {
+        if (re.test(name)) moveIfNeeded(path.join(REPO_ROOT, name), path.join(USER_DIR, name));
+      }
+    } catch { /* ignore */ }
+  }
+  for (const d of USER_DIRS) {
+    if (moveIfNeeded(path.join(REPO_ROOT, d), path.join(USER_DIR, d))) moved++;
+  }
+
+  try { fssync.writeFileSync(marker, new Date().toISOString()); } catch { /* ignore */ }
+  if (moved > 0) {
+    logger.info({ moved }, 'layout-migration: moved flat files into data/{private,user}/');
+  }
+})();
+
+// ═══════════════════════════════════════════════════════
 // Auto-migration — 폴더 이름이 바뀌거나 신규 폴더로 이전했을 때,
 // REPO_ROOT 에 실데이터가 없으면 인접 후보 폴더에서 자동 import.
 // 한 번만 동작 (migration marker 생성).
@@ -81,24 +178,33 @@ const REPO_ROOT = path.resolve(__dirname, '..');
   const marker = path.join(REPO_ROOT, '.migration-done');
   if (fssync.existsSync(marker)) return;
 
-  // "실데이터 있음" 판정: sessions.json 에 세션 1개 이상, 또는 web-metadata 에 agent 1개 이상
-  const hasRealData = () => {
-    try {
-      const s = path.join(REPO_ROOT, 'sessions.json');
-      if (fssync.existsSync(s)) {
-        const obj = JSON.parse(fssync.readFileSync(s, 'utf8'));
-        if (Object.keys(obj?.sessions || {}).length > 0) return true;
-      }
-      const m = path.join(REPO_ROOT, 'web-metadata.json');
-      if (fssync.existsSync(m)) {
-        const obj = JSON.parse(fssync.readFileSync(m, 'utf8'));
-        if (Object.keys(obj?.agents || {}).length > 0) return true;
-      }
-    } catch { /* ignore */ }
-    return false;
-  };
+  // sibling 후보에서 sessions.json 위치를 찾는다 (신·구 레이아웃 모두 고려)
+  function findSessionsFile(dir) {
+    const nested = path.join(dir, 'data', 'private', 'sessions.json');
+    if (fssync.existsSync(nested)) return { sessions: nested, layout: 'nested' };
+    const flat = path.join(dir, 'sessions.json');
+    if (fssync.existsSync(flat)) return { sessions: flat, layout: 'flat' };
+    return null;
+  }
 
-  if (hasRealData()) return; // 이미 데이터 있으면 스킵
+  // "실데이터 있음" 판정 (sibling 쪽 sessions.json 이 비어있지 않으면 import 대상)
+  function hasSessions(filePath) {
+    try {
+      const obj = JSON.parse(fssync.readFileSync(filePath, 'utf8'));
+      return Object.keys(obj?.sessions || {}).length > 0;
+    } catch { return false; }
+  }
+
+  // 자기 자신(REPO_ROOT) 의 새 위치에 데이터 있으면 스킵
+  const selfSessions = path.join(PRIVATE_DIR, 'sessions.json');
+  const selfMetadata = path.join(USER_DIR, 'web-metadata.json');
+  if (fssync.existsSync(selfSessions) && hasSessions(selfSessions)) return;
+  try {
+    if (fssync.existsSync(selfMetadata)) {
+      const obj = JSON.parse(fssync.readFileSync(selfMetadata, 'utf8'));
+      if (Object.keys(obj?.agents || {}).length > 0) return;
+    }
+  } catch { /* ignore */ }
 
   // 후보 경로에서 실데이터 있는 곳 찾기
   const candidates = [
@@ -111,57 +217,56 @@ const REPO_ROOT = path.resolve(__dirname, '..');
   ].filter(Boolean).filter((p) => p !== REPO_ROOT);
 
   let source = null;
+  let sourceLayout = null;
   for (const c of candidates) {
-    try {
-      const s = path.join(c, 'sessions.json');
-      if (!fssync.existsSync(s)) continue;
-      const obj = JSON.parse(fssync.readFileSync(s, 'utf8'));
-      if (Object.keys(obj?.sessions || {}).length > 0) {
-        source = c; break;
-      }
-    } catch { /* ignore */ }
+    const found = findSessionsFile(c);
+    if (found && hasSessions(found.sessions)) {
+      source = c;
+      sourceLayout = found.layout;
+      break;
+    }
   }
 
   if (!source) {
-    // migration 할 게 없음 (신규 설치) — marker 만 찍어두고 이후엔 체크 스킵
     try { fssync.writeFileSync(marker, new Date().toISOString()); } catch { /* ignore */ }
     return;
   }
 
-  logger.warn({ source, dest: REPO_ROOT }, 'auto-migration: copying real data from sibling folder');
+  logger.warn({ source, sourceLayout, dest: REPO_ROOT }, 'auto-migration: copying real data from sibling folder');
 
-  const FILES = [
-    'sessions.json', 'web-metadata.json', 'web-config.json', 'secrets.json',
-    'projects.json', 'skills.json', 'backends.json', 'hooks.json', 'schedules.json',
-    'agents-config.json'
-  ];
-  const DIRS = ['logs', 'uploads', 'backups'];
-  for (const f of FILES) {
-    const src = path.join(source, f);
-    const dst = path.join(REPO_ROOT, f);
+  // 카테고리별 파일/디렉토리 — sibling layout 에 따라 src 경로가 다름
+  const PRIVATE_FILES = ['sessions.json', 'web-config.json', 'secrets.json', 'accounts.json', 'push-subscriptions.json'];
+  const PRIVATE_DIRS = ['sessions-store'];
+  const USER_FILES = ['web-metadata.json', 'projects.json', 'skills.json', 'backends.json', 'hooks.json', 'schedules.json', 'agents-config.json'];
+  const USER_DIRS = ['logs', 'uploads', 'backups'];
+
+  function srcOf(name, kind) {
+    if (sourceLayout === 'nested') {
+      return path.join(source, 'data', kind === 'private' ? 'private' : 'user', name);
+    }
+    return path.join(source, name);
+  }
+
+  function copyFileIfNeeded(src, dst) {
     try {
-      if (fssync.existsSync(src) && !fssync.existsSync(dst)) {
+      if (!fssync.existsSync(src)) return;
+      if (!fssync.existsSync(dst)) {
         fssync.copyFileSync(src, dst);
-      }
-      // dst 있고 비어있으면 덮어쓰기
-      else if (fssync.existsSync(src) && fssync.existsSync(dst)) {
+      } else {
+        // 빈 템플릿은 덮어쓰기
         const srcSize = fssync.statSync(src).size;
         const dstSize = fssync.statSync(dst).size;
-        if (srcSize > dstSize * 2) { // src 가 최소 2배 크면 빈 템플릿으로 간주
-          fssync.copyFileSync(src, dst);
-        }
+        if (srcSize > dstSize * 2) fssync.copyFileSync(src, dst);
       }
     } catch (err) {
-      logger.warn({ f, err: err.message }, 'auto-migration file failed');
+      logger.warn({ src, dst, err: err.message }, 'auto-migration file failed');
     }
   }
-  for (const d of DIRS) {
-    const src = path.join(source, d);
-    const dst = path.join(REPO_ROOT, d);
-    if (!fssync.existsSync(src)) continue;
+
+  function copyDirShallow(src, dst) {
     try {
+      if (!fssync.existsSync(src)) return;
       if (!fssync.existsSync(dst)) fssync.mkdirSync(dst, { recursive: true });
-      // shallow copy — 깊은 복사는 미지원, 사용자에게 안내
       for (const name of fssync.readdirSync(src)) {
         const sp = path.join(src, name);
         const dp = path.join(dst, name);
@@ -172,24 +277,34 @@ const REPO_ROOT = path.resolve(__dirname, '..');
         } catch { /* ignore */ }
       }
     } catch (err) {
-      logger.warn({ d, err: err.message }, 'auto-migration dir failed');
+      logger.warn({ src, dst, err: err.message }, 'auto-migration dir failed');
     }
   }
+
+  for (const f of PRIVATE_FILES) copyFileIfNeeded(srcOf(f, 'private'), path.join(PRIVATE_DIR, f));
+  for (const d of PRIVATE_DIRS) copyDirShallow(srcOf(d, 'private'), path.join(PRIVATE_DIR, d));
+  for (const f of USER_FILES) copyFileIfNeeded(srcOf(f, 'user'), path.join(USER_DIR, f));
+  for (const d of USER_DIRS) copyDirShallow(srcOf(d, 'user'), path.join(USER_DIR, d));
+
   try { fssync.writeFileSync(marker, new Date().toISOString()); } catch { /* ignore */ }
-  logger.info({ source, dest: REPO_ROOT }, 'auto-migration complete — .migration-done marker created');
+  // layout-migration 도 같이 마킹 — sibling 에서 가져온 데이터는 이미 새 구조
+  try { fssync.writeFileSync(path.join(DATA_DIR, '.layout-migration-done'), new Date().toISOString()); } catch { /* ignore */ }
+  logger.info({ source, dest: REPO_ROOT }, 'auto-migration complete');
 })();
 
-const WEB_CONFIG_PATH = path.join(REPO_ROOT, 'web-config.json');
-const METADATA_PATH = path.join(REPO_ROOT, 'web-metadata.json');
-const PROJECTS_PATH = path.join(REPO_ROOT, 'projects.json');
-const SESSIONS_PATH = path.join(REPO_ROOT, 'sessions.json');
-const BACKENDS_PATH = path.join(REPO_ROOT, 'backends.json');
-const ACCOUNTS_PATH = path.join(REPO_ROOT, 'accounts.json');
-const SECRETS_PATH = path.join(REPO_ROOT, 'secrets.json');
-const UPLOADS_DIR = path.join(REPO_ROOT, 'uploads');
-const SKILLS_PATH = path.join(REPO_ROOT, 'skills.json');
-const ACTIVITY_PATH = path.join(REPO_ROOT, 'logs', 'activity.jsonl');
-const PROCESS_TRACKER_PATH = path.join(REPO_ROOT, 'logs', 'running-processes.json');
+// ── 데이터 파일 경로 (v1.8+ nested layout) ─────────────
+const WEB_CONFIG_PATH = path.join(PRIVATE_DIR, 'web-config.json');
+const SESSIONS_PATH = path.join(PRIVATE_DIR, 'sessions.json');
+const SECRETS_PATH = path.join(PRIVATE_DIR, 'secrets.json');
+const ACCOUNTS_PATH = path.join(PRIVATE_DIR, 'accounts.json');
+
+const METADATA_PATH = path.join(USER_DIR, 'web-metadata.json');
+const PROJECTS_PATH = path.join(USER_DIR, 'projects.json');
+const BACKENDS_PATH = path.join(USER_DIR, 'backends.json');
+const SKILLS_PATH = path.join(USER_DIR, 'skills.json');
+const UPLOADS_DIR = path.join(USER_DIR, 'uploads');
+const ACTIVITY_PATH = path.join(USER_DIR, 'logs', 'activity.jsonl');
+const PROCESS_TRACKER_PATH = path.join(USER_DIR, 'logs', 'running-processes.json');
 
 async function main() {
   const webConfig = loadWebConfig(WEB_CONFIG_PATH);
@@ -217,7 +332,7 @@ async function main() {
   // 써서 `${REPO_ROOT}/undefined` 를 lstat 하며 ENOENT 로 터진다.
   // 누락/비어있으면 REPO_ROOT/agents-config.json 으로 폴백하고 파일도 없으면 생성.
   if (!webConfig.configPath || typeof webConfig.configPath !== 'string') {
-    const defaultCfg = path.join(REPO_ROOT, 'agents-config.json');
+    const defaultCfg = path.join(USER_DIR, 'agents-config.json');
     if (!fssync.existsSync(defaultCfg)) {
       try {
         fssync.writeFileSync(defaultCfg, JSON.stringify({ agents: {}, channels: {} }, null, 2));
@@ -238,13 +353,27 @@ async function main() {
       logger.warn({ err: err.message }, 'failed to persist configPath to web-config.json (continuing)');
     }
   } else if (!fssync.existsSync(webConfig.configPath)) {
-    // configPath 가 설정돼있지만 실제 파일이 없으면 — 빈 구조로 생성
-    try {
-      fssync.mkdirSync(path.dirname(webConfig.configPath), { recursive: true });
-      fssync.writeFileSync(webConfig.configPath, JSON.stringify({ agents: {}, channels: {} }, null, 2));
-      logger.info({ path: webConfig.configPath }, 'auto-created missing agents config');
-    } catch (err) {
-      logger.error({ err: err.message, path: webConfig.configPath }, 'failed to create agents config');
+    // configPath 가 옛 위치(flat)를 가리키는데 새 위치(data/user/agents-config.json)에
+    // 마이그레이션 된 파일이 있으면 그걸 사용. 없으면 빈 구조로 새로 생성.
+    const migratedCfg = path.join(USER_DIR, 'agents-config.json');
+    if (fssync.existsSync(migratedCfg)) {
+      logger.info({ from: webConfig.configPath, to: migratedCfg }, 'configPath: redirecting to migrated location');
+      webConfig.configPath = migratedCfg;
+      try {
+        const parsed = JSON.parse(fssync.readFileSync(WEB_CONFIG_PATH, 'utf8'));
+        parsed.configPath = migratedCfg;
+        fssync.writeFileSync(WEB_CONFIG_PATH, JSON.stringify(parsed, null, 2));
+      } catch (err) {
+        logger.warn({ err: err.message }, 'failed to persist configPath redirect (continuing)');
+      }
+    } else {
+      try {
+        fssync.mkdirSync(path.dirname(webConfig.configPath), { recursive: true });
+        fssync.writeFileSync(webConfig.configPath, JSON.stringify({ agents: {}, channels: {} }, null, 2));
+        logger.info({ path: webConfig.configPath }, 'auto-created missing agents config');
+      } catch (err) {
+        logger.error({ err: err.message, path: webConfig.configPath }, 'failed to create agents config');
+      }
     }
   }
 
@@ -267,7 +396,7 @@ async function main() {
   // Clean up any Claude CLI children that survived a previous crash.
   // 단, soft-restart 로 이어가기 예정(pending-resume 에 있는) 세션의 자식은 보존.
   try {
-    const earlyLogsDir = path.join(REPO_ROOT, 'logs');
+    const earlyLogsDir = path.join(USER_DIR, 'logs');
     const earlyResumeFile = path.join(earlyLogsDir, 'pending-resume.json');
     const earlySoftFlag = path.join(earlyLogsDir, '.soft-restart');
     let preserveIds = [];
@@ -298,9 +427,9 @@ async function main() {
   const pushStore = createPushStore({ webConfig, webConfigPath: WEB_CONFIG_PATH });
   pushStore.setRunnerRef(runner); // 작업 중 알림 억제
   const eventBus = createEventBus();
-  const hooksStore = await createHooksStore(path.join(REPO_ROOT, 'hooks.json'));
+  const hooksStore = await createHooksStore(path.join(USER_DIR, 'hooks.json'));
   const scheduler = createScheduler({
-    filePath: path.join(REPO_ROOT, 'schedules.json'),
+    filePath: path.join(USER_DIR, 'schedules.json'),
     eventBus
   });
   const activityLog = createActivityLog({ filePath: ACTIVITY_PATH, eventBus });

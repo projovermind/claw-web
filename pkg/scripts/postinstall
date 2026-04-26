@@ -93,102 +93,110 @@ if [ ! -f "$INSTALL_DIR/server/index.js" ]; then
 fi
 
 # ═══════════════════════════════════════════════════════
-# Step 2. 데이터 디렉토리 + 심볼릭 링크 + Bearer 토큰
+# Step 2. 데이터 디렉토리 (v1.8+ nested layout)
 # ═══════════════════════════════════════════════════════
-# 서버는 REPO_ROOT = INSTALL_DIR 에서 데이터를 읽/쓰기 때문에
-# 모든 유저 데이터 파일/디렉토리는 USER_DATA → INSTALL_DIR 로 심링크 걸어야 한다.
-# (누락된 항목은 업그레이드 때 rm -rf 로 사라짐)
-for f in sessions.json projects.json skills.json web-metadata.json secrets.json \
-         hooks.json schedules.json accounts.json push-subscriptions.json; do
-  if [ ! -f "$USER_DATA/$f" ]; then
-    case "$f" in
-      secrets.json) echo '{"version":1,"backends":{}}' > "$USER_DATA/$f"; chmod 600 "$USER_DATA/$f" ;;
-      sessions.json) echo '{"version":1,"sessions":{}}' > "$USER_DATA/$f" ;;
-      projects.json) echo '{"version":1,"projects":[]}' > "$USER_DATA/$f" ;;
-      skills.json) echo '{"version":1,"skills":{}}' > "$USER_DATA/$f" ;;
-      web-metadata.json) echo '{"version":1,"agents":{}}' > "$USER_DATA/$f" ;;
-      accounts.json) echo '{"version":1,"accounts":{}}' > "$USER_DATA/$f" ;;
-      push-subscriptions.json) echo '{"version":1,"subscriptions":[]}' > "$USER_DATA/$f" ;;
-      *) echo '{"version":1}' > "$USER_DATA/$f" ;;
-    esac
+# USER_DATA/data/{private,user,shared}/ 구조로 통일.
+# INSTALL_DIR/data → USER_DATA/data 단일 심링크 (서버가 REPO_ROOT/data/... 로 접근).
+PRIV="$USER_DATA/data/private"
+USRD="$USER_DATA/data/user"
+SHRD="$USER_DATA/data/shared"
+mkdir -p "$PRIV" "$USRD" "$SHRD" 2>/dev/null || true
+
+# 레거시 flat 파일 → nested layout 으로 일회성 마이그레이션
+# (v1.7 이하 사용자가 v1.8 로 업그레이드할 때 한 번 동작)
+move_if() {
+  local src="$1" dst="$2"
+  if [ -e "$src" ] && [ ! -L "$src" ] && [ ! -e "$dst" ]; then
+    mv "$src" "$dst" 2>/dev/null || true
   fi
-  # 기존 payload 에 남아있을 수 있는 실 파일을 지우고 심링크로 교체
-  [ -e "$INSTALL_DIR/$f" ] && [ ! -L "$INSTALL_DIR/$f" ] && rm -f "$INSTALL_DIR/$f"
-  ln -sf "$USER_DATA/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
+}
+for f in secrets.json accounts.json web-config.json push-subscriptions.json sessions.json; do
+  move_if "$USER_DATA/$f" "$PRIV/$f"
+done
+move_if "$USER_DATA/sessions-store" "$PRIV/sessions-store"
+for f in projects.json web-metadata.json hooks.json schedules.json \
+         agents-config.json backends.json skills.json; do
+  move_if "$USER_DATA/$f" "$USRD/$f"
+done
+for d in uploads logs backups agents-config-backups; do
+  move_if "$USER_DATA/$d" "$USRD/$d"
+done
+# *.backup-* 파일들도 같이 이동
+for src in "$USER_DATA"/*.backup-*; do
+  [ -e "$src" ] || continue
+  base=$(basename "$src")
+  case "$base" in
+    secrets.json.backup-*|accounts.json.backup-*|web-config.json.backup-*|sessions.json.backup-*|push-subscriptions.json.backup-*)
+      move_if "$src" "$PRIV/$base" ;;
+    *.backup-*)
+      move_if "$src" "$USRD/$base" ;;
+  esac
 done
 
-# 기존 web-config.json 에 토큰이 있으면 그 값을 유지, 없을 때만 1234 사용
+# 기본 파일 생성 (없는 경우만)
+[ ! -f "$PRIV/secrets.json" ] && { echo '{"version":1,"backends":{}}' > "$PRIV/secrets.json"; chmod 600 "$PRIV/secrets.json"; }
+[ ! -f "$PRIV/sessions.json" ] && echo '{"version":1,"sessions":{}}' > "$PRIV/sessions.json"
+[ ! -f "$PRIV/accounts.json" ] && echo '{"version":1,"accounts":{}}' > "$PRIV/accounts.json"
+[ ! -f "$PRIV/push-subscriptions.json" ] && echo '{"version":1,"subscriptions":[]}' > "$PRIV/push-subscriptions.json"
+[ ! -f "$USRD/projects.json" ] && echo '{"version":1,"projects":[]}' > "$USRD/projects.json"
+[ ! -f "$USRD/skills.json" ] && echo '{"version":1,"skills":{}}' > "$USRD/skills.json"
+[ ! -f "$USRD/web-metadata.json" ] && echo '{"version":1,"agents":{}}' > "$USRD/web-metadata.json"
+[ ! -f "$USRD/agents-config.json" ] && echo '{"agents":{},"channels":{}}' > "$USRD/agents-config.json"
+[ ! -f "$USRD/backends.json" ] && echo '{"version":1,"backends":{}}' > "$USRD/backends.json"
+
+# 기존 web-config.json 토큰 보존
 EXISTING_TOKEN=""
-if [ -f "$USER_DATA/web-config.json" ] && [ -n "$NODE_BIN" ]; then
+if [ -f "$PRIV/web-config.json" ] && [ -n "$NODE_BIN" ]; then
   EXISTING_TOKEN=$("$NODE_BIN" -e "
     try {
       const d = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
       const t = d && d.auth && d.auth.token;
       if (typeof t === 'string' && t.length > 0) process.stdout.write(t);
     } catch (e) {}
-  " "$USER_DATA/web-config.json" 2>/dev/null || true)
+  " "$PRIV/web-config.json" 2>/dev/null || true)
 fi
 BEARER_TOKEN="${EXISTING_TOKEN:-1234}"
-# agents-config.json 이 배포 payload 에 없을 수도 있으므로 기본 구조로 생성
-for f in backends.json agents-config.json; do
-  if [ ! -f "$USER_DATA/$f" ]; then
-    if [ -f "$INSTALL_DIR/$f" ] && [ ! -L "$INSTALL_DIR/$f" ]; then
-      cp "$INSTALL_DIR/$f" "$USER_DATA/$f"
-    else
-      case "$f" in
-        agents-config.json) echo '{"agents":{},"channels":{}}' > "$USER_DATA/$f" ;;
-        backends.json) echo '{"version":1,"backends":{}}' > "$USER_DATA/$f" ;;
-      esac
-    fi
-  fi
-  [ -e "$INSTALL_DIR/$f" ] && [ ! -L "$INSTALL_DIR/$f" ] && rm -f "$INSTALL_DIR/$f"
-  ln -sf "$USER_DATA/$f" "$INSTALL_DIR/$f" 2>/dev/null || true
-done
 
-# 데이터 디렉토리 — 세션 본문, 업로드, 로그, 백업
-# 서버가 쓰는 경로 자체를 심링크로 돌려서 모든 write 가 USER_DATA 아래로 가게 한다.
-for d in sessions-store agents-config-backups logs uploads backups; do
-  mkdir -p "$USER_DATA/$d" 2>/dev/null || true
-  # INSTALL_DIR 에 실 디렉토리가 있으면 제거 (payload 에서 같이 왔을 수 있음)
-  if [ -d "$INSTALL_DIR/$d" ] && [ ! -L "$INSTALL_DIR/$d" ]; then
-    rm -rf "$INSTALL_DIR/$d"
-  fi
-  ln -sfn "$USER_DATA/$d" "$INSTALL_DIR/$d" 2>/dev/null || true
-done
-
-if [ ! -f "$USER_DATA/web-config.json" ]; then
-  cat > "$USER_DATA/web-config.json" <<CFG
+if [ ! -f "$PRIV/web-config.json" ]; then
+  cat > "$PRIV/web-config.json" <<CFG
 {
   "port": 3838,
   "allowedRoots": [],
   "features": {"dashboard":true,"agentsPage":true,"dragAndDrop":true,"chat":true,"activityFeed":true,"mdEditor":true},
   "auth": {"enabled": true, "token": "$BEARER_TOKEN"},
-  "configPath": "$USER_DATA/agents-config.json"
+  "configPath": "$USRD/agents-config.json"
 }
 CFG
 else
-  # 기존 설정 보존 — 토큰/auth.enabled 는 사용자가 변경한 값을 그대로 유지하고
-  # 비어있을 때만 기본값을 채운다. configPath 가 누락되면 보정.
+  # 기존 설정 보존 — 토큰/auth.enabled 는 사용자 값 유지, configPath 는 새 위치로 보정
   "$NODE_BIN" -e "
     const fs = require('fs');
-    const path = process.argv[1], token = process.argv[2], userData = process.argv[3];
-    const d = JSON.parse(fs.readFileSync(path, 'utf8'));
+    const p = process.argv[1], token = process.argv[2], userDir = process.argv[3];
+    const d = JSON.parse(fs.readFileSync(p, 'utf8'));
     if (!d.auth) d.auth = {};
-    if (typeof d.auth.token !== 'string' || d.auth.token.length === 0) {
-      d.auth.token = token;
+    if (typeof d.auth.token !== 'string' || d.auth.token.length === 0) d.auth.token = token;
+    if (typeof d.auth.enabled !== 'boolean') d.auth.enabled = true;
+    // configPath 가 레거시 flat 경로(.claw-web/agents-config.json)를 가리키면 새 위치로 갱신
+    if (!d.configPath || typeof d.configPath !== 'string' || /\\.claw-web\\/agents-config\\.json\$/.test(d.configPath)) {
+      d.configPath = userDir + '/agents-config.json';
     }
-    if (typeof d.auth.enabled !== 'boolean') {
-      d.auth.enabled = true;
-    }
-    if (!d.configPath || typeof d.configPath !== 'string') {
-      d.configPath = userData + '/agents-config.json';
-    }
-    fs.writeFileSync(path, JSON.stringify(d, null, 2));
-  " "$USER_DATA/web-config.json" "$BEARER_TOKEN" "$USER_DATA" 2>/dev/null || true
+    fs.writeFileSync(p, JSON.stringify(d, null, 2));
+  " "$PRIV/web-config.json" "$BEARER_TOKEN" "$USRD" 2>/dev/null || true
 fi
-ln -sf "$USER_DATA/web-config.json" "$INSTALL_DIR/web-config.json" 2>/dev/null || true
+
+# INSTALL_DIR/data → USER_DATA/data 단일 심링크
+# 기존 payload 의 data/ 가 실 디렉토리면 제거 (data/shared 만 빈 디렉토리로 복원됨)
+if [ -d "$INSTALL_DIR/data" ] && [ ! -L "$INSTALL_DIR/data" ]; then
+  # payload 에 data/shared/ 템플릿이 있을 수 있음 → USER_DATA 로 머지 후 제거
+  if [ -d "$INSTALL_DIR/data/shared" ]; then
+    cp -R "$INSTALL_DIR/data/shared/." "$SHRD/" 2>/dev/null || true
+  fi
+  rm -rf "$INSTALL_DIR/data"
+fi
+ln -sfn "$USER_DATA/data" "$INSTALL_DIR/data" 2>/dev/null || true
+
 chown -R "$REAL_USER" "$USER_DATA" 2>/dev/null || true
-echo "[postinstall] data dir ready, token=$BEARER_TOKEN" >> "$LOG"
+echo "[postinstall] data dir ready (nested), token=$BEARER_TOKEN" >> "$LOG"
 
 # ═══════════════════════════════════════════════════════
 # Step 3. 작업 디렉토리 선택 (유일하게 남은 대화상자)
@@ -217,7 +225,7 @@ mkdir -p "$WORK_DIR" 2>/dev/null || WORK_DIR="$REAL_HOME"
   }
   d.allowedRoots = roots;
   fs.writeFileSync(p, JSON.stringify(d, null, 2));
-" "$USER_DATA/web-config.json" "$WORK_DIR" "$INSTALL_DIR" 2>/dev/null || true
+" "$PRIV/web-config.json" "$WORK_DIR" "$INSTALL_DIR" 2>/dev/null || true
 echo "[postinstall] work_dir=$WORK_DIR" >> "$LOG"
 
 # ═══════════════════════════════════════════════════════

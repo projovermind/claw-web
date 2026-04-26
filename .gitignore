@@ -1,18 +1,25 @@
 node_modules/
 client/node_modules/
 client/dist/
-logs/
 *.log
 .env
 .env.local
 .DS_Store
 ._*
 .claude/
+
+# v1.8+ data layout — 개인·민감 + 사용자 데이터는 통째로 제외
+data/private/
+data/user/
+# data/shared/ 는 git 에 커밋 (공유 가능 템플릿)
+
+# Legacy flat layout (v1.7 이하) — 자동 마이그레이션 후엔 비어있음.
 sessions.json
 sessions.json.migrated-*
 sessions-store/
 web-metadata.json
 secrets.json
+accounts.json
 projects.json
 backends.json
 hooks.json
@@ -20,11 +27,14 @@ schedules.json
 agents-config.json
 web-config.json
 push-subscriptions.json
+skills.json
+logs/
+uploads/
+backups/
+
 client/.tsbuildinfo/
 client/tsconfig.node.tsbuildinfo
 client/tsconfig.tsbuildinfo
-uploads/
-backups/
 *.backup-*
 .migration-backup-*
 dist/*.pkg
