@@ -43,6 +43,7 @@ import { attachExecWs } from './ws/exec.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { createAutoBackup } from './lib/auto-backup.js';
+import { createAutoCleanup } from './lib/auto-cleanup.js';
 import { createStatsRouter } from './routes/stats.js';
 import { createTasksRouter } from './routes/tasks.js';
 import { createHooksRouter } from './routes/hooks.js';
@@ -561,6 +562,14 @@ async function main() {
   ]);
   autoBackup.start();
 
+  // Auto-cleanup: 7일 이상 된 업로드 파일 자동 삭제 (디스크 누적 방지)
+  const uploadsCleanup = createAutoCleanup({
+    dir: UPLOADS_DIR,
+    maxAgeDays: 7,
+    label: 'uploads'
+  });
+  uploadsCleanup.start();
+
   configStore.onChange(() => eventBus.publish('agents.refreshed', {}));
   metadataStore.onChange(() => eventBus.publish('metadata.refreshed', {}));
   projectsStore.onChange(() => eventBus.publish('projects.refreshed', {}));
@@ -846,6 +855,7 @@ async function main() {
       try {
         scheduler.stop();
         autoBackup.stop();
+        uploadsCleanup.stop();
         try { wsHub.close(); } catch { /* ignore */ }
         // server.close 는 callback-based — WebSocket 연결 있으면 안 끝남 → closeAllConnections 로 강제
         try {
