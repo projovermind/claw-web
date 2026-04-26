@@ -136,28 +136,30 @@ for (const d of [DATA_DIR, PRIVATE_DIR, USER_DIR, SHARED_DIR]) {
     }
   }
 
+  // *.backup-* 파일은 부모 디렉토리가 아닌 backups/ 서브디렉토리로 이동
+  // (auto-backup.js 가 사용하는 위치와 일치시키기 위함)
+  function moveBackupsTo(srcDir, dstDir, fileBase) {
+    try {
+      const re = new RegExp('^' + fileBase.replace(/\./g, '\\.') + '\\.backup-');
+      const backupsDir = path.join(dstDir, 'backups');
+      try { fssync.mkdirSync(backupsDir, { recursive: true }); } catch { /* ignore */ }
+      for (const name of fssync.readdirSync(srcDir)) {
+        if (re.test(name)) moveIfNeeded(path.join(srcDir, name), path.join(backupsDir, name));
+      }
+    } catch { /* ignore */ }
+  }
+
   let moved = 0;
   for (const f of PRIVATE_FILES) {
     if (moveIfNeeded(path.join(REPO_ROOT, f), path.join(PRIVATE_DIR, f))) moved++;
-    // *.backup-* 도 같이 이동
-    try {
-      const re = new RegExp('^' + f.replace(/\./g, '\\.') + '\\.backup-');
-      for (const name of fssync.readdirSync(REPO_ROOT)) {
-        if (re.test(name)) moveIfNeeded(path.join(REPO_ROOT, name), path.join(PRIVATE_DIR, name));
-      }
-    } catch { /* ignore */ }
+    moveBackupsTo(REPO_ROOT, PRIVATE_DIR, f);
   }
   for (const d of PRIVATE_DIRS) {
     if (moveIfNeeded(path.join(REPO_ROOT, d), path.join(PRIVATE_DIR, d))) moved++;
   }
   for (const f of USER_FILES) {
     if (moveIfNeeded(path.join(REPO_ROOT, f), path.join(USER_DIR, f))) moved++;
-    try {
-      const re = new RegExp('^' + f.replace(/\./g, '\\.') + '\\.backup-');
-      for (const name of fssync.readdirSync(REPO_ROOT)) {
-        if (re.test(name)) moveIfNeeded(path.join(REPO_ROOT, name), path.join(USER_DIR, name));
-      }
-    } catch { /* ignore */ }
+    moveBackupsTo(REPO_ROOT, USER_DIR, f);
   }
   for (const d of USER_DIRS) {
     if (moveIfNeeded(path.join(REPO_ROOT, d), path.join(USER_DIR, d))) moved++;
@@ -290,6 +292,85 @@ for (const d of [DATA_DIR, PRIVATE_DIR, USER_DIR, SHARED_DIR]) {
   // layout-migration 도 같이 마킹 — sibling 에서 가져온 데이터는 이미 새 구조
   try { fssync.writeFileSync(path.join(DATA_DIR, '.layout-migration-done'), new Date().toISOString()); } catch { /* ignore */ }
   logger.info({ source, dest: REPO_ROOT }, 'auto-migration complete');
+})();
+
+// ═══════════════════════════════════════════════════════
+// Orphan backup cleanup — v1.8.0 의 migrateLayout 이 *.backup-* 파일을
+// data/{private,user}/ 루트로 옮겼던 버그 보정. backups/ 서브디렉토리로 이동
+// 후 24개 초과분은 삭제. 한 번만 동작 (.backup-cleanup-done 마커).
+// ═══════════════════════════════════════════════════════
+(function cleanupOrphanBackups() {
+  const marker = path.join(DATA_DIR, '.backup-cleanup-done');
+  if (fssync.existsSync(marker)) return;
+
+  const MAX_PER_FILE = 24;
+  let movedCount = 0;
+  let trimmedCount = 0;
+
+  function cleanupDir(dir) {
+    if (!fssync.existsSync(dir)) return;
+    const backupsDir = path.join(dir, 'backups');
+    try { fssync.mkdirSync(backupsDir, { recursive: true }); } catch { /* ignore */ }
+
+    let entries;
+    try { entries = fssync.readdirSync(dir); } catch { return; }
+
+    // base 파일별로 그룹핑 (e.g. "secrets.json")
+    const grouped = new Map();
+    for (const name of entries) {
+      const m = name.match(/^(.+\.json)\.backup-/);
+      if (!m) continue;
+      const stat = (() => { try { return fssync.statSync(path.join(dir, name)); } catch { return null; } })();
+      if (!stat || !stat.isFile()) continue;
+      const base = m[1];
+      if (!grouped.has(base)) grouped.set(base, []);
+      grouped.get(base).push(name);
+    }
+
+    for (const [, names] of grouped) {
+      // backups/ 서브로 이동
+      for (const name of names) {
+        const src = path.join(dir, name);
+        const dst = path.join(backupsDir, name);
+        try {
+          if (fssync.existsSync(dst)) {
+            fssync.unlinkSync(src); // 중복이면 원본 삭제
+          } else {
+            fssync.renameSync(src, dst);
+            movedCount++;
+          }
+        } catch { /* ignore individual move failures */ }
+      }
+    }
+
+    // backups/ 안의 파일별 24개 초과분 트림
+    let backupEntries;
+    try { backupEntries = fssync.readdirSync(backupsDir); } catch { return; }
+    const byBase = new Map();
+    for (const name of backupEntries) {
+      const m = name.match(/^(.+\.json)\.backup-/);
+      if (!m) continue;
+      const base = m[1];
+      if (!byBase.has(base)) byBase.set(base, []);
+      byBase.get(base).push(name);
+    }
+    for (const [, names] of byBase) {
+      if (names.length <= MAX_PER_FILE) continue;
+      const sorted = names.slice().sort().reverse(); // 최신이 앞
+      const toDelete = sorted.slice(MAX_PER_FILE);
+      for (const old of toDelete) {
+        try { fssync.unlinkSync(path.join(backupsDir, old)); trimmedCount++; } catch { /* ignore */ }
+      }
+    }
+  }
+
+  cleanupDir(PRIVATE_DIR);
+  cleanupDir(USER_DIR);
+
+  try { fssync.writeFileSync(marker, new Date().toISOString()); } catch { /* ignore */ }
+  if (movedCount > 0 || trimmedCount > 0) {
+    logger.info({ movedCount, trimmedCount }, 'orphan-backup-cleanup: moved into backups/ and trimmed');
+  }
 })();
 
 // ═══════════════════════════════════════════════════════
