@@ -20,13 +20,14 @@ export function AccountAuthModal({
   backend: ClaudeCliBackend;
   onClose: () => void;
 }) {
-  // 우선 노출 탭: 이미 토큰이 managed 상태면 token 탭 기본, 아니면 token (가장 간편)
-  const [tab, setTab] = useState<Tab>('token');
+  // 기본 탭: Pro/Max 구독자가 다수 → 백업/복원 우선 노출.
+  //  managed API 토큰이 이미 설정돼 있으면 token 탭으로.
+  const [tab, setTab] = useState<Tab>(backend.oauthSource === 'managed' ? 'token' : 'backup');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
       <div
-        className="w-full max-w-2xl rounded-lg border border-zinc-800 bg-zinc-950 shadow-xl"
+        className="w-full max-w-3xl rounded-lg border border-zinc-800 bg-zinc-950 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
@@ -39,12 +40,58 @@ export function AccountAuthModal({
           </button>
         </div>
 
-        <div className="border-b border-zinc-800 px-2 flex gap-1 text-xs">
-          <TabButton current={tab} value="token" onClick={() => setTab('token')} icon={<Key size={12} />} label="토큰 붙여넣기" badge="가장 쉬움" />
-          <TabButton current={tab} value="headless" onClick={() => setTab('headless')} icon={<Globe size={12} />} label="헤드리스 로그인" />
-          <TabButton current={tab} value="terminal" onClick={() => setTab('terminal')} icon={<Terminal size={12} />} label="Terminal 로그인" />
-          <TabButton current={tab} value="backup" onClick={() => setTab('backup')} icon={<Download size={12} />} label="백업/복원" />
+        <div className="border-b border-zinc-800 px-2 flex gap-1 text-xs overflow-x-auto">
+          <TabButton current={tab} value="backup" onClick={() => setTab('backup')} icon={<Download size={12} />} label="백업/복원" badge="Pro/Max" badgeTone="emerald" />
+          <TabButton current={tab} value="terminal" onClick={() => setTab('terminal')} icon={<Terminal size={12} />} label="Terminal" badge="신규" badgeTone="sky" />
+          <TabButton current={tab} value="headless" onClick={() => setTab('headless')} icon={<Globe size={12} />} label="헤드리스" badge="실험적" badgeTone="amber" />
+          <TabButton current={tab} value="token" onClick={() => setTab('token')} icon={<Key size={12} />} label="토큰 붙여넣기" badge="API" badgeTone="amber" />
         </div>
+
+        <div className="mx-4 mt-3 rounded border border-sky-900/50 bg-sky-950/30 p-2.5 text-[11px] text-sky-200 leading-relaxed">
+          <div className="font-semibold mb-1">📌 어떤 방법을 써야 하나요?</div>
+          <ul className="space-y-0.5 list-disc pl-4">
+            <li><span className="text-emerald-300 font-semibold">Pro/Max 구독권</span> — <span className="font-semibold">백업/복원</span> 또는 <span className="font-semibold">헤드리스/Terminal 로그인</span> (구독 한도 사용)</li>
+            <li><span className="text-amber-300 font-semibold">API 토큰</span> (sk-ant-oat01-...) — <span className="font-semibold">토큰 붙여넣기</span> (API 크레딧 결제, 구독권과 별개)</li>
+          </ul>
+          <div className="mt-1 text-sky-300/70">
+            ※ 구독권 토큰은 <span className="font-semibold">웹 콘솔에서 조회·복사 불가</span>합니다 — 오직 <code className="text-sky-300">claude login</code> 으로만 발급되며, 이미 로그인된 머신의 <code>.credentials.json</code> 을 백업/복원하는 게 가장 실용적입니다.
+          </div>
+        </div>
+
+        {/* configDir 상태 — 자동 생성됨/사용자지정 표시 (초보자 안내) */}
+        <div className="mx-4 mt-3 rounded border border-zinc-800 bg-zinc-950/60 p-2.5 text-[11px] text-zinc-400 leading-relaxed">
+          <div className="flex items-start gap-2">
+            <span className="text-zinc-500 shrink-0">📁</span>
+            <div className="flex-1 min-w-0">
+              {backend.configDirAutoCreated ? (
+                <>
+                  <span className="text-emerald-300 font-semibold">자동 생성됨</span>
+                  <span className="text-zinc-500"> — 별도 설정 없이 사용 가능합니다.</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-sky-300 font-semibold">사용자 지정</span>
+                  <span className="text-zinc-500"> — 직접 지정한 경로를 사용합니다.</span>
+                </>
+              )}
+              <div className="mt-0.5 font-mono text-zinc-500 truncate" title={backend.configDir}>
+                {backend.configDir || '—'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {backend.cred?.keychainShared && (
+          <div className="mx-4 mt-3 rounded border border-amber-900/50 bg-amber-950/30 p-2.5 text-[11px] text-amber-200 flex items-start gap-2">
+            <AlertCircle size={12} className="mt-0.5 shrink-0" />
+            <div className="leading-relaxed">
+              <div className="font-semibold">macOS Keychain 공유 경고</div>
+              현재 토큰이 macOS 시스템 키체인(<code className="text-amber-300">"Claude Code-credentials"</code>)에 저장돼 있습니다.
+              이 항목은 <span className="font-semibold">시스템 전역 1개</span>만 존재해 — 다른 백엔드에서 <code>claude login</code> 을 실행하면 <span className="font-semibold">덮어쓰기</span> 됩니다.
+              여러 구독 계정을 관리한다면 <span className="font-semibold text-amber-100">"백업/복원"</span> 탭으로 <code>.credentials.json</code> 을 백엔드별 configDir 에 격리 보관하는 것을 권장합니다.
+            </div>
+          </div>
+        )}
 
         <div className="p-4 max-h-[70vh] overflow-y-auto">
           {tab === 'token' && <TokenPasteTab backend={backend} />}
@@ -58,21 +105,26 @@ export function AccountAuthModal({
 }
 
 function TabButton({
-  current, value, onClick, icon, label, badge
+  current, value, onClick, icon, label, badge, badgeTone = 'emerald',
 }: {
-  current: Tab; value: Tab; onClick: () => void; icon: React.ReactNode; label: string; badge?: string;
+  current: Tab; value: Tab; onClick: () => void; icon: React.ReactNode; label: string;
+  badge?: string; badgeTone?: 'emerald' | 'sky' | 'amber';
 }) {
   const active = current === value;
+  const toneClass =
+    badgeTone === 'amber' ? 'bg-amber-900/50 text-amber-300'
+    : badgeTone === 'sky' ? 'bg-sky-900/50 text-sky-300'
+    : 'bg-emerald-900/50 text-emerald-300';
   return (
     <button
       onClick={onClick}
-      className={`relative flex items-center gap-1.5 px-3 py-2 transition-colors border-b-2 ${
+      className={`relative flex items-center gap-1.5 px-3 py-2 transition-colors border-b-2 whitespace-nowrap shrink-0 ${
         active ? 'border-sky-500 text-sky-300' : 'border-transparent text-zinc-500 hover:text-zinc-300'
       }`}
     >
       {icon}
-      <span>{label}</span>
-      {badge && <span className="ml-1 px-1 rounded bg-emerald-900/50 text-emerald-300 text-[9px]">{badge}</span>}
+      <span className="whitespace-nowrap">{label}</span>
+      {badge && <span className={`ml-1 px-1 rounded text-[9px] whitespace-nowrap ${toneClass}`}>{badge}</span>}
     </button>
   );
 }
@@ -97,11 +149,16 @@ function TokenPasteTab({ backend }: { backend: ClaudeCliBackend }) {
 
   return (
     <div className="space-y-3 text-sm">
-      <div className="rounded border border-sky-900/50 bg-sky-950/30 p-3 text-[12px] text-sky-200/90 leading-relaxed">
-        <div className="font-semibold mb-1">💡 가장 간편한 방법</div>
-        Anthropic Console에서 long-lived OAuth 토큰을 발급받아 그대로 붙여넣으면 끝입니다.
-        Terminal 이나 브라우저 OAuth 플로우 필요 없음. 토큰은 secrets.json 에 백엔드별로 저장되며
-        spawn 시 <code className="text-sky-300">CLAUDE_CODE_OAUTH_TOKEN</code> 으로 주입됩니다.
+      <div className="rounded border border-amber-900/50 bg-amber-950/30 p-3 text-[12px] text-amber-200/90 leading-relaxed">
+        <div className="font-semibold mb-1">⚠️ 이 방법은 API 결제용입니다 (구독권 아님)</div>
+        Anthropic Console 의 <span className="font-semibold">"OAuth Tokens"</span> 메뉴에서 발급한
+        long-lived 토큰(<code className="text-amber-300">sk-ant-oat01-...</code>) 은 <span className="font-semibold">API 크레딧으로 결제</span>됩니다 — Pro/Max 구독권 한도와 별개.
+        <div className="mt-1 text-amber-300/70">
+          ※ Pro/Max 구독권을 쓰려면 <span className="font-semibold">"백업/복원"</span> 또는 <span className="font-semibold">"헤드리스 로그인"</span> 탭을 사용하세요.
+        </div>
+        <div className="mt-1 text-amber-300/60">
+          토큰은 secrets.json 에 백엔드별 격리 저장되며 spawn 시 <code className="text-amber-300">CLAUDE_CODE_OAUTH_TOKEN</code> 으로 주입됩니다.
+        </div>
       </div>
 
       {hasManagedToken && (
@@ -232,18 +289,32 @@ function HeadlessLoginTab({ backend }: { backend: ClaudeCliBackend }) {
 
   return (
     <div className="space-y-3 text-sm">
-      <div className="rounded border border-zinc-800 bg-zinc-900/40 p-3 text-[12px] text-zinc-300 leading-relaxed">
-        서버에서 <code className="text-amber-300">claude login</code> 을 직접 실행해 OAuth URL 을 캡쳐합니다.
-        브라우저에서 로그인 후 받은 코드를 아래에 붙여넣으면 끝.
-        <span className="text-zinc-500"> (※ Claude CLI 가 TTY 를 요구하면 실패할 수 있음 — 그 경우 토큰 붙여넣기 또는 Terminal 로그인 사용)</span>
+      <div className="rounded border border-amber-900/50 bg-amber-950/30 p-3 text-[12px] text-amber-200 leading-relaxed flex items-start gap-2">
+        <AlertCircle size={13} className="mt-0.5 shrink-0" />
+        <div>
+          <div className="font-semibold mb-1">⚠️ Claude Code 2.x 호환성 문제</div>
+          이 방식은 <code className="text-amber-300">claude login</code> 서브커맨드를 가정하고 만들어졌으나,
+          Claude Code v2.x 부터는 로그인이 <span className="font-semibold">TUI 내부의 <code>/login</code> 슬래시</span>로 이전돼
+          헤드리스 캡쳐가 <span className="font-semibold">대부분의 환경에서 동작하지 않습니다</span>.
+          <div className="mt-1 text-amber-300/80">
+            👉 권장: <span className="font-semibold">"Terminal 로그인"</span> 탭에서 Terminal 을 열어 <code>/login</code> 직접 수행 → 완료 후 "백업/복원" 으로 다른 머신에 이전.
+          </div>
+        </div>
       </div>
 
       {!state.started && (
-        <button
-          onClick={() => start.mutate()}
-          disabled={start.isPending}
-          className="w-full rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-30 px-3 py-2 text-white"
-        >{start.isPending ? '시작 중...' : '헤드리스 로그인 시작'}</button>
+        <>
+          <button
+            onClick={() => start.mutate()}
+            disabled={start.isPending}
+            className="w-full rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-30 px-3 py-2 text-white"
+          >{start.isPending ? '시작 중...' : '헤드리스 로그인 시작'}</button>
+          {start.isError && (
+            <div className="text-[11px] text-red-400 rounded border border-red-900/50 bg-red-950/30 p-2">
+              ❌ 시작 실패: {(start.error as Error).message}
+            </div>
+          )}
+        </>
       )}
 
       {state.started && (
@@ -300,6 +371,9 @@ function HeadlessLoginTab({ backend }: { backend: ClaudeCliBackend }) {
                   className="px-3 rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-30 text-white text-xs"
                 >전송</button>
               </div>
+              {sendCode.isError && (
+                <div className="text-[11px] text-red-400">전송 실패: {(sendCode.error as Error).message}</div>
+              )}
             </div>
           )}
 
@@ -328,13 +402,24 @@ function HeadlessLoginTab({ backend }: { backend: ClaudeCliBackend }) {
 // Tab 3: Terminal 로그인 (기존 osascript)
 // ─────────────────────────────────────────────────────────
 function TerminalLoginTab({ backend }: { backend: ClaudeCliBackend }) {
-  const cmd = `CLAUDE_CONFIG_DIR=${backend.configDir ?? ''} claude login`;
+  // Claude Code v2.x: `claude login` 서브커맨드는 더 이상 OAuth 플로우를 직접 띄우지 않음.
+  //  → `claude` 로 TUI 진입한 뒤 `/login` 슬래시 명령으로 로그인해야 함.
+  const cmd = `CLAUDE_CONFIG_DIR=${backend.configDir ?? ''} claude`;
   const loginMut = useMutation({ mutationFn: () => api.loginAccount(backend.id) });
 
   return (
     <div className="space-y-3 text-sm">
-      <div className="rounded border border-zinc-800 bg-zinc-900/40 p-3 text-[12px] text-zinc-300">
-        macOS Terminal 앱을 열어 <code className="text-sky-300">claude login</code> 을 실행합니다.
+      <div className="rounded border border-sky-900/50 bg-sky-950/30 p-3 text-[12px] text-sky-200 leading-relaxed">
+        <div className="font-semibold mb-1">📋 정확한 절차 (Claude Code v2.x)</div>
+        <ol className="list-decimal pl-4 space-y-0.5">
+          <li>아래 버튼으로 Terminal 열기 (<code className="text-sky-300">claude</code> TUI 자동 실행)</li>
+          <li>TUI 안에서 <code className="text-sky-300">/login</code> 슬래시 명령 입력</li>
+          <li>브라우저 OAuth 완료 → 토큰이 configDir / Keychain 에 자동 저장</li>
+          <li>이 모달을 닫고 백엔드 목록에서 ✅ 인증 배지 확인</li>
+        </ol>
+        <div className="mt-1.5 text-sky-300/70">
+          ※ 구버전(<code>claude login</code> 서브커맨드)은 v2.x 부터 동작하지 않습니다.
+        </div>
       </div>
       <div className="flex gap-1">
         <input
@@ -351,9 +436,14 @@ function TerminalLoginTab({ backend }: { backend: ClaudeCliBackend }) {
         onClick={() => loginMut.mutate()}
         disabled={loginMut.isPending}
         className="w-full rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-30 px-3 py-2 text-white"
-      >{loginMut.isPending ? '여는 중...' : 'Terminal 열기'}</button>
+      >{loginMut.isPending ? '여는 중...' : 'Terminal 열기 (TUI 자동 실행)'}</button>
       {loginMut.data?.manual && (
         <div className="text-[11px] text-amber-300">macOS 가 아닙니다. 위 명령어를 직접 실행하세요.</div>
+      )}
+      {loginMut.isError && (
+        <div className="text-[11px] text-red-400 rounded border border-red-900/50 bg-red-950/30 p-2">
+          ❌ 에러: {(loginMut.error as Error).message}
+        </div>
       )}
     </div>
   );
@@ -418,6 +508,11 @@ function BackupRestoreTab({ backend }: { backend: ClaudeCliBackend }) {
           disabled={exportMut.isPending}
           className="rounded bg-emerald-800/50 hover:bg-emerald-800/80 disabled:opacity-30 px-3 py-1.5 text-xs text-emerald-100"
         >{exportMut.isPending ? '추출 중...' : '추출'}</button>
+        {exportMut.isError && (
+          <div className="text-[11px] text-red-400 rounded border border-red-900/50 bg-red-950/30 p-2">
+            ❌ 추출 실패: {(exportMut.error as Error).message}
+          </div>
+        )}
         {exportMut.data && (
           <div className="space-y-2 text-[11px]">
             <div className="text-zinc-500">

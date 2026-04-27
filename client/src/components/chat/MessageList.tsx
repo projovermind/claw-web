@@ -178,9 +178,13 @@ export function ChoicesList({ choices, onChoice, alreadySent }: { choices: Choic
         return (
           <div key={i} className="flex items-stretch gap-1">
             <button
+              type="button"
               onClick={() => handleChoice(c.text)}
               disabled={isDisabled}
-              className={`flex-1 text-left px-3 py-2 rounded border text-xs transition-colors relative ${
+              // select-none + 내부 콘텐츠 pointer-events-none →
+              //  버튼 안의 <code>(백틱) 등 인라인 요소가 클릭/터치를 가로채는 문제 해결.
+              //  (이전에 첫 번째 탭이 텍스트 선택으로 흡수돼 3~4번 클릭해야 발화하던 버그)
+              className={`flex-1 text-left px-3 py-2 rounded border text-xs transition-colors relative select-none ${
                 isSelected
                   ? c.recommended
                     ? 'border-amber-400 bg-amber-900/40 text-amber-50 shadow-[0_0_16px_rgba(251,191,36,0.3)] ring-1 ring-amber-500/50'
@@ -192,27 +196,29 @@ export function ChoicesList({ choices, onChoice, alreadySent }: { choices: Choic
                       : 'border-zinc-700 bg-zinc-800/40 hover:border-emerald-600 hover:bg-emerald-900/20 text-zinc-200 cursor-pointer'
               }`}
             >
-              <span className={`font-mono mr-2 ${isSelected ? (c.recommended ? 'text-amber-300' : 'text-emerald-400') : isDisabled ? 'text-zinc-600' : c.recommended ? 'text-amber-300' : 'text-emerald-400'}`}>
-                {isPending ? <Loader2 size={11} className="inline animate-spin" /> : isSelected ? '✓' : c.recommended ? '⭐' : `${i + 1}.`}
-              </span>
-              <span className="markdown-body inline-block" style={{ display: 'inline' }}>
-                <ReactMarkdown remarkPlugins={[remarkGfm]}
-                  components={{ p: ({children}) => <span>{children}</span> }}>
-                  {c.text}
-                </ReactMarkdown>
+              <span className="pointer-events-none">
+                <span className={`font-mono mr-2 ${isSelected ? (c.recommended ? 'text-amber-300' : 'text-emerald-400') : isDisabled ? 'text-zinc-600' : c.recommended ? 'text-amber-300' : 'text-emerald-400'}`}>
+                  {isPending ? <Loader2 size={11} className="inline animate-spin" /> : isSelected ? '✓' : c.recommended ? '⭐' : `${i + 1}.`}
+                </span>
+                <span className="markdown-body inline-block" style={{ display: 'inline' }}>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}
+                    components={{ p: ({children}) => <span>{children}</span> }}>
+                    {c.text}
+                  </ReactMarkdown>
+                </span>
               </span>
               {c.recommended && !isSelected && (
-                <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-amber-500 text-zinc-900 text-[10px] font-bold">
+                <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-amber-500 text-zinc-900 text-[10px] font-bold pointer-events-none">
                   {t('chat.choices.recommended')}
                 </span>
               )}
               {isPending && (
-                <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-sky-500 text-zinc-900 text-[10px] font-bold animate-pulse">
+                <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-sky-500 text-zinc-900 text-[10px] font-bold animate-pulse pointer-events-none">
                   {t('chat.choices.sending')}
                 </span>
               )}
               {isSelected && !isPending && (
-                <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-emerald-500 text-zinc-900 text-[10px] font-bold">
+                <span className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-emerald-500 text-zinc-900 text-[10px] font-bold pointer-events-none">
                   {t('chat.choices.selected')}
                 </span>
               )}

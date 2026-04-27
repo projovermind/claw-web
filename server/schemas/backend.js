@@ -15,6 +15,7 @@ export const ClaudeCliBackendSchema = z.object({
   models: z.record(z.string()).default({}),
   envKey: z.string().nullable().optional(),
   fallback: z.string().nullable().optional(),
+  autoReplaceOnLogin: z.boolean().default(true),
 });
 
 export const OpenAICompatibleBackendSchema = z.object({

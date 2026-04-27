@@ -186,6 +186,8 @@ export type BackendPublic =
       id: string;
       label: string;
       configDir: string;
+      /** True iff configDir was auto-created from the ~/.claude-claw/account-{id} fallback (user did not set it explicitly). */
+      configDirAutoCreated?: boolean;
       models: Record<string, string>;
       status: 'active' | 'cooldown' | 'disabled' | 'needs-relogin';
       lastUsedAt: number;
@@ -200,10 +202,11 @@ export type BackendPublic =
       oauthSource?: 'managed' | 'shell' | 'none';
       cred?: {
         has: boolean;
-        source: 'credentials.json' | 'oauthAccount' | 'managed' | 'shell' | 'none';
+        source: 'credentials.json' | 'oauthAccount' | 'keychain' | 'managed' | 'shell' | 'none';
         expiresAt?: string;
         expiringSoon?: boolean;
         accountEmail?: string | null;
+        keychainShared?: boolean;
       };
     };
 
@@ -229,10 +232,11 @@ export interface Account {
   updatedAt: string;
   cred?: {
     has: boolean;
-    source: 'credentials.json' | 'oauthAccount' | 'managed' | 'shell' | 'none';
+    source: 'credentials.json' | 'oauthAccount' | 'keychain' | 'managed' | 'shell' | 'none';
     expiresAt?: string;
     expiringSoon?: boolean;
     accountEmail?: string | null;
+    keychainShared?: boolean;
   };
 }
 

@@ -148,6 +148,8 @@ export async function createSecretsStore({ filePath }) {
       return !!state.oauth?.[backendId];
     },
 
+    getFilePath: () => filePath,
+
     _getState: () => state
   };
 }

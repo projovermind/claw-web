@@ -117,16 +117,16 @@ export function AddBackendModal({ onClose }: { onClose: () => void }) {
                   />
                 </Labeled>
 
-                {/* Config 저장소 선택 */}
+                {/* Config 저장소 선택 — 초보자는 비워두면 자동 처리 */}
                 <Labeled
-                  label="Config 저장소 (configDir)"
-                  hint="비워두면 ~/.claude-claw/account-{id} 자동 생성. 기존 Claude 설정 폴더가 있으면 직접 선택."
+                  label="Config 저장소 (configDir) — 선택사항"
+                  hint="💡 처음이라면 비워두세요. 자동으로 ~/.claude-claw/account-{id} 폴더가 생성됩니다. 기존 Claude 설정 폴더가 있을 때만 직접 선택하세요."
                 >
                   <div className="flex gap-2">
                     <input
                       value={form.configDir}
                       onChange={(e) => setForm({ ...form, configDir: e.target.value })}
-                      placeholder="예: /Users/me/.config/claude-sub1  (비워두면 자동)"
+                      placeholder="비워두면 자동 (권장)"
                       className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
                     />
                     <button

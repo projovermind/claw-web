@@ -432,6 +432,7 @@ function CredBadge({ cred }: { cred?: ClaudeCliBackend['cred'] }) {
     'managed': '🔑 토큰',
     'credentials.json': '✅ 인증',
     'oauthAccount': '✅ 인증',
+    'keychain': '🔐 Keychain',
     'shell': '✅ shell',
     'none': '❌ 미인증',
   };

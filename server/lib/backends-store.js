@@ -3,6 +3,7 @@ import fssync from 'node:fs';
 import EventEmitter from 'node:events';
 import lockfile from 'proper-lockfile';
 import { inspectCreds } from './cred-inspector.js';
+import { resolveConfigDir, ensureConfigDirSync } from './config-dir.js';
 
 const EMPTY = () => ({
   version: 1,
@@ -82,9 +83,22 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
         }
       }
 
+      // Claude CLI: configDir 미설정시 ~/.claude-claw/account-{id} 폴백 자동 적용.
+      //  → 초보자가 configDir 설정 없이도 모든 인증 기능 사용 가능.
+      //  실제 폴더는 inspectCreds 호출 전에 생성 (없으면 inspectCreds 가 has=false 반환)
+      let effectiveConfigDir = null;
+      let configDirAutoCreated = false;
+      if (b.type === 'claude-cli') {
+        effectiveConfigDir = resolveConfigDir(id, b.configDir);
+        if (!b.configDir || !b.configDir.trim()) {
+          configDirAutoCreated = true;
+          ensureConfigDirSync(effectiveConfigDir); // 멱등 — 이미 있으면 no-op
+        }
+      }
+
       // Claude CLI: cred 정보(파일 존재 + 만료시각) 도 함께 노출 → UI 배지/상태 표시
       const cred = b.type === 'claude-cli'
-        ? inspectCreds(b.configDir ?? null, { managedOAuth: oauthSource === 'managed' })
+        ? inspectCreds(effectiveConfigDir, { managedOAuth: oauthSource === 'managed' })
         : undefined;
 
       backends[id] = {
@@ -97,7 +111,13 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
         secretSource,
         models: b.models ?? {},
         fallback: b.fallback ?? null,
-        ...(b.type === 'claude-cli' ? { oauthStatus, oauthSource, cred, configDir: b.configDir ?? null, status: b.status ?? 'active', priority: b.priority ?? 50, lastUsedAt: b.lastUsedAt ?? null, usage: b.usage ?? null, cooldownUntil: b.cooldownUntil ?? null } : {})
+        ...(b.type === 'claude-cli' ? {
+          oauthStatus, oauthSource, cred,
+          configDir: effectiveConfigDir,
+          configDirAutoCreated,
+          status: b.status ?? 'active', priority: b.priority ?? 50,
+          lastUsedAt: b.lastUsedAt ?? null, usage: b.usage ?? null, cooldownUntil: b.cooldownUntil ?? null,
+        } : {})
       };
     }
     return {
@@ -249,6 +269,8 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
         return current;
       });
     },
+
+    getSecretsFilePath: () => secretsStore?.getFilePath?.() ?? null,
 
     async close() {
       emitter.removeAllListeners();
