@@ -60,6 +60,27 @@ export default function App() {
     return () => navigator.serviceWorker.removeEventListener('message', handler);
   }, [navigate]);
 
+  // cold-resume 안전망: SW 가 저장한 pending nav URL 확인 후 이동 + 캐시 삭제
+  useEffect(() => {
+    if (!('caches' in window)) return;
+    (async () => {
+      try {
+        const cache = await caches.open('claw-pending-nav');
+        const resp = await cache.match('/__pending_nav__');
+        if (!resp) return;
+        const target = await resp.text();
+        await cache.delete('/__pending_nav__');
+        const u = new URL(target);
+        if (u.origin === window.location.origin) {
+          navigate(u.pathname + u.search + u.hash);
+        }
+      } catch {
+        // caches API 미지원 환경 무시
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <>
       <LoginDialog />
