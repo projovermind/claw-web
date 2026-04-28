@@ -7,6 +7,7 @@ import { useUnreadGuard } from './hooks/useUnreadGuard';
 import { useAppearance } from './hooks/useAppearance';
 import { useUndoShortcut } from './hooks/useUndoShortcut';
 import { useActivityPing } from './hooks/useActivityPing';
+import { useChatStore } from './store/chat-store';
 import GlobalDropOverlay from './components/layout/GlobalDropOverlay';
 import LoginDialog from './components/auth/LoginDialog';
 import CommandPalette from './components/palette/CommandPalette';
@@ -46,6 +47,11 @@ export default function App() {
   useAppearance();
   useUndoShortcut();
   useActivityPing();
+
+  // 부팅 시 서버에서 workspace 레이아웃 1회 로드 → 기기 간 동기화 시작
+  useEffect(() => {
+    useChatStore.getState().loadLayoutFromServer();
+  }, []);
 
   // 푸시 알림 클릭 → SW 가 postMessage 로 url 전달 → react-router 로 soft-navigate
   const navigate = useNavigate();

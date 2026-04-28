@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { nanoid } from 'nanoid';
+import { api } from '../lib/api';
 
 export interface ToolCall {
   name: string;
@@ -96,6 +97,14 @@ interface ChatState {
   clearAllUnread: () => void;
   setPermissionPrompt: (sessionId: string, prompt: PermissionPrompt) => void;
   clearPermissionPrompt: (sessionId: string) => void;
+
+  // ── Cross-device layout sync ──
+  /** Stable id of this browser tab — used to ignore self-echoed WS updates. */
+  clientId: string;
+  /** Fetch layout from server and apply (called once on app boot). */
+  loadLayoutFromServer: () => Promise<void>;
+  /** Apply remote layout (from WS broadcast) without re-broadcasting. */
+  applyRemoteLayout: (workspaces: Workspace[], activeWorkspaceId: string) => void;
 }
 
 const emptyRuntime = (): SessionRuntime => ({
@@ -160,6 +169,17 @@ function clearPanelGroupStorage(wsId: string, count: PaneCount) {
 }
 
 const defaultWorkspace = createWorkspace('워크스페이스 1');
+
+// ── Cross-device sync state (module-scoped, not persisted) ──
+// 각 브라우저 탭마다 고유한 clientId — WS echo 무시용.
+const CLIENT_ID = nanoid(10);
+// 서버에서 처음 로드를 마치기 전엔 PUT 하지 않음 (초기 localStorage 값으로
+// 서버 데이터를 덮어쓰는 사고 방지).
+let syncEnabled = false;
+// 서버/WS 에서 받은 레이아웃을 적용 중일 때는 다시 PUT 하지 않도록 카운팅.
+let remoteApplyDepth = 0;
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let lastSavedSnapshot = '';
 
 export const useChatStore = create<ChatState>()(
   persist(
@@ -457,7 +477,71 @@ export const useChatStore = create<ChatState>()(
           return {
             runtime: { ...s.runtime, [sessionId]: { ...prev, permissionPrompt: null } }
           };
-        })
+        }),
+
+      // ── Cross-device layout sync ──
+      clientId: CLIENT_ID,
+
+      loadLayoutFromServer: async () => {
+        try {
+          const r = await api.getWorkspaceLayout();
+          if (r && Array.isArray(r.workspaces) && r.workspaces.length > 0) {
+            const wsList = r.workspaces as Workspace[];
+            const activeId = (r.activeWorkspaceId as string | null) ?? wsList[0].id;
+            remoteApplyDepth++;
+            try {
+              set((_s) => {
+                const ws = wsList.find((w) => w.id === activeId) ?? wsList[0];
+                const pane = ws.panes.find((p) => p.id === ws.activePaneId) ?? ws.panes[0];
+                const next: Partial<ChatState> = {
+                  workspaces: wsList,
+                  activeWorkspaceId: ws.id
+                };
+                if (pane?.agentId || pane?.sessionId) {
+                  next.currentAgentId = pane.agentId ?? null;
+                  next.currentSessionId = pane.sessionId ?? null;
+                }
+                return next;
+              });
+            } finally {
+              // 동기 set 직후의 subscribe 콜백이 끝나길 보장하기 위해 microtask 사용.
+              queueMicrotask(() => {
+                remoteApplyDepth = Math.max(0, remoteApplyDepth - 1);
+              });
+            }
+          }
+        } catch {
+          /* offline / 401 — 무시. localStorage 값으로 계속 동작. */
+        } finally {
+          syncEnabled = true;
+          // 서버에 데이터가 없었던 경우(첫 사용자), 현재 로컬 상태를 곧바로 PUT.
+          // subscribe 가 다음 변경에서 잡지 않을 수 있으므로 명시적으로 트리거.
+          lastSavedSnapshot = '';
+        }
+      },
+
+      applyRemoteLayout: (workspaces, activeWorkspaceId) => {
+        remoteApplyDepth++;
+        try {
+          set((_s) => {
+            const ws = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0];
+            const pane = ws ? ws.panes.find((p) => p.id === ws.activePaneId) ?? ws.panes[0] : null;
+            const next: Partial<ChatState> = {
+              workspaces,
+              activeWorkspaceId: ws?.id ?? activeWorkspaceId
+            };
+            if (pane?.agentId || pane?.sessionId) {
+              next.currentAgentId = pane.agentId ?? null;
+              next.currentSessionId = pane.sessionId ?? null;
+            }
+            return next;
+          });
+        } finally {
+          queueMicrotask(() => {
+            remoteApplyDepth = Math.max(0, remoteApplyDepth - 1);
+          });
+        }
+      }
     }),
     {
       name: 'claw-chat',
@@ -485,6 +569,41 @@ export const useChatStore = create<ChatState>()(
     }
   )
 );
+
+// ── Auto-save layout to server on change (debounced) ──
+// loadLayoutFromServer 가 끝난 뒤에만 활성. remoteApplyDepth>0 동안엔 패스.
+if (typeof window !== 'undefined') {
+  useChatStore.subscribe((state, prev) => {
+    if (!syncEnabled || remoteApplyDepth > 0) return;
+    if (state.workspaces === prev.workspaces && state.activeWorkspaceId === prev.activeWorkspaceId) return;
+    const snapshot = JSON.stringify({
+      workspaces: state.workspaces,
+      activeWorkspaceId: state.activeWorkspaceId
+    });
+    if (snapshot === lastSavedSnapshot) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      const cur = useChatStore.getState();
+      const payload = JSON.stringify({
+        workspaces: cur.workspaces,
+        activeWorkspaceId: cur.activeWorkspaceId
+      });
+      if (payload === lastSavedSnapshot) return;
+      lastSavedSnapshot = payload;
+      api
+        .setWorkspaceLayout({
+          workspaces: cur.workspaces,
+          activeWorkspaceId: cur.activeWorkspaceId,
+          clientId: CLIENT_ID
+        })
+        .catch(() => {
+          // 다음 변경에서 재시도 가능하도록 snapshot 무효화.
+          lastSavedSnapshot = '';
+        });
+    }, 800);
+  });
+}
 
 // Convenience selectors
 export const selectActiveWorkspace = (s: ChatState): Workspace | undefined =>

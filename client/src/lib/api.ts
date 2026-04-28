@@ -368,6 +368,22 @@ export const api = {
 
   delegations: () => get<{ delegations: import('./types').DelegationEntry[] }>('/delegations').then(r => r.delegations),
 
+  // Workspace layout sync (across devices)
+  getWorkspaceLayout: () =>
+    get<{
+      workspaces: unknown[] | null;
+      activeWorkspaceId: string | null;
+      updatedAt: string | null;
+      updatedBy: string | null;
+    }>('/workspace-layout'),
+  setWorkspaceLayout: (data: { workspaces: unknown[]; activeWorkspaceId: string; clientId: string }) =>
+    req<{
+      workspaces: unknown[];
+      activeWorkspaceId: string;
+      updatedAt: string;
+      updatedBy: string | null;
+    }>('/workspace-layout', { method: 'PUT', body: JSON.stringify(data) }),
+
   uploadFile: async (file: File): Promise<{
     id: string;
     filename: string;

@@ -14,6 +14,7 @@ import { createSessionsStore } from './lib/sessions-store.js';
 import { createBackendsStore } from './lib/backends-store.js';
 import { createSecretsStore } from './lib/secrets-store.js';
 import { createSkillsStore } from './lib/skills-store.js';
+import { createWorkspaceLayoutStore } from './lib/workspace-layout-store.js';
 import { createSystemSkillsStore } from './lib/system-skills.js';
 import { createActivityLog } from './lib/activity-log.js';
 import { createRunner } from './lib/runner.js';
@@ -58,6 +59,7 @@ import { createTerraformRouter } from './routes/terraform.js';
 import { createUndoRouter } from './routes/undo.js';
 import { createExportImportRouter } from './routes/export-import.js';
 import { createBridgeRouter } from './routes/bridge.js';
+import { createWorkspaceLayoutRouter } from './routes/workspace-layout.js';
 import { createDelegationsRouter } from './routes/delegations.js';
 import { createHooksStore } from './lib/hooks-store.js';
 import { createScheduler } from './lib/scheduler.js';
@@ -504,6 +506,7 @@ async function main() {
   const backendsStore = await createBackendsStore(BACKENDS_PATH, { secretsStore });
   const accountsStore = await createAccountsStore(ACCOUNTS_PATH, { backendsStore });
   const skillsStore = await createSkillsStore(SKILLS_PATH);
+  const workspaceLayoutStore = await createWorkspaceLayoutStore(path.join(USER_DIR, 'workspace-layout.json'));
   const systemSkillsStore = createSystemSkillsStore();
   try {
     const loaded = await systemSkillsStore.init();
@@ -655,6 +658,7 @@ async function main() {
   app.use('/api/delegations', createDelegationsRouter({ delegationTracker }));
   app.use('/api/export-import', createExportImportRouter({ skillsStore, configStore }));
   app.use('/api/bridge', bridgeRouter);
+  app.use('/api/workspace-layout', createWorkspaceLayoutRouter({ workspaceLayoutStore, eventBus }));
 
   const distPath = path.join(REPO_ROOT, 'client', 'dist');
   app.use(express.static(distPath));

@@ -154,6 +154,17 @@ export function useWebSocket() {
             useChatStore.getState().clearPermissionPrompt(msg.sessionId as string);
             return;
           }
+          if (topic === 'workspace-layout.updated') {
+            // 자기 자신이 보낸 echo 는 무시
+            if ((msg.clientId as string | undefined) === useChatStore.getState().clientId) return;
+            const wsList = msg.workspaces as unknown;
+            const activeId = msg.activeWorkspaceId as string;
+            if (Array.isArray(wsList) && wsList.length > 0 && typeof activeId === 'string') {
+              useChatStore.getState().applyRemoteLayout(wsList as never, activeId);
+            }
+            return;
+          }
+
           if (topic === 'chat.exit' || topic === 'chat.aborted') {
             // chat.error가 먼저 왔으면 에러 메시지 유지 (exit가 덮어쓰지 않음)
             const sid = msg.sessionId as string;
