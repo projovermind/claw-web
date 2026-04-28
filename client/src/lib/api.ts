@@ -162,24 +162,6 @@ export const api = {
       completionPromise
     }),
   stopLoop: (sessionId: string) => del<{ sessionId: string; loop: string }>(`/sessions/${sessionId}/loop`),
-  authInfo: () => get<{ hasUsers: boolean; userMode: boolean }>('/auth/info'),
-  authLogin: (username: string, password: string) =>
-    post<{ token: string; user: { id: string; username: string; role: 'admin' | 'user' } }>(
-      '/auth/login',
-      { username, password }
-    ),
-  authLogout: () => post<void>('/auth/logout', {}),
-  authMe: () =>
-    get<{ user: { id: string; username: string; role: 'admin' | 'user' } | null }>('/auth/me'),
-  authUsers: () =>
-    get<{ users: Array<{ id: string; username: string; role: 'admin' | 'user'; createdAt: string; updatedAt: string }> }>(
-      '/auth/users'
-    ),
-  authCreateUser: (data: { username: string; password: string; role?: 'admin' | 'user' }) =>
-    post<{ id: string; username: string; role: 'admin' | 'user' }>('/auth/users', data),
-  authPatchUser: (id: string, data: { password?: string; role?: 'admin' | 'user' }) =>
-    patch<{ id: string; username: string; role: 'admin' | 'user' }>(`/auth/users/${id}`, data),
-  authDeleteUser: (id: string) => del<void>(`/auth/users/${id}`),
   settings: () => get<WebSettings>('/settings'),
   getSettings: () => get<WebSettings>('/settings'),
   patchSettings: (patch: {

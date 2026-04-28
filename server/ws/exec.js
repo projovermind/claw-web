@@ -39,7 +39,7 @@ import { authorizeWsUpgrade } from '../middleware/auth.js';
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;   // 5 min
 const MAX_TIMEOUT_MS = 60 * 60 * 1000;      // 1 hour ceiling
 
-export function attachExecWs(server, { webConfig, adminUsersStore, sessionRegistry }) {
+export function attachExecWs(server, { webConfig }) {
   const wss = new WebSocketServer({ noServer: true });
 
   function resolveAllowedRoots() {
@@ -54,7 +54,7 @@ export function attachExecWs(server, { webConfig, adminUsersStore, sessionRegist
   server.on('upgrade', (req, socket, head) => {
     const pathOnly = (req.url || '').split('?')[0];
     if (pathOnly !== '/ws/exec') return;
-    if (webConfig && !authorizeWsUpgrade(req, webConfig, { adminUsersStore, sessionRegistry })) {
+    if (webConfig && !authorizeWsUpgrade(req, webConfig)) {
       logger.warn('exec: upgrade rejected (auth)');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
