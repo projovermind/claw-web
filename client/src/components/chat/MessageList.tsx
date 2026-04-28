@@ -422,6 +422,13 @@ function MessageBubble({ message, searchQuery, onChoice, nextUserContent, delega
   const t = useT();
   const isUser = message.role === 'user';
   const isQueued = isUser && (message as ChatMessage & { queued?: boolean }).queued;
+  const editorCfg = useEditorConfig();
+  const { body, choices, downloads } = useMemo(() => {
+    if (isUser) return { body: message.content, choices: [], downloads: [] as DownloadItem[] };
+    const dl = extractDownloads(message.content);
+    const parsed = extractChoices(dl.body);
+    return { body: linkifyFilePaths(parsed.body, editorCfg), choices: parsed.choices, downloads: dl.items };
+  }, [message.content, isUser, editorCfg]);
   // 위임 메시지는 특수 카드로 렌더 (사이드바에서는 위임 세션 숨김 → 여기서 인라인 표시)
   const delegationMatch = !isUser && parseDelegationMessage(message.content);
   if (delegationMatch) {
@@ -433,13 +440,6 @@ function MessageBubble({ message, searchQuery, onChoice, nextUserContent, delega
   if (isUser && /^\[(?:위임 결과 보고|위임 에스컬레이션)\]/.test(message.content)) {
     return <SystemTriggerCard content={message.content} />;
   }
-  const editorCfg = useEditorConfig();
-  const { body, choices, downloads } = useMemo(() => {
-    if (isUser) return { body: message.content, choices: [], downloads: [] as DownloadItem[] };
-    const dl = extractDownloads(message.content);
-    const parsed = extractChoices(dl.body);
-    return { body: linkifyFilePaths(parsed.body, editorCfg), choices: parsed.choices, downloads: dl.items };
-  }, [message.content, isUser, editorCfg]);
   // 에러 메시지 감지: ⚠️ 로 시작하는 assistant 메시지
   const isError = !isUser && /^⚠️/.test(message.content.trim());
   // 버블 색상 — CSS 변수(useAppearance 훅이 주입) 기반
