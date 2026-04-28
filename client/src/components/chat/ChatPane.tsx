@@ -273,7 +273,7 @@ export default function ChatPane({
   const paneClasses = [
     'h-full min-h-0 flex flex-col relative border transition-colors',
     isCompact
-      ? (isActive ? 'border-sky-600/50' : 'border-zinc-800/60 hover:border-zinc-700')
+      ? (isActive ? 'border-sky-400 ring-1 ring-inset ring-sky-400/50 shadow-[0_0_0_1px_rgba(56,189,248,0.35)]' : 'border-zinc-800/60 hover:border-zinc-700')
       : 'border-transparent',
     isOver ? 'ring-2 ring-sky-500/60 bg-sky-950/10' : '',
     isDragging ? 'opacity-50' : ''

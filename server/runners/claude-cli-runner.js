@@ -22,6 +22,19 @@ function findClaudeBin() {
 }
 const CLAUDE_BIN = findClaudeBin();
 
+// 모든 에이전트에 자동 주입되는 도구 사용 가이드.
+// LLM 이 도구를 직접 호출하지 않고 "터미널에서 다음을 실행하세요" 식으로
+// 명령어를 텍스트로 사용자에게 떠넘기는 패턴을 막기 위해 추가.
+// claw-web 에는 MCP permission-prompt bridge 가 자동 부착되어 있어,
+// 도구 호출 시 사용자에게 승인 모달이 자동으로 뜨고 승인하면 즉시 실행된다.
+const TOOL_USAGE_GUIDE = [
+  '## 도구 사용 원칙',
+  '- 셸 명령·파일 편집·코드 실행이 필요하면 직접 도구(Bash/Edit/Write 등)를 호출한다.',
+  '- "터미널에서 다음을 실행해주세요" 같이 명령어를 텍스트로 사용자에게 떠넘기지 않는다.',
+  '- 도구 호출 시 권한이 필요하면 사용자에게 승인 모달이 자동으로 표시되며, 승인되면 즉시 실행된다.',
+  '- 인터랙티브 입력(브라우저 로그인, 비밀번호 직접 입력 등)이 정말로 필요할 때만 사용자에게 수동 실행을 요청하고, 그 이유를 한 줄로 명시한다.'
+].join('\n');
+
 // Claude CLI 세션 파일 위치 — <configDir>/projects/-cwd-encoded/SESSION_ID.jsonl
 // resume 대상 세션이 존재하는지 pre-check 해 crash/idle timeout 을 막는다.
 // 멀티계정(claude-claw) 대응:
@@ -236,6 +249,11 @@ export function startClaudeRun({
   if (agent.delegateHint) parts.push(agent.delegateHint);
   if (!agent.lightweightMode && agent.systemPrompt) {
     parts.push(agent.systemPrompt);
+  }
+  // lightweightMode 가 아닌 모든 에이전트에 도구 사용 가이드 주입.
+  // systemPrompt 뒤에 두어 "행동 규칙" 으로 마지막에 강조되도록 한다.
+  if (!agent.lightweightMode) {
+    parts.push(TOOL_USAGE_GUIDE);
   }
   const composedPrompt = parts.join('\n').trim();
   if (composedPrompt) {
