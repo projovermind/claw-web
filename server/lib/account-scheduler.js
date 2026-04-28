@@ -127,7 +127,7 @@ export function createAccountScheduler({ accountsStore, backendsStore }) {
    *   3. active accounts, least recently used (round-robin)
    *   4. null → use default auth (no CLAUDE_CONFIG_DIR override)
    */
-  function pickAccount(agent) {
+  function pickAccount(agent, { sessionId = null, findSession = null } = {}) {
     autoRestoreCooldowns().catch(() => {});
 
     // 1. 에이전트 명시 accountId
@@ -192,6 +192,18 @@ export function createAccountScheduler({ accountsStore, backendsStore }) {
         if (!b.lastUsedAt) return 1;
         return new Date(a.lastUsedAt) - new Date(b.lastUsedAt);
       });
+
+    // sessionId 힌트: 해당 세션 파일을 가진 계정 우선 선택 (라운드로빈 대신)
+    if (sessionId && findSession && active.length > 0) {
+      const sessionOwner = active.find((acc) => findSession(agent.workingDir, sessionId, acc.configDir ?? null));
+      if (sessionOwner) {
+        logger.info(
+          { accountId: sessionOwner.id, sessionId },
+          '[scheduler] pickAccount: session file matched — skipping round-robin'
+        );
+        return sessionOwner;
+      }
+    }
 
     return active.length > 0 ? active[0] : null;
   }

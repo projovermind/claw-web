@@ -126,7 +126,7 @@ export function startClaudeRun({
   // 멀티 계정: 스케줄러 우선 → 없으면 agent.configDir 직접 지정 fallback
   let pickedAccountId = null;
   if (accountScheduler) {
-    const pickedAcc = accountScheduler.pickAccount(agent);
+    const pickedAcc = accountScheduler.pickAccount(agent, { sessionId: claudeSessionId || null, findSession: findClaudeSessionFile });
     if (pickedAcc) {
       pickedAccountId = pickedAcc.id;
       if (pickedAcc.configDir) {

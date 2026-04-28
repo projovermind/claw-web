@@ -127,6 +127,7 @@ export function createMessageSender(ctx) {
     // persona/skills/base/carl/paul 이 fresh session 에 재주입된다.
     // (호출자가 claudeSessionId:null 로 fresh-start 를 명시한 경우는 검증 생략)
     const explicitFreshStart = claudeSessionId === null;
+    let resumeMissingDetected = false;
     if (!explicitFreshStart && session.claudeSessionId) {
       // agent.configDir 가 있으면 정확 탐색, 없으면 ~/.claude + ~/.claude-claw/* 전체 스캔(fallback)
       const resumeFile = findClaudeSessionFile(agent.workingDir, session.claudeSessionId, agent.configDir || null);
@@ -138,6 +139,7 @@ export function createMessageSender(ctx) {
         sessionsStore.update(sessionId, { claudeSessionId: null, personaBakedInto: null }).catch(() => {});
         session.claudeSessionId = null;
         session.personaBakedInto = null;
+        resumeMissingDetected = true;
       }
     }
 
@@ -274,10 +276,15 @@ export function createMessageSender(ctx) {
     //  일반 턴 진입에서 claudeSessionId 가 null 로 바뀐 경우는 누락되어 대화가 끊겼음)
     if (isFirstMsg && Array.isArray(session.messages) && session.messages.length > 1) {
       const prior = session.messages.slice(0, -1);
-      const summary = buildConversationSummary(prior, { recent: 10 });
+      const summary = buildConversationSummary(prior, { recent: 14 });
       if (summary) {
+        const reason = resumeMissingDetected
+          ? 'resume_missing'
+          : explicitFreshStart
+            ? 'silent_fallback'
+            : 'never_set';
         logger.info(
-          { sessionId, priorMessages: prior.length },
+          { sessionId, priorMessages: prior.length, reason },
           'chat: fresh-start with prior history — injecting conversation summary to preserve context'
         );
         message = `${summary}\n\n---\n\n[현재 요청]\n${message}`;

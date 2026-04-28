@@ -46,17 +46,17 @@ function redactAttachments(content) {
   // ![alt](path) or ![alt](path "title")
   content = content.replace(/!\[[^\]]*\]\(([^)]+)\)/g, (_, path) => {
     const filename = path.trim().split('/').pop().split(' ')[0];
-    return `[첨부: ${filename} (5턴 이전 생략)]`;
+    return `[첨부: ${filename}]`;
   });
   // <claw-download path="..." ... />
   content = content.replace(/<claw-download[^>]*path="([^"]+)"[^>]*\/?>/g, (_, path) => {
     const filename = path.trim().split('/').pop();
-    return `[첨부: ${filename} (5턴 이전 생략)]`;
+    return `[첨부: ${filename}]`;
   });
   // bare /uploads/... paths not already caught above
   content = content.replace(/\/uploads\/[^\s)\]"]+/g, (match) => {
     const filename = match.split('/').pop();
-    return `[첨부: ${filename} (5턴 이전 생략)]`;
+    return `[첨부: ${filename}]`;
   });
   return content;
 }
@@ -68,7 +68,22 @@ function redactAttachments(content) {
  * Default: 10 messages (≈ 5 user-assistant turns) preserved verbatim.
  * Attachment paths/images in older messages are replaced with placeholders to reduce tokens.
  */
-export function buildConversationSummary(messages = [], { recent = 10 } = {}) {
+function extractAttachmentFilenames(content) {
+  if (typeof content !== 'string') return [];
+  const names = new Set();
+  for (const [, path] of content.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)) {
+    names.add(path.trim().split('/').pop().split(' ')[0]);
+  }
+  for (const [, path] of content.matchAll(/<claw-download[^>]*path="([^"]+)"[^>]*\/?>/g)) {
+    names.add(path.trim().split('/').pop());
+  }
+  for (const [match] of content.matchAll(/\/uploads\/[^\s)\]"]+/g)) {
+    names.add(match.split('/').pop());
+  }
+  return [...names];
+}
+
+export function buildConversationSummary(messages = [], { recent = 14 } = {}) {
   if (!Array.isArray(messages) || messages.length === 0) return '';
   const older = messages.slice(0, -recent);
   const tail = messages.slice(-recent);
@@ -76,15 +91,23 @@ export function buildConversationSummary(messages = [], { recent = 10 } = {}) {
   lines.push('[이전 대화 컨텍스트 — 세션이 새로 시작되어 요약으로 전달됨]');
   lines.push('');
   if (older.length > 0) {
+    const olderAttachments = [];
     lines.push(`## 이전 대화 (${older.length}개 메시지, 압축됨)`);
     for (const m of older) {
+      olderAttachments.push(...extractAttachmentFilenames(m.content ?? ''));
       const role = m.role === 'user' ? '👤' : '🤖';
       const redacted = redactAttachments(m.content ?? '');
-      const content = redacted.replace(/\n/g, ' ').slice(0, 200);
-      const ellipsis = redacted.length > 200 ? '...' : '';
+      const content = redacted.replace(/\n/g, ' ').slice(0, 600);
+      const ellipsis = redacted.length > 600 ? '...' : '';
       lines.push(`- ${role} ${content}${ellipsis}`);
     }
     lines.push('');
+    const uniqueAttachments = [...new Set(olderAttachments)];
+    if (uniqueAttachments.length > 0) {
+      lines.push('## 이전 첨부 파일');
+      for (const f of uniqueAttachments) lines.push(`- ${f}`);
+      lines.push('');
+    }
   }
   if (tail.length > 0) {
     lines.push(`## 최근 대화 (${tail.length}개 메시지, 전문)`);
