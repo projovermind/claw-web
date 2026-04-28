@@ -139,6 +139,9 @@ export interface Skill {
   system?: boolean;
   plugin?: string;
   source?: string;
+  // Token metadata (from GET /api/skills)
+  estimatedTokens?: number;
+  mode?: 'always' | 'triggered' | 'manual';
 }
 
 export interface HealthStatus {

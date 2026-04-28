@@ -161,12 +161,24 @@ export function createDelegation(ctx) {
       await sessionsStore.appendMessage(targetSession.id, { role: 'user', content: fullTask });
       ctx.sendRunnerMessage(targetSession.id, fullTask);
 
+      // Compute chain depth (how many delegation hops from root)
+      let depth = 1;
+      let checkId = originSessionId;
+      for (let i = 0; i < 10; i++) {
+        const parentDel = delegationTracker.getByTarget(checkId);
+        if (!parentDel) break;
+        depth++;
+        checkId = parentDel.originSessionId;
+      }
+
       logger.info({
         id: entry.id,
         origin: originSessionId,
         target: targetSession.id,
         agent: targetAgentId,
-        loop: wantsLoop
+        loop: wantsLoop,
+        taskLength: task.length,
+        depth
       }, 'delegation: task sent');
     } catch (err) {
       logger.error({ err, targetAgentId: targetAgentIdRaw }, 'delegation: execution failed');

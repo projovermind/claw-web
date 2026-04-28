@@ -327,6 +327,36 @@ export default function SkillsPage() {
   );
 }
 
+function formatTokens(n: number): string {
+  if (n < 1000) return `${n}`;
+  return `${(n / 1000).toFixed(1)}k`;
+}
+
+function TokenBadge({ skill }: { skill: Skill }) {
+  const tok = skill.estimatedTokens;
+  if (!tok) return null;
+  const label = formatTokens(tok);
+  if (skill.mode === 'always') {
+    return (
+      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300 shrink-0 whitespace-nowrap">
+        🔒 ~{label} tok
+      </span>
+    );
+  }
+  if (skill.mode === 'triggered') {
+    return (
+      <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-900/30 text-sky-400 shrink-0 whitespace-nowrap">
+        ⚡ ~{label} tok
+      </span>
+    );
+  }
+  return (
+    <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-500 shrink-0 whitespace-nowrap">
+      📎 ~{label} tok
+    </span>
+  );
+}
+
 function SkillListButton({
   skill,
   active,
@@ -360,6 +390,7 @@ function SkillListButton({
             {skill.plugin}
           </span>
         )}
+        <TokenBadge skill={skill} />
       </div>
     </button>
   );

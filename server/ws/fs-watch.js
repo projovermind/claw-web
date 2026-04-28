@@ -34,7 +34,7 @@ try {
 
 const SKIP_DIRS = ['node_modules', '.git', 'dist', '__pycache__', '.next', '.cache', '.turbo'];
 
-export function attachFsWatchWs(server, { webConfig }) {
+export function attachFsWatchWs(server, { webConfig, adminUsersStore, sessionRegistry }) {
   if (!chokidar) {
     server.on('upgrade', (req, socket) => {
       if (!req.url || !req.url.split('?')[0].startsWith('/ws/fs-watch')) return;
@@ -58,7 +58,7 @@ export function attachFsWatchWs(server, { webConfig }) {
   server.on('upgrade', (req, socket, head) => {
     const pathOnly = (req.url || '').split('?')[0];
     if (pathOnly !== '/ws/fs-watch') return;
-    if (webConfig && !authorizeWsUpgrade(req, webConfig)) {
+    if (webConfig && !authorizeWsUpgrade(req, webConfig, { adminUsersStore, sessionRegistry })) {
       logger.warn('fs-watch: upgrade rejected (auth)');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();

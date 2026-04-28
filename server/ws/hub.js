@@ -2,7 +2,7 @@ import { WebSocketServer } from 'ws';
 import { logger } from '../lib/logger.js';
 import { authorizeWsUpgrade } from '../middleware/auth.js';
 
-export function attachWsHub(server, { eventBus, webConfig }) {
+export function attachWsHub(server, { eventBus, webConfig, adminUsersStore, sessionRegistry }) {
   // noServer: true lets us handle the upgrade manually so we can reject
   // unauthorized connections with a proper 401 before the WS handshake completes.
   const wss = new WebSocketServer({ noServer: true });
@@ -12,7 +12,7 @@ export function attachWsHub(server, { eventBus, webConfig }) {
     // Only accept `/ws` exactly (not sub-paths like /ws/pty — those are handled by their own routers)
     const pathOnly = (req.url || '').split('?')[0];
     if (pathOnly !== '/ws') return;
-    if (webConfig && !authorizeWsUpgrade(req, webConfig)) {
+    if (webConfig && !authorizeWsUpgrade(req, webConfig, { adminUsersStore, sessionRegistry })) {
       logger.warn('ws: upgrade rejected (auth)');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();

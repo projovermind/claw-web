@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
+import { estimateSkillTokens, skillMode } from '../lib/skills-store.js';
 
 const createSchema = z.object({
   name: z.string().min(1).max(80),
@@ -35,7 +36,12 @@ export function createSkillsRouter({
   router.get('/', (req, res) => {
     const custom = skillsStore.getAll();
     const system = systemSkillsStore ? systemSkillsStore.getAll() : [];
-    res.json({ skills: [...custom, ...system] });
+    const withMeta = (s) => ({
+      ...s,
+      estimatedTokens: estimateSkillTokens(s),
+      mode: skillMode(s)
+    });
+    res.json({ skills: [...custom, ...system].map(withMeta) });
   });
 
   router.post('/system/refresh', async (req, res, next) => {

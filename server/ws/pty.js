@@ -31,7 +31,7 @@ try {
   logger.warn({ err: err.message }, 'pty: node-pty import failed — terminal disabled');
 }
 
-export function attachPtyWs(server, { webConfig }) {
+export function attachPtyWs(server, { webConfig, adminUsersStore, sessionRegistry }) {
   if (!pty) {
     // Still register the upgrade so the client gets a clean 503 instead of hanging.
     server.on('upgrade', (req, socket) => {
@@ -46,7 +46,7 @@ export function attachPtyWs(server, { webConfig }) {
 
   server.on('upgrade', (req, socket, head) => {
     if (!req.url || !req.url.startsWith('/ws/pty')) return;
-    if (webConfig && !authorizeWsUpgrade(req, webConfig)) {
+    if (webConfig && !authorizeWsUpgrade(req, webConfig, { adminUsersStore, sessionRegistry })) {
       logger.warn('pty: upgrade rejected (auth)');
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();

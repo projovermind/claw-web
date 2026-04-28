@@ -66,6 +66,8 @@ import { createPushStore } from './lib/push-store.js';
 import { createPushRouter } from './routes/push.js';
 import { createAccountsStore } from './lib/accounts-store.js';
 import { createAccountsRouter } from './routes/accounts.js';
+import { createAdminUsersStore } from './lib/admin-users-store.js';
+import { createAuthRouter, createSessionRegistry } from './routes/auth.js';
 import { createAccountScheduler } from './lib/account-scheduler.js';
 import { createSessionAnalyzer } from './lib/session-analyzer.js';
 import { cleanupLegacyCloudflared } from './lib/legacy-cleanup.js';
@@ -404,6 +406,7 @@ const WEB_CONFIG_PATH = path.join(PRIVATE_DIR, 'web-config.json');
 const SESSIONS_PATH = path.join(PRIVATE_DIR, 'sessions.json');
 const SECRETS_PATH = path.join(PRIVATE_DIR, 'secrets.json');
 const ACCOUNTS_PATH = path.join(PRIVATE_DIR, 'accounts.json');
+const ADMIN_USERS_PATH = path.join(PRIVATE_DIR, 'admin-users.json');
 
 const METADATA_PATH = path.join(USER_DIR, 'web-metadata.json');
 const PROJECTS_PATH = path.join(USER_DIR, 'projects.json');
@@ -503,6 +506,18 @@ async function main() {
   const secretsStore = await createSecretsStore({ filePath: SECRETS_PATH });
   const backendsStore = await createBackendsStore(BACKENDS_PATH, { secretsStore });
   const accountsStore = await createAccountsStore(ACCOUNTS_PATH, { backendsStore });
+  const adminUsersStore = await createAdminUsersStore(ADMIN_USERS_PATH);
+  const sessionRegistry = createSessionRegistry();
+  // First-boot seeding — if no users exist yet, create a default admin/1234.
+  // Operator must change this password immediately (warning logged).
+  if (adminUsersStore.count() === 0) {
+    try {
+      await adminUsersStore.create({ username: 'admin', password: '1234', role: 'admin' });
+      logger.warn('seeded default admin user (admin/1234) — change the password immediately');
+    } catch (err) {
+      logger.error({ err: err.message }, 'failed to seed default admin user');
+    }
+  }
   const skillsStore = await createSkillsStore(SKILLS_PATH);
   const systemSkillsStore = createSystemSkillsStore();
   try {
@@ -586,7 +601,8 @@ async function main() {
   // Auth guard on all /api/* (reads live from webConfig, so toggles take effect
   // immediately). Exempts GET /api/health and GET /api/settings so clients can
   // probe whether auth is required.
-  app.use('/api', createAuthMiddleware({ webConfig }));
+  app.use('/api', createAuthMiddleware({ webConfig, adminUsersStore, sessionRegistry }));
+  app.use('/api/auth', createAuthRouter({ adminUsersStore, sessionRegistry }));
 
   app.use('/api/health', createHealthRouter({ healthCheck }));
   app.use('/api/agents', createAgentsRouter({ configStore, metadataStore, projectsStore, skillsStore, sessionsStore, eventBus }));
@@ -666,10 +682,10 @@ async function main() {
   app.use(errorHandler);
 
   const server = http.createServer(app);
-  const wsHub = attachWsHub(server, { eventBus, webConfig });
-  const ptyWs = attachPtyWs(server, { webConfig });
-  const fsWatchWs = attachFsWatchWs(server, { webConfig });
-  const execWs = attachExecWs(server, { webConfig });
+  const wsHub = attachWsHub(server, { eventBus, webConfig, adminUsersStore, sessionRegistry });
+  const ptyWs = attachPtyWs(server, { webConfig, adminUsersStore, sessionRegistry });
+  const fsWatchWs = attachFsWatchWs(server, { webConfig, adminUsersStore, sessionRegistry });
+  const execWs = attachExecWs(server, { webConfig, adminUsersStore, sessionRegistry });
 
   // ── 포트 점유 진단 (kill 하지 않고 로그만) ──
   // 자가 청소는 launchd unload→load 오버랩 시점에 방금 launchd 가 띄운

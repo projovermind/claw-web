@@ -5,6 +5,53 @@ import path from 'node:path';
 import { z } from 'zod';
 import { nanoid } from 'nanoid';
 import { HttpError } from '../middleware/error-handler.js';
+import { createRequire } from 'node:module';
+import pino from 'pino';
+
+const log = pino({ name: 'uploads' });
+
+// Attempt to load sharp — graceful fallback if native module unavailable
+let sharp = null;
+try {
+  const require = createRequire(import.meta.url);
+  sharp = require('sharp');
+} catch {
+  log.warn('sharp not available — images will be stored as-is');
+}
+
+const IMAGE_MAX_PX = 1280;
+const JPEG_QUALITY = 82;
+
+// Returns { buffer, outMime } — outMime may differ from input (e.g. PNG→JPEG)
+async function maybeResizeImage(buffer, contentType) {
+  if (!sharp || !contentType?.startsWith('image/')) return { buffer, outMime: contentType };
+  try {
+    const meta = await sharp(buffer).metadata();
+    const { width = 0, height = 0, hasAlpha } = meta;
+    const longest = Math.max(width, height);
+    const needsResize = longest > IMAGE_MAX_PX;
+
+    const pipeline = sharp(buffer).rotate(); // auto-orient via EXIF
+    if (needsResize) {
+      pipeline.resize({ width: IMAGE_MAX_PX, height: IMAGE_MAX_PX, fit: 'inside', withoutEnlargement: true });
+    }
+
+    let outBuffer, outMime;
+    if (contentType === 'image/png' && hasAlpha) {
+      outBuffer = await pipeline.png({ compressionLevel: 8 }).toBuffer();
+      outMime = 'image/png';
+    } else {
+      outBuffer = await pipeline.jpeg({ quality: JPEG_QUALITY }).toBuffer();
+      outMime = 'image/jpeg';
+    }
+
+    log.info({ before: buffer.length, after: outBuffer.length, reduction: `${((1 - outBuffer.length / buffer.length) * 100).toFixed(1)}%`, needsResize }, 'image resized');
+    return { buffer: outBuffer, outMime };
+  } catch (err) {
+    log.warn({ err: err.message }, 'sharp resize failed — using original');
+    return { buffer, outMime: contentType };
+  }
+}
 
 const uploadSchema = z.object({
   filename: z.string().min(1).max(255),
@@ -42,15 +89,24 @@ export function createUploadsRouter({ uploadsDir, eventBus }) {
         throw new HttpError(413, `File too large (max ${MAX_BYTES / 1024 / 1024} MB)`, 'TOO_LARGE');
       }
       const id = nanoid(16);
-      const diskName = `${id}-${cleanName}`;
+      const mimeType = body.contentType ?? 'application/octet-stream';
+      const { buffer: finalBuffer, outMime } = await maybeResizeImage(buffer, mimeType);
+
+      // Rename extension if format changed (e.g. PNG-without-alpha → JPEG)
+      let finalName = cleanName;
+      if (outMime === 'image/jpeg' && mimeType !== 'image/jpeg') {
+        finalName = cleanName.replace(/\.[^.]+$/, '.jpg');
+      }
+
+      const diskName = `${id}-${finalName}`;
       const diskPath = path.join(uploadsDir, diskName);
-      await fs.writeFile(diskPath, buffer);
+      await fs.writeFile(diskPath, finalBuffer);
 
       const payload = {
         id,
-        filename: cleanName,
-        contentType: body.contentType ?? 'application/octet-stream',
-        size: buffer.length,
+        filename: finalName,
+        contentType: outMime,
+        size: finalBuffer.length,
         path: diskPath,
         createdAt: new Date().toISOString()
       };

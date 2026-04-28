@@ -37,11 +37,38 @@ export function classifyError(errMsg = '') {
 }
 
 /**
+ * Replace attachment references in a message content string with a compact placeholder.
+ * Applied to messages older than the recent N turns to reduce token usage.
+ * Patterns: markdown images, <claw-download> tags, bare /uploads/ paths.
+ */
+function redactAttachments(content) {
+  if (typeof content !== 'string') return content;
+  // ![alt](path) or ![alt](path "title")
+  content = content.replace(/!\[[^\]]*\]\(([^)]+)\)/g, (_, path) => {
+    const filename = path.trim().split('/').pop().split(' ')[0];
+    return `[첨부: ${filename} (5턴 이전 생략)]`;
+  });
+  // <claw-download path="..." ... />
+  content = content.replace(/<claw-download[^>]*path="([^"]+)"[^>]*\/?>/g, (_, path) => {
+    const filename = path.trim().split('/').pop();
+    return `[첨부: ${filename} (5턴 이전 생략)]`;
+  });
+  // bare /uploads/... paths not already caught above
+  content = content.replace(/\/uploads\/[^\s)\]"]+/g, (match) => {
+    const filename = match.split('/').pop();
+    return `[첨부: ${filename} (5턴 이전 생략)]`;
+  });
+  return content;
+}
+
+/**
  * Build a conversation summary for fresh-start retries when --resume is dropped.
  * Older messages are compressed (first 200 chars); the last `recent` messages kept in full.
  * Output is prefixed onto the next user message so the model has context without --resume.
+ * Default: 10 messages (≈ 5 user-assistant turns) preserved verbatim.
+ * Attachment paths/images in older messages are replaced with placeholders to reduce tokens.
  */
-export function buildConversationSummary(messages = [], { recent = 6 } = {}) {
+export function buildConversationSummary(messages = [], { recent = 10 } = {}) {
   if (!Array.isArray(messages) || messages.length === 0) return '';
   const older = messages.slice(0, -recent);
   const tail = messages.slice(-recent);
@@ -52,8 +79,9 @@ export function buildConversationSummary(messages = [], { recent = 6 } = {}) {
     lines.push(`## 이전 대화 (${older.length}개 메시지, 압축됨)`);
     for (const m of older) {
       const role = m.role === 'user' ? '👤' : '🤖';
-      const content = (m.content ?? '').replace(/\n/g, ' ').slice(0, 200);
-      const ellipsis = (m.content ?? '').length > 200 ? '...' : '';
+      const redacted = redactAttachments(m.content ?? '');
+      const content = redacted.replace(/\n/g, ' ').slice(0, 200);
+      const ellipsis = redacted.length > 200 ? '...' : '';
       lines.push(`- ${role} ${content}${ellipsis}`);
     }
     lines.push('');

@@ -270,7 +270,8 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
       lines.push('');
 
       // Include last N messages in full (most relevant recent context)
-      const RECENT = 6;
+      // 10 messages ≈ 5 user-assistant turns kept verbatim.
+      const RECENT = 10;
       const older = msgs.slice(0, -RECENT);
       const recent = msgs.slice(-RECENT);
 

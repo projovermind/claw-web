@@ -5,6 +5,27 @@ import lockfile from 'proper-lockfile';
 import { nanoid } from 'nanoid';
 
 const EMPTY = () => ({ version: 1, skills: {} });
+
+/**
+ * 스킬 풀주입 시 소비 토큰 추정 (한국어 평균 chars/3.5)
+ * @param {object} skill
+ * @returns {number}
+ */
+export function estimateSkillTokens(skill) {
+  const content = (skill?.content ?? '') + '\n' + (skill?.description ?? '');
+  return Math.ceil(content.length / 3.5);
+}
+
+/**
+ * 스킬의 주입 모드 반환
+ * @param {object} skill
+ * @returns {'always'|'triggered'|'manual'}
+ */
+export function skillMode(skill) {
+  if (skill?.alwaysOn === true) return 'always';
+  if (Array.isArray(skill?.triggers) && skill.triggers.length > 0) return 'triggered';
+  return 'manual';
+}
 const newId = () => `skill_${nanoid(12)}`;
 
 export async function createSkillsStore(filePath) {

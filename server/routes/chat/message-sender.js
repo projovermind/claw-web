@@ -17,6 +17,38 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PERMISSION_BRIDGE_PATH = path.resolve(__dirname, '../../mcp/permission-bridge.js');
 
 /**
+ * Extract a concise summary from a delegation worker's response.
+ * Priority: tagged content (<choices>/<promise>) + tail (conclusion) + head (intro).
+ * Hard limit: 1500 chars.
+ */
+function extractDelegationSummary(text, limit = 1500) {
+  if (!text) return '';
+  const parts = [];
+
+  // 1) Extract special tags
+  const tagRe = /<(choices|promise|escalate)>([\s\S]*?)<\/\1>/gi;
+  let m;
+  while ((m = tagRe.exec(text)) !== null) {
+    parts.push(m[0].trim());
+  }
+
+  // 2) First 200 chars (context/intro)
+  const head = text.slice(0, 200).trim();
+  if (head) parts.push(head);
+
+  // 3) Last 800 chars (conclusion)
+  if (text.length > 200) {
+    const tail = text.slice(-800).trim();
+    if (tail) parts.push(tail);
+  }
+
+  const combined = parts.join('\n\n');
+  // Deduplicate consecutive identical lines
+  const deduped = combined.split('\n').filter((line, i, arr) => i === 0 || line !== arr[i - 1]).join('\n');
+  return deduped.slice(0, limit);
+}
+
+/**
  * Builds an ephemeral .mcp.json for this session that registers our stdio
  * permission-prompt bridge. Returns { configPath, cleanup }.
  *
@@ -242,7 +274,7 @@ export function createMessageSender(ctx) {
     //  일반 턴 진입에서 claudeSessionId 가 null 로 바뀐 경우는 누락되어 대화가 끊겼음)
     if (isFirstMsg && Array.isArray(session.messages) && session.messages.length > 1) {
       const prior = session.messages.slice(0, -1);
-      const summary = buildConversationSummary(prior, { recent: 6 });
+      const summary = buildConversationSummary(prior, { recent: 10 });
       if (summary) {
         logger.info(
           { sessionId, priorMessages: prior.length },
@@ -392,7 +424,7 @@ export function createMessageSender(ctx) {
             if (delegationTracker) {
               const del = delegationTracker.getByTarget(sessionId);
               if (del) {
-                const summary = (responseText ?? '').slice(0, 2000) || '(응답 없음)';
+                const summary = extractDelegationSummary(responseText ?? '') || '(응답 없음)';
                 const completed = delegationTracker.complete(sessionId, summary);
                 if (completed) {
                   ctx.dequeueNextAgent(completed.targetAgentId);
