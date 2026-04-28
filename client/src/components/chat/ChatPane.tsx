@@ -497,7 +497,7 @@ export default function ChatPane({
           </div>
         </>
       )}
-      {sessionId && runtime?.permissionPrompt && isActive && (
+      {sessionId && runtime?.permissionPrompt && (
         <PermissionPromptModal sessionId={sessionId} prompt={runtime.permissionPrompt} />
       )}
     </div>
