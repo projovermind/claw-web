@@ -364,6 +364,9 @@ export default function MessageList({ messages, searchQuery, onChoice }: Message
         // 이 assistant 메시지 다음의 user 메시지 — 선택지 "이미 보낸" 판정용
         const next = i + 1 < filtered.length ? filtered[i + 1] : null;
         const nextUserContent = next?.role === 'user' ? next.content : null;
+        // queued user 메시지 뒤에 assistant 응답이 이미 도착했는지 — 배지 숨김 판정용
+        const hasLaterAssistant = m.role === 'user'
+          && filtered.slice(i + 1).some((later) => later.role === 'assistant');
         return (
         <MessageBubble
           key={i}
@@ -371,6 +374,7 @@ export default function MessageList({ messages, searchQuery, onChoice }: Message
           searchQuery={searchQuery}
           onChoice={onChoice}
           nextUserContent={nextUserContent}
+          hasLaterAssistant={hasLaterAssistant}
           delegationStage={isReportResponse ? 'final' : isEscalateResponse ? 'escalate-resolution' : undefined}
           runningSessionIds={runningSessionIds}
         />
@@ -408,12 +412,14 @@ function HighlightText({ text, query }: { text: string; query: string }) {
   );
 }
 
-function MessageBubble({ message, searchQuery, onChoice, nextUserContent, delegationStage, runningSessionIds }: {
+function MessageBubble({ message, searchQuery, onChoice, nextUserContent, hasLaterAssistant, delegationStage, runningSessionIds }: {
   message: ChatMessage;
   searchQuery?: string;
   onChoice?: (c: string) => void;
   /** 다음 user 메시지 본문 — 선택지 "이미 전송됨" 판정용 */
   nextUserContent?: string | null;
+  /** 이 user 메시지 뒤에 assistant 응답이 이미 존재하는지 — "대기 중" 배지 자동 해제용 */
+  hasLaterAssistant?: boolean;
   /** 이전 메시지 컨텍스트 기반 위임 단계 배지 */
   delegationStage?: 'final' | 'escalate-resolution';
   /** 현재 러닝 중인 세션 ID 집합 (위임 카드의 라이브 작업 중 표시) */
@@ -421,7 +427,9 @@ function MessageBubble({ message, searchQuery, onChoice, nextUserContent, delega
 }) {
   const t = useT();
   const isUser = message.role === 'user';
-  const isQueued = isUser && (message as ChatMessage & { queued?: boolean }).queued;
+  const isQueued = isUser
+    && (message as ChatMessage & { queued?: boolean }).queued
+    && !hasLaterAssistant;
   const editorCfg = useEditorConfig();
   const { body, choices, downloads } = useMemo(() => {
     if (isUser) return { body: message.content, choices: [], downloads: [] as DownloadItem[] };
