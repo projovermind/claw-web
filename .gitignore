@@ -44,3 +44,10 @@ packaging/.staging/
 .playwright-mcp/
 notion-*.png
 null/
+
+# Ad-hoc UI snapshots / debug artifacts
+auth-modal-*.png
+auth-modal-*.md
+backends-tab-*.md
+modal-*.png
+data/.layout-migration-done

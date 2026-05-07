@@ -255,6 +255,14 @@ export function createMessageSender(ctx) {
       }
     }
 
+    // file-download 리마인더 — 첫 턴 외(시스템 프롬프트엔 이미 박힘)에 사용자가
+    // 파일 전달을 요청하는 키워드를 쓰면 해당 턴에만 짧게 마커 사용법을 prepend.
+    // 옛 세션이거나 컨텍스트 압축으로 시스템 힌트가 희미해진 경우의 안전망.
+    if (!isFirstMsg && /다운로드|다운받|내려받|download|첨부\s*(파일|해|줘)|파일\s*(을|를)?\s*(받|줘|보내|주세요|주실|건네|전달)|보내\s*줘[^\n]{0,15}파일/i.test(message)) {
+      const reminder = `<file-download-reminder>\n사용자가 파일 전달을 요청했습니다. 결과 파일을 전달할 때는 응답 본문에 다음 마커를 그대로 출력하세요(코드블록으로 감싸지 마세요):\n<claw-download path="<파일의 절대 경로>" label="<선택: 라벨>" />\n- path 는 반드시 절대 경로.\n- 파일이 실제로 존재하는지 먼저 확인 후 첨부.\n</file-download-reminder>`;
+      message = `${reminder}\n\n${message}`;
+    }
+
     // Phase 5: VS Code bridge auto-attach — per-turn prepend (dynamic)
     if (agent.bridgeAutoAttach && typeof getBridgeContext === 'function') {
       try {

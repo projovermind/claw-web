@@ -13,6 +13,8 @@ import { useChatStore, selectActiveWorkspace } from '../store/chat-store';
 import { useProgressToastStore } from '../store/progress-toast-store';
 import { useT } from '../lib/i18n';
 import ChatInput from '../components/chat/ChatInput';
+import ContextUsageBadge from '../components/chat/ContextUsageBadge';
+import { modelContextWindow } from '../lib/context-window';
 import TodoWidget from '../components/chat/TodoWidget';
 import { ChatSidebar } from '../components/chat/ChatSidebar';
 import { FrameworkActions } from '../components/chat/FrameworkActions';
@@ -211,6 +213,22 @@ export default function ChatPage() {
       return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
     });
   }, [sessionsQ.data]);
+
+  // Composer context-window gauge — derived from the last assistant turn's
+  // (input + cache_read) tokens, NOT a cumulative session sum. Once Claude CLI
+  // compacts the session, this naturally drops on the next response.
+  const contextUsageBadge = useMemo(() => {
+    const msgs = sessionQ.data?.messages ?? [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role !== 'assistant' || !m.usage) continue;
+      const used = (m.usage.inputTokens ?? 0) + (m.usage.cacheReadTokens ?? 0);
+      if (used <= 0) return null;
+      const max = modelContextWindow(m.model ?? currentAgent?.model);
+      return <ContextUsageBadge used={used} max={max} />;
+    }
+    return null;
+  }, [sessionQ.data?.messages, currentAgent?.model]);
 
   const projectSelectAllSessionsQ = useQuery<{ sessions: SessionMeta[] }>({
     queryKey: ['sessions-all'],
@@ -426,6 +444,7 @@ export default function ChatPage() {
             running={running}
             sessionId={currentSessionId}
             workingDir={currentAgent?.workingDir ?? null}
+            bottomRightSlot={contextUsageBadge}
             onSend={(msg, paths) => {
               if (currentSessionId) sendMessage.mutate({ sessionId: currentSessionId, message: msg, paths });
             }}

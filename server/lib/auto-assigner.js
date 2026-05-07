@@ -36,7 +36,7 @@ const ROLE_PRESETS = {
   // 프론트엔드 개발자
   frontend: {
     match: [/frontend/i, /프론트엔드/, /ui/i, /component/i, /컴포넌트/],
-    skills: ['TDD Workflow', '코드 리뷰', '코딩 공통 룰'],
+    skills: ['TDD Workflow', '코드 리뷰', '코딩 공통 룰', '코드 간소화'],
     allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'TodoWrite', 'WebFetch'],
     disallowedTools: [],
     description: '프론트엔드 개발'
@@ -44,7 +44,7 @@ const ROLE_PRESETS = {
   // 백엔드/API 개발자
   backend: {
     match: [/api/i, /backend/i, /백엔드/, /server/i, /worker/i, /워커/],
-    skills: ['TDD Workflow', '코드 리뷰', '코딩 공통 룰'],
+    skills: ['TDD Workflow', '코드 리뷰', '코딩 공통 룰', '코드 간소화'],
     allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'TodoWrite', 'WebFetch'],
     disallowedTools: [],
     description: '백엔드/API 개발'
@@ -52,7 +52,7 @@ const ROLE_PRESETS = {
   // 데이터 엔지니어
   data: {
     match: [/data/i, /데이터/, /pipeline/i, /파이프/, /analyst/i, /분석/],
-    skills: ['TDD Workflow', '코딩 공통 룰'],
+    skills: ['TDD Workflow', '코딩 공통 룰', '코드 간소화'],
     allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'TodoWrite', 'WebFetch', 'NotebookEdit'],
     disallowedTools: [],
     description: '데이터 엔지니어링'
@@ -68,7 +68,7 @@ const ROLE_PRESETS = {
   // 리뷰어 — 코드 리뷰
   reviewer: {
     match: [/review/i, /리뷰/],
-    skills: ['코드 리뷰', '코딩 공통 룰'],
+    skills: ['코드 리뷰', '코딩 공통 룰', '코드 간소화'],
     allowedTools: ['Read', 'Grep', 'Glob', 'WebFetch', 'TodoWrite'],
     disallowedTools: ['Write', 'Edit', 'Bash'],
     description: '코드 리뷰어'
@@ -84,7 +84,7 @@ const ROLE_PRESETS = {
   // 인스톨러/배포
   installer: {
     match: [/install/i, /인스톨/, /deploy/i, /배포/, /devops/i],
-    skills: ['코딩 공통 룰'],
+    skills: ['코딩 공통 룰', '코드 간소화'],
     allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'TodoWrite'],
     disallowedTools: [],
     description: '인스톨/배포'
@@ -92,7 +92,7 @@ const ROLE_PRESETS = {
   // 범용 에이전트 (기본값)
   general: {
     match: [/general/i, /어시스턴트/, /assistant/i, /hivemind/i, /하이브마인드/],
-    skills: ['TDD Workflow', '코드 리뷰', '코딩 공통 룰'],
+    skills: ['TDD Workflow', '코드 리뷰', '코딩 공통 룰', '코드 간소화'],
     allowedTools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'TodoWrite', 'WebFetch', 'WebSearch', 'Agent', 'NotebookEdit'],
     disallowedTools: [],
     description: '범용 에이전트'

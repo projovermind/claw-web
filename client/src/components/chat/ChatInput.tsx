@@ -18,6 +18,9 @@ interface Props {
   onAbort: () => void;
   /** System command callbacks — called by /clear, /new, /export etc. */
   onSystemCommand?: (cmd: string, arg?: string) => void;
+  /** Slot rendered in the bottom-right of the composer (left of send button).
+   *  Used by ChatPage to show the context-window usage gauge. */
+  bottomRightSlot?: React.ReactNode;
 }
 
 function formatSize(bytes: number): string {
@@ -32,7 +35,7 @@ function isImage(contentType: string): boolean {
 
 type PopoverMode = 'none' | 'slash' | 'atfile';
 
-export default function ChatInput({ disabled, running, workingDir, sessionId, onSend, onAbort, onSystemCommand }: Props) {
+export default function ChatInput({ disabled, running, workingDir, sessionId, onSend, onAbort, onSystemCommand, bottomRightSlot }: Props) {
   const t = useT();
   const COMMANDS = useCommands();
   const [value, setValue] = useState('');
@@ -573,27 +576,30 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
                 </button>
               )}
             </div>
-            {running ? (
-              <div className="flex gap-1">
-                {/* 응답 중 메시지 → 현재 응답 중단하고 참고해서 이어서 답변 */}
+            <div className="flex items-center gap-2">
+              {bottomRightSlot}
+              {running ? (
+                <div className="flex gap-1">
+                  {/* 응답 중 메시지 → 현재 응답 중단하고 참고해서 이어서 답변 */}
+                  <button onClick={submit}
+                    disabled={disabled || (!value.trim() && staged.length === 0)}
+                    className="p-1.5 rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-30 text-white transition-colors"
+                    title="응답 중 참고 — 현재 응답 중단 후 이전 진행사항 + 새 메시지로 이어서 답변">
+                    <Send size={18} />
+                  </button>
+                  <button onClick={onAbort}
+                    className="p-1.5 rounded bg-red-900/60 hover:bg-red-900 text-red-200 transition-colors" title={t('chat.input.abortBtn')}>
+                    <Square size={18} />
+                  </button>
+                </div>
+              ) : (
                 <button onClick={submit}
                   disabled={disabled || (!value.trim() && staged.length === 0)}
-                  className="p-1.5 rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-30 text-white transition-colors"
-                  title="응답 중 참고 — 현재 응답 중단 후 이전 진행사항 + 새 메시지로 이어서 답변">
+                  className="p-1.5 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-30 text-white transition-colors" title={t('chat.input.sendBtn')}>
                   <Send size={18} />
                 </button>
-                <button onClick={onAbort}
-                  className="p-1.5 rounded bg-red-900/60 hover:bg-red-900 text-red-200 transition-colors" title={t('chat.input.abortBtn')}>
-                  <Square size={18} />
-                </button>
-              </div>
-            ) : (
-              <button onClick={submit}
-                disabled={disabled || (!value.trim() && staged.length === 0)}
-                className="p-1.5 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-30 text-white transition-colors" title={t('chat.input.sendBtn')}>
-                <Send size={18} />
-              </button>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </div>
