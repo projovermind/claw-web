@@ -180,6 +180,8 @@ export type BackendPublic =
       hasSecret?: boolean;
       secretTooShort?: boolean;
       models: Record<string, string>;
+      /** Per-model context window in tokens (key = actual model id). */
+      contextWindows?: Record<string, number>;
       active?: boolean;
       austerity?: boolean;
       fallback?: string | null;
@@ -192,6 +194,8 @@ export type BackendPublic =
       /** True iff configDir was auto-created from the ~/.claude-claw/account-{id} fallback (user did not set it explicitly). */
       configDirAutoCreated?: boolean;
       models: Record<string, string>;
+      /** Per-model context window in tokens (key = actual model id). */
+      contextWindows?: Record<string, number>;
       status: 'active' | 'cooldown' | 'disabled' | 'needs-relogin';
       lastUsedAt: number;
       usage?: { windowStart: string | null; messagesUsed: number };

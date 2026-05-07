@@ -1,9 +1,8 @@
+import type { BackendsState } from './types';
+
 /**
- * Maps a model identifier to its maximum context window in tokens.
- *
- * Source: Anthropic public docs (Claude 3.5/4/4.5/4.6 = 200K, Sonnet 1M beta = 1M).
- * Unknown models fall back to 200K (the modern Claude default), which is a safe
- * lower bound for displaying a context-usage gauge.
+ * Heuristic mapping of a model id → max context window (tokens).
+ * Used as a fallback when the backend doesn't declare contextWindow explicitly.
  */
 export function modelContextWindow(model: string | null | undefined): number {
   if (!model) return 200_000;
@@ -16,6 +15,38 @@ export function modelContextWindow(model: string | null | undefined): number {
   if (m.includes('claude-2.1')) return 200_000;
   // Default for Claude 3 / 3.5 / 4 / 4.5 / 4.6 family (Sonnet, Opus, Haiku)
   return 200_000;
+}
+
+/**
+ * Resolves a model's context window using, in order:
+ *   1. Explicit `contextWindows[model]` declared on the agent's backend
+ *   2. Same lookup across any backend (in case the agent's backendId is stale)
+ *   3. Heuristic from `modelContextWindow`
+ *
+ * Returns `{ tokens, source }` so callers can flag heuristic guesses to the
+ * user (e.g. show "(추정)" or warn when the gauge overflows).
+ */
+export type ContextWindowSource = 'backend' | 'heuristic';
+
+export function resolveContextWindow(
+  model: string | null | undefined,
+  backendId: string | null | undefined,
+  backends: BackendsState | undefined,
+): { tokens: number; source: ContextWindowSource } {
+  if (model && backends?.backends) {
+    const preferred = backendId ? backends.backends[backendId] : null;
+    const preferredHit = preferred?.contextWindows?.[model];
+    if (typeof preferredHit === 'number' && preferredHit > 0) {
+      return { tokens: preferredHit, source: 'backend' };
+    }
+    for (const b of Object.values(backends.backends)) {
+      const hit = b.contextWindows?.[model];
+      if (typeof hit === 'number' && hit > 0) {
+        return { tokens: hit, source: 'backend' };
+      }
+    }
+  }
+  return { tokens: modelContextWindow(model), source: 'heuristic' };
 }
 
 /** Color tier for a usage ratio (0..1). */

@@ -110,6 +110,7 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
         envStatus: b.type === 'claude-cli' && oauthStatus === 'set' && envStatus !== 'set' ? 'set (OAuth)' : envStatus,
         secretSource,
         models: b.models ?? {},
+        contextWindows: b.contextWindows ?? {},
         fallback: b.fallback ?? null,
         ...(b.type === 'claude-cli' ? {
           oauthStatus, oauthSource, cred,

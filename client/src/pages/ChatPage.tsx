@@ -14,7 +14,7 @@ import { useProgressToastStore } from '../store/progress-toast-store';
 import { useT } from '../lib/i18n';
 import ChatInput from '../components/chat/ChatInput';
 import ContextUsageBadge from '../components/chat/ContextUsageBadge';
-import { modelContextWindow } from '../lib/context-window';
+import { resolveContextWindow } from '../lib/context-window';
 import TodoWidget from '../components/chat/TodoWidget';
 import { ChatSidebar } from '../components/chat/ChatSidebar';
 import { FrameworkActions } from '../components/chat/FrameworkActions';
@@ -52,6 +52,7 @@ export default function ChatPage() {
 
   const agentsQ = useQuery({ queryKey: ['agents'], queryFn: api.agents });
   const projectsQ = useQuery({ queryKey: ['projects'], queryFn: api.projects });
+  const backendsQ = useQuery({ queryKey: ['backends'], queryFn: api.backends });
   const sessionsQ = useQuery({
     queryKey: ['sessions', currentAgentId],
     queryFn: () => (currentAgentId ? api.sessions(currentAgentId) : Promise.resolve([])),
@@ -222,13 +223,25 @@ export default function ChatPage() {
     for (let i = msgs.length - 1; i >= 0; i--) {
       const m = msgs[i];
       if (m.role !== 'assistant' || !m.usage) continue;
-      const used = (m.usage.inputTokens ?? 0) + (m.usage.cacheReadTokens ?? 0);
+      const inputTokens = m.usage.inputTokens ?? 0;
+      const cacheReadTokens = m.usage.cacheReadTokens ?? 0;
+      const outputTokens = m.usage.outputTokens ?? 0;
+      const used = inputTokens + cacheReadTokens;
       if (used <= 0) return null;
-      const max = modelContextWindow(m.model ?? currentAgent?.model);
-      return <ContextUsageBadge used={used} max={max} />;
+      const model = m.model ?? currentAgent?.model ?? null;
+      const backendId = (currentAgent as { backendId?: string } | undefined)?.backendId ?? null;
+      const { tokens: max, source } = resolveContextWindow(model, backendId, backendsQ.data);
+      return (
+        <ContextUsageBadge
+          used={used}
+          max={max}
+          source={source}
+          diag={{ inputTokens, cacheReadTokens, outputTokens, model }}
+        />
+      );
     }
     return null;
-  }, [sessionQ.data?.messages, currentAgent?.model]);
+  }, [sessionQ.data?.messages, currentAgent, backendsQ.data]);
 
   const projectSelectAllSessionsQ = useQuery<{ sessions: SessionMeta[] }>({
     queryKey: ['sessions-all'],

@@ -13,6 +13,9 @@ export const ClaudeCliBackendSchema = z.object({
   priority: z.number().default(50),
   cooldownUntil: z.number().nullable().default(null),
   models: z.record(z.string()).default({}),
+  /** Per-model context window in tokens. Key is the actual model id (the value
+   *  side of `models`). When set, takes precedence over the client heuristic. */
+  contextWindows: z.record(z.number()).default({}),
   envKey: z.string().nullable().optional(),
   fallback: z.string().nullable().optional(),
   autoReplaceOnLogin: z.boolean().default(true),
@@ -25,6 +28,8 @@ export const OpenAICompatibleBackendSchema = z.object({
   envKey: z.string().nullable().optional(),
   secret: z.string().nullable().optional(),
   models: z.record(z.string()).default({}),
+  /** Per-model context window in tokens. Key is the actual model id. */
+  contextWindows: z.record(z.number()).default({}),
   fallback: z.string().nullable().optional(),
 });
 
