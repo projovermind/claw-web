@@ -153,7 +153,15 @@ export const api = {
   approveTool: (
     sessionId: string,
     reqId: string,
-    payload: { behavior: 'allow' | 'deny'; updatedInput?: Record<string, unknown>; message?: string; remember?: boolean }
+    payload: {
+      behavior: 'allow' | 'deny';
+      updatedInput?: Record<string, unknown>;
+      message?: string;
+      /** Legacy — `true` ⇔ scope:'always'. 신규 코드는 `scope` 사용. */
+      remember?: boolean;
+      /** 'once' (기본) | 'session' (이 세션 내 자동 허용) | 'always' (영구) */
+      scope?: 'once' | 'session' | 'always';
+    }
   ) => post<{ ok: boolean }>(`/chat/${sessionId}/approval/${reqId}`, payload),
   startLoop: (sessionId: string, prompt: string, maxIterations = 10, completionPromise = 'DONE') =>
     post<{ sessionId: string; loop: string }>(`/sessions/${sessionId}/loop`, {

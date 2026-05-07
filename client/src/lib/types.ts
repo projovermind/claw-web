@@ -39,6 +39,10 @@ export interface ChatMessage {
     outputTokens: number;
     cacheReadTokens?: number;
     totalTokens: number;
+    /** 마지막 LLM call 의 prompt 크기 (input + cache_read + cache_creation).
+     *  CLI `result.usage` 의 input/cache_read 는 도구 루프 내부 호출 합산이라
+     *  컨텍스트 윈도우 부하 게이지에는 부적합. 이 필드가 있으면 게이지가 우선 사용. */
+    contextTokens?: number | null;
   } | null;
 }
 

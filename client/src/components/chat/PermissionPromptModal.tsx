@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
-import { ShieldAlert, Check, CheckCheck, X } from 'lucide-react';
+import { ShieldAlert, Check, CheckCheck, History, X } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useT } from '../../lib/i18n';
 import { useChatStore, type PermissionPrompt } from '../../store/chat-store';
+
+type Scope = 'once' | 'session' | 'always';
+type Busy = '' | 'allow' | 'allowSession' | 'allowAlways' | 'deny';
 
 interface Props {
   sessionId: string;
@@ -13,8 +16,9 @@ interface Props {
  * Tool approval modal. Rendered by ChatPane when the session has a pending
  * permission-prompt (pushed via WS `chat.permission-prompt`).
  *
- * Allow → POST behavior:"allow"
- * Allow+Always → same but remember:true (server adds tool to agent.allowedTools)
+ * Allow (scope:'once') → POST behavior:"allow"
+ * This session (scope:'session') → 같은 세션의 같은 도구는 모달 안 뜨고 자동 통과 (서버 메모리)
+ * Allow+Always (scope:'always') → 영구 허용 (server adds tool to agent.allowedTools)
  * Deny → POST behavior:"deny"
  *
  * Closing the modal itself does not cancel the request; only user action or
@@ -22,15 +26,19 @@ interface Props {
  */
 export default function PermissionPromptModal({ sessionId, prompt }: Props) {
   const t = useT();
-  const [busy, setBusy] = useState<'' | 'allow' | 'allowAlways' | 'deny'>('');
+  const [busy, setBusy] = useState<Busy>('');
   const clearPermissionPrompt = useChatStore((s) => s.clearPermissionPrompt);
 
-  async function respond(behavior: 'allow' | 'deny', remember = false) {
+  async function respond(behavior: 'allow' | 'deny', scope: Scope = 'once') {
     if (busy) return;
-    const kind = behavior === 'deny' ? 'deny' : remember ? 'allowAlways' : 'allow';
+    const kind: Busy = behavior === 'deny'
+      ? 'deny'
+      : scope === 'always' ? 'allowAlways'
+      : scope === 'session' ? 'allowSession'
+      : 'allow';
     setBusy(kind);
     try {
-      await api.approveTool(sessionId, prompt.reqId, { behavior, remember });
+      await api.approveTool(sessionId, prompt.reqId, { behavior, scope });
       clearPermissionPrompt(sessionId);
     } catch {
       // leave modal open — server may not have received it
@@ -100,7 +108,7 @@ export default function PermissionPromptModal({ sessionId, prompt }: Props) {
             </button>
             <button
               type="button"
-              onClick={() => respond('allow', true)}
+              onClick={() => respond('allow', 'always')}
               disabled={!!busy}
               className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded border border-emerald-800/60 text-emerald-300 hover:bg-emerald-900/30 disabled:opacity-50"
             >
@@ -108,7 +116,15 @@ export default function PermissionPromptModal({ sessionId, prompt }: Props) {
             </button>
             <button
               type="button"
-              onClick={() => respond('allow')}
+              onClick={() => respond('allow', 'session')}
+              disabled={!!busy}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded border border-emerald-700/60 text-emerald-200 hover:bg-emerald-900/30 disabled:opacity-50"
+            >
+              <History size={14} /> {t('permission.allowSession')}
+            </button>
+            <button
+              type="button"
+              onClick={() => respond('allow', 'once')}
               disabled={!!busy}
               className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded bg-emerald-600 hover:bg-emerald-500 text-white disabled:opacity-50"
             >

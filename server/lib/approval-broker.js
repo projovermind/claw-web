@@ -18,6 +18,11 @@ export function createApprovalBroker({ timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
   // reqId → { sessionId, resolve, timer }
   const pending = new Map();
 
+  // sessionId → Set<toolName>. 사용자가 모달에서 "이 세션" 을 클릭한 도구는
+  // 같은 세션의 후속 요청에서 자동 허용 (모달 안 뜸). 인메모리이므로 서버
+  // 재시작 시 자연스럽게 초기화됨.
+  const sessionAllowlist = new Map();
+
   function request({ sessionId, toolName, input }) {
     const reqId = nanoid(12);
     return {
@@ -68,5 +73,31 @@ export function createApprovalBroker({ timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     return out;
   }
 
-  return { request, resolve, cancelForSession, listPending };
+  function allowToolForSession(sessionId, toolName) {
+    if (!sessionId || !toolName) return;
+    let set = sessionAllowlist.get(sessionId);
+    if (!set) {
+      set = new Set();
+      sessionAllowlist.set(sessionId, set);
+    }
+    set.add(toolName);
+  }
+
+  function isToolAllowedForSession(sessionId, toolName) {
+    return sessionAllowlist.get(sessionId)?.has(toolName) ?? false;
+  }
+
+  function clearAllowlistForSession(sessionId) {
+    sessionAllowlist.delete(sessionId);
+  }
+
+  return {
+    request,
+    resolve,
+    cancelForSession,
+    listPending,
+    allowToolForSession,
+    isToolAllowedForSession,
+    clearAllowlistForSession,
+  };
 }

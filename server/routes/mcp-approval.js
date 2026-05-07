@@ -41,6 +41,13 @@ export function createMcpApprovalRouter({ approvalBroker, eventBus, bridgeToken,
         throw new HttpError(400, 'sessionId and toolName required', 'MISSING_FIELD');
       }
 
+      // 세션-스코프 자동 허용: 사용자가 같은 세션에서 이미 "이 세션" 으로 승인한
+      // 도구라면 모달 띄우지 않고 즉시 allow 반환.
+      if (approvalBroker.isToolAllowedForSession(sessionId, toolName)) {
+        logger.info({ sessionId, toolName }, 'approval: auto-allowed (session allowlist)');
+        return res.json({ behavior: 'allow' });
+      }
+
       const { reqId, promise } = approvalBroker.request({ sessionId, toolName, input });
 
       logger.info({ sessionId, reqId, toolName }, 'approval: prompt requested');
@@ -75,7 +82,9 @@ export function createMcpApprovalRouter({ approvalBroker, eventBus, bridgeToken,
     behavior: z.enum(['allow', 'deny']),
     updatedInput: z.record(z.unknown()).optional(),
     message: z.string().max(500).optional(),
-    remember: z.boolean().optional()
+    // Legacy boolean — `true` ⇔ scope:'always'. 신규 클라이언트는 `scope` 사용.
+    remember: z.boolean().optional(),
+    scope: z.enum(['once', 'session', 'always']).optional()
   }).strict();
 
   router.post('/api/chat/:sessionId/approval/:reqId', async (req, res, next) => {
@@ -96,21 +105,31 @@ export function createMcpApprovalRouter({ approvalBroker, eventBus, bridgeToken,
         throw new HttpError(404, 'approval request not found or already resolved', 'NOT_PENDING');
       }
 
-      // Persist "always allow" — append toolName to agent.allowedTools
-      if (parsed.behavior === 'allow' && parsed.remember && pending?.toolName && sessionsStore && configStore) {
-        const session = sessionsStore.get(sessionId);
-        const agentId = session?.agentId;
-        const agent = agentId ? configStore.getAgent(agentId) : null;
-        if (agent) {
-          const current = Array.isArray(agent.allowedTools) ? agent.allowedTools : [];
-          if (!current.includes(pending.toolName)) {
-            const next = [...current, pending.toolName];
-            try {
-              await configStore.updateAgent(agentId, { allowedTools: next });
-              eventBus.publish('agent.updated', { agentId, patch: { allowedTools: next } });
-              logger.info({ agentId, toolName: pending.toolName }, 'approval: tool added to allowedTools (remember)');
-            } catch (err) {
-              logger.warn({ err: err.message, agentId }, 'approval: failed to persist allowedTools');
+      // 스코프 정규화: 새 `scope` 우선, 없으면 legacy `remember` 로 폴백.
+      const scope = parsed.scope ?? (parsed.remember ? 'always' : 'once');
+
+      if (parsed.behavior === 'allow' && pending?.toolName) {
+        if (scope === 'session') {
+          // 인메모리 allowlist — 같은 세션의 후속 요청은 모달 안 뜨고 자동 통과.
+          // 서버 재시작 시 초기화.
+          approvalBroker.allowToolForSession(sessionId, pending.toolName);
+          logger.info({ sessionId, toolName: pending.toolName }, 'approval: tool added to session allowlist');
+        } else if (scope === 'always' && sessionsStore && configStore) {
+          // 영구 허용 — agent.allowedTools 에 추가
+          const session = sessionsStore.get(sessionId);
+          const agentId = session?.agentId;
+          const agent = agentId ? configStore.getAgent(agentId) : null;
+          if (agent) {
+            const current = Array.isArray(agent.allowedTools) ? agent.allowedTools : [];
+            if (!current.includes(pending.toolName)) {
+              const next = [...current, pending.toolName];
+              try {
+                await configStore.updateAgent(agentId, { allowedTools: next });
+                eventBus.publish('agent.updated', { agentId, patch: { allowedTools: next } });
+                logger.info({ agentId, toolName: pending.toolName }, 'approval: tool added to allowedTools (always)');
+              } catch (err) {
+                logger.warn({ err: err.message, agentId }, 'approval: failed to persist allowedTools');
+              }
             }
           }
         }

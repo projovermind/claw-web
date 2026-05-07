@@ -313,6 +313,12 @@ export function startClaudeRun({
   let resultSessionId = null;
   let resultModel = null;
   let resultUsage = null;
+  // 마지막 assistant 이벤트의 per-call prompt size (input + cache_read + cache_creation).
+  // CLI `result.usage` 는 한 턴 안에서 일어난 모든 내부 LLM 호출(도구 루프)의
+  // cache_read/input 합산이라 "현재 컨텍스트 윈도우 부하"를 직접 알려주지 못함
+  // (Opus 200K 모델인데 1.2M 같은 비현실적 값이 나옴). 마지막 call 의 prompt size
+  // 가 진짜 컨텍스트 점유량.
+  let lastCallUsage = null;
   let gotAnyOutput = false;
   let rateLimitDetected = false;
   let rateLimitRestartDone = false;
@@ -423,6 +429,15 @@ export function startClaudeRun({
       }, POST_TOOL_THINKING_MS);
     } else if (event.type === 'assistant') {
       if (!resultModel) resultModel = event.message?.model || event.model || null;
+      // Per-call usage: 매 assistant 이벤트마다 갱신해서 "마지막 호출" 값으로 수렴.
+      // 도구 루프가 끝난 직후의 마지막 assistant 이벤트가 = 그 턴의 최종 컨텍스트 부하.
+      // contextTokens 도출에만 쓰므로 input + cache_read + cache_creation 합만 보관.
+      const u = event.message?.usage;
+      if (u) {
+        lastCallUsage = (u.input_tokens ?? 0)
+          + (u.cache_read_input_tokens ?? 0)
+          + (u.cache_creation_input_tokens ?? 0);
+      }
       const content = event.message?.content || event.content || [];
       let sawToolUse = false;
       if (Array.isArray(content)) {
@@ -451,11 +466,16 @@ export function startClaudeRun({
       resultSessionId = event.session_id || null;
       if (!resultModel) resultModel = event.model || null;
       if (event.usage) {
+        // CLI `result.usage` 는 도구 루프의 모든 내부 호출 합산 — 과금/누적 통계용.
+        // 컨텍스트 윈도우 부하는 별도로 `contextTokens` (마지막 call 의 prompt 크기)
+        // 로 노출. `inputTokens`/`cacheReadTokens` 는 호환성 유지 (UI 다른 곳에서
+        // 누적값을 그대로 쓸 수 있도록).
         resultUsage = {
           inputTokens: event.usage.input_tokens ?? 0,
           outputTokens: event.usage.output_tokens ?? 0,
           cacheReadTokens: event.usage.cache_read_input_tokens ?? 0,
-          totalTokens: (event.usage.input_tokens ?? 0) + (event.usage.output_tokens ?? 0)
+          totalTokens: (event.usage.input_tokens ?? 0) + (event.usage.output_tokens ?? 0),
+          contextTokens: lastCallUsage,
         };
       }
     }

@@ -23,7 +23,7 @@ const bulkDeleteSchema = z.object({
   ids: z.array(z.string().min(1).max(64)).min(1).max(200)
 }).strict();
 
-export function createSessionsRouter({ sessionsStore, configStore, runner, eventBus }) {
+export function createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker }) {
   const router = Router();
 
   // GET /api/sessions — meta only (no messages). Returns messageCount and
@@ -148,6 +148,7 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
       }
       if (runner.isRunning(req.params.id)) runner.abort(req.params.id);
       await sessionsStore.remove(req.params.id);
+      approvalBroker?.clearAllowlistForSession?.(req.params.id);
       if (eventBus) eventBus.publish('session.deleted', { sessionId: req.params.id });
       res.status(204).end();
     } catch (err) {
@@ -170,6 +171,7 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
         }
         if (runner.isRunning(id)) runner.abort(id);
         await sessionsStore.remove(id);
+        approvalBroker?.clearAllowlistForSession?.(id);
         if (eventBus) eventBus.publish('session.deleted', { sessionId: id });
         deleted += 1;
       }

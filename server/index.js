@@ -599,7 +599,7 @@ async function main() {
   );
   // CLAUDE.md / AGENTS.md editor mounted on same prefix
   app.use('/api/projects', createProjectMdRouter({ projectsStore, webConfig, eventBus }));
-  app.use('/api/sessions', createSessionsRouter({ sessionsStore, configStore, runner, eventBus }));
+  app.use('/api/sessions', createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker }));
   // Phase 5: bridge router is created up-front so chat can inject IDE context
   const bridgeRouter = createBridgeRouter({ webConfig });
   const { router: chatRouter, resumeInterruptedSession } = createChatRouter({

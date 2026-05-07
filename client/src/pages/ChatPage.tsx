@@ -215,9 +215,13 @@ export default function ChatPage() {
     });
   }, [sessionsQ.data]);
 
-  // Composer context-window gauge — derived from the last assistant turn's
-  // (input + cache_read) tokens, NOT a cumulative session sum. Once Claude CLI
-  // compacts the session, this naturally drops on the next response.
+  // Composer context-window gauge — prefers `usage.contextTokens` (the LAST
+  // inner LLM call's prompt size, captured by the runner from each `assistant`
+  // event). Falls back to `inputTokens + cacheReadTokens` for old messages
+  // saved before v1.16.2, but those values are the SUM across all tool-loop
+  // iterations and will overflow on heavy turns — we cap at the model's max
+  // for the legacy fallback so the badge doesn't display nonsense like 1.2M
+  // on a 200K Opus session.
   const contextUsageBadge = useMemo(() => {
     const msgs = sessionQ.data?.messages ?? [];
     for (let i = msgs.length - 1; i >= 0; i--) {
@@ -226,7 +230,9 @@ export default function ChatPage() {
       const inputTokens = m.usage.inputTokens ?? 0;
       const cacheReadTokens = m.usage.cacheReadTokens ?? 0;
       const outputTokens = m.usage.outputTokens ?? 0;
-      const used = inputTokens + cacheReadTokens;
+      const contextTokens = m.usage.contextTokens ?? null;
+      const accurate = contextTokens != null && contextTokens > 0;
+      const used = accurate ? contextTokens : inputTokens + cacheReadTokens;
       if (used <= 0) return null;
       const model = m.model ?? currentAgent?.model ?? null;
       const backendId = (currentAgent as { backendId?: string } | undefined)?.backendId ?? null;
@@ -236,6 +242,7 @@ export default function ChatPage() {
           used={used}
           max={max}
           source={source}
+          usedSource={accurate ? 'accurate' : 'legacy-sum'}
           diag={{ inputTokens, cacheReadTokens, outputTokens, model }}
         />
       );
