@@ -36,6 +36,9 @@ const TIER_STYLES: Record<UsageTier, { text: string; bg: string; pulse?: boolean
 };
 
 const OVER_STYLE = { text: 'text-fuchsia-200', bg: 'bg-fuchsia-900/50', pulse: true, label: '오버' };
+// 레거시 합산값이 한계를 넘은 경우 — 실제 오버가 아닐 가능성이 높아 펄스/푸시아 대신
+// 차분한 zinc + "?" 마커로 표시. 다음 턴부터는 정확한 contextTokens 가 들어와 자동 정상화.
+const LEGACY_OVER_STYLE = { text: 'text-zinc-400', bg: 'bg-zinc-800/60', pulse: false, label: '레거시' };
 
 /**
  * Compact gauge shown in the composer's bottom-right corner — mirrors
@@ -66,8 +69,9 @@ export default function ContextUsageBadge({ used, max, source = 'heuristic', use
   const ratio = used / max;
   const pct = Math.round(ratio * 100);
   const over = ratio > 1.05; // 5% slack — small overshoots are usually rounding
+  const legacyOver = over && usedSource === 'legacy-sum';
   const tier = usageTier(used, max);
-  const style = over ? OVER_STYLE : TIER_STYLES[tier];
+  const style = legacyOver ? LEGACY_OVER_STYLE : over ? OVER_STYLE : TIER_STYLES[tier];
 
   const reason = over ? overflowReason(usedSource, source) : style.label;
 
@@ -99,7 +103,13 @@ export default function ContextUsageBadge({ used, max, source = 'heuristic', use
       <span className="opacity-50">/</span>
       <span className="opacity-70">{formatTokensCompact(max)}</span>
       <span className="opacity-60">·</span>
-      {over ? <span>오버 {pct}%</span> : <span>{pct}%</span>}
+      {legacyOver ? (
+        <span>레거시 ?</span>
+      ) : over ? (
+        <span>오버 {pct}%</span>
+      ) : (
+        <span>{pct}%</span>
+      )}
       {source === 'heuristic' && !over && <span className="opacity-50" title="추정">~</span>}
     </div>
   );

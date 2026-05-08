@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import type { PaneCount } from '../../store/chat-store';
 
@@ -7,8 +7,29 @@ interface Props {
   count: PaneCount;
   /** 레이아웃 리셋 시 증가 — autoSaveId 변경으로 persist 된 크기 초기화. */
   resetKey?: number;
+  /** 활성 페인 인덱스 — 모바일(<lg)에서 분할 대신 이 페인만 표시. */
+  activeIndex?: number;
   /** `renderPane(index)` returns the ChatPane element for pane at `index`. */
   renderPane: (index: number) => ReactNode;
+}
+
+/**
+ * Tailwind `lg` (1024px) 미만이면 모바일/태블릿 협폭으로 간주.
+ * 분할 레이아웃은 가로폭이 충분할 때만 의미가 있으므로 좁은 화면에서는
+ * 활성 페인 하나만 풀스크린으로 보여줌 (저장된 count 는 그대로 유지 — 화면이 넓어지면 복귀).
+ */
+function useIsNarrow(): boolean {
+  const query = '(max-width: 1023.98px)';
+  const get = () => typeof window !== 'undefined' && window.matchMedia(query).matches;
+  const [narrow, setNarrow] = useState<boolean>(get);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia(query);
+    const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, []);
+  return narrow;
 }
 
 /**
@@ -22,9 +43,11 @@ interface Props {
  *
  *  모든 divider 드래그 리사이즈 가능 — 사이즈는 autoSaveId 로 자동 저장.
  */
-export default function WorkspaceGrid({ workspaceId, count, resetKey = 0, renderPane }: Props) {
-  if (count === 1) {
-    return <div className="h-full w-full">{renderPane(0)}</div>;
+export default function WorkspaceGrid({ workspaceId, count, resetKey = 0, activeIndex = 0, renderPane }: Props) {
+  const narrow = useIsNarrow();
+  if (count === 1 || narrow) {
+    const idx = narrow ? Math.max(0, Math.min(activeIndex, count - 1)) : 0;
+    return <div className="h-full w-full">{renderPane(idx)}</div>;
   }
 
   const saveKey = `claw-split-${workspaceId}-${count}-${resetKey}`;

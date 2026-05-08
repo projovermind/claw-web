@@ -424,6 +424,7 @@ export default function ChatPage() {
                   workspaceId={activeWs.id}
                   count={activeWs.count}
                   resetKey={activeWs.layoutResetKey ?? 0}
+                  activeIndex={Math.max(0, activeWs.panes.findIndex((p) => p.id === activeWs.activePaneId))}
                   renderPane={(i) => {
                     const pane = activeWs.panes[i];
                     if (!pane) return null;
