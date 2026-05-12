@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import rehypeHighlight from 'rehype-highlight';
 import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle, Loader2, Maximize2, Pencil, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
@@ -496,7 +497,7 @@ function MessageBubble({ message, searchQuery, onChoice, nextUserContent, hasLat
             <HighlightText text={message.content} query={searchQuery} />
           ) : (
             <div className="markdown-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={mdComponents}>
                 {message.content}
               </ReactMarkdown>
             </div>
