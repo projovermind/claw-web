@@ -416,7 +416,7 @@ export function createMessageSender(ctx) {
             });
             if (pushStore) {
               const agentName = configStore.getAgent(session.agentId)?.name || session.agentId;
-              pushStore.sendPushToAll(`${agentName} 완료`, '응답이 완료되었습니다.', { url: `/chat/${sessionId}` }).catch(() => {});
+              pushStore.sendPushToAll(`${agentName} 완료`, '응답이 완료되었습니다.', { url: `/chat?agent=${encodeURIComponent(session.agentId)}&session=${encodeURIComponent(sessionId)}` }).catch(() => {});
             }
             const responseText = result.text ?? accumText;
             ctx.handleDelegation(sessionId, responseText);
@@ -456,7 +456,7 @@ export function createMessageSender(ctx) {
                   });
                   if (pushStore) {
                     const agentName = configStore.getAgent(completed.targetAgentId)?.name || completed.targetAgentId;
-                    pushStore.sendPushToAll(`${agentName} 위임 완료`, completed.task?.slice(0, 80) || '위임된 작업이 완료되었습니다.', { url: `/chat/${completed.originSessionId}` }).catch(() => {});
+                    pushStore.sendPushToAll(`${agentName} 위임 완료`, completed.task?.slice(0, 80) || '위임된 작업이 완료되었습니다.', { url: `/chat?session=${encodeURIComponent(completed.originSessionId)}` }).catch(() => {});
                   }
 
                   try {
