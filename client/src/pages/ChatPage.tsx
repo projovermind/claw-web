@@ -92,6 +92,18 @@ export default function ChatPage() {
     didInitAgentRef.current = true;
   }, [agentsQ.data, currentAgentId, setCurrentAgent]);
 
+  // Reconcile: pane has sessionId but agentId is null (legacy/broken layout).
+  // setActivePane copies `pane.agentId` (=null) into `currentAgentId` which makes
+  // the sidebar lose project/agent context. When the session loads we know its
+  // agentId, so write it back into the active pane.
+  useEffect(() => {
+    if (currentAgentId) return;
+    if (!currentSessionId) return;
+    const agentIdFromSession = sessionQ.data?.agentId;
+    if (!agentIdFromSession) return;
+    setCurrentAgent(agentIdFromSession);
+  }, [currentAgentId, currentSessionId, sessionQ.data?.agentId, setCurrentAgent]);
+
   const createSession = useMutation({
     mutationFn: () => api.createSession(currentAgentId!),
     onMutate: () => { startTask({ id: 'create-session', title: '세션 생성 중...' }); },
