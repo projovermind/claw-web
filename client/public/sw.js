@@ -1,4 +1,27 @@
-// v1.11.1
+// v1.16.7
+// ngrok 무료 플랜 abuse interstitial 우회 — 같은 origin 의 top-level
+// navigation 요청에 `ngrok-skip-browser-warning` 헤더를 주입한다.
+// (ngrok 은 헤더가 있으면 경고 페이지를 건너뜀. 쿼리 파라미터/UA 트릭은 무효.)
+// 이 핸들러는 SW 가 활성화된 이후의 모든 새 탭/창 navigation 에서 동작.
+// 첫 방문에서는 SW 가 아직 없어 1회는 interstitial 이 보이지만, 이후는 통과.
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.mode !== 'navigate') return;
+  if (!req.url.startsWith(self.location.origin)) return;
+  event.respondWith((async () => {
+    const headers = new Headers(req.headers);
+    headers.set('ngrok-skip-browser-warning', '1');
+    return fetch(req.url, {
+      method: req.method,
+      headers,
+      credentials: req.credentials,
+      cache: req.cache,
+      redirect: req.redirect,
+      referrer: req.referrer
+    });
+  })());
+});
+
 self.addEventListener('push', (event) => {
   let data = { title: 'Claw Web', body: '' };
   if (event.data) {
