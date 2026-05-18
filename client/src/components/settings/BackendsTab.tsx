@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useProgressMutation } from '../../lib/useProgressMutation';
-import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, Settings2, Key, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, Settings2, Key, AlertTriangle, Eye } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { ClaudeCliBackend } from '../../lib/types';
 import { BackendCard } from './BackendCard';
@@ -10,6 +10,7 @@ import { ModelRow } from './ModelRow';
 import { AddBackendModal } from './AddBackendModal';
 import { AccountAuthModal } from './AccountAuthModal';
 import { ClaudeStatusCard } from './ClaudeStatusCard';
+import { RevealTokenModal } from './RevealTokenModal';
 import PathPicker from '../common/PathPicker';
 import { useT } from '../../lib/i18n';
 import { useProgressToastStore } from '../../store/progress-toast-store';
@@ -60,6 +61,7 @@ export function BackendsTab() {
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
   const [authModalId, setAuthModalId] = useState<string | null>(null);
+  const [revealId, setRevealId] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Cooldown countdown — seeded from polled data, ticks every second
@@ -319,6 +321,13 @@ export function BackendsTab() {
                     {b.status === 'disabled' ? '활성화' : '비활성화'}
                   </button>
                   <button
+                    title="저장된 토큰 보기 (비밀번호 필요)"
+                    onClick={() => setRevealId(b.id)}
+                    className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-amber-300"
+                  >
+                    <Eye size={13} />
+                  </button>
+                  <button
                     title="편집 (모델/configDir)"
                     onClick={() => setEditingId(b.id)}
                     className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200"
@@ -382,6 +391,7 @@ export function BackendsTab() {
               onDelete={() => {
                 if (confirm(t('backendsTab.deleteConfirm', { label: b.label }))) removeBackend.mutate(b.id);
               }}
+              onReveal={() => setRevealId(b.id)}
             />
           ))}
         </div>
@@ -404,6 +414,19 @@ export function BackendsTab() {
           onClose={closeAuthModal}
         />
       )}
+
+      {/* 저장된 토큰 보기 모달 — 비밀번호(서버 인증 토큰) 재확인 후 노출 */}
+      {revealId && (() => {
+        const target = list.find((b) => b.id === revealId);
+        if (!target) return null;
+        return (
+          <RevealTokenModal
+            backendId={target.id}
+            backendLabel={target.label}
+            onClose={() => setRevealId(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

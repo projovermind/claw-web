@@ -30,7 +30,15 @@ const secretSchema = z.object({
   value: z.string().max(500).nullable()
 }).strict();
 
-export function createBackendsRouter({ backendsStore, eventBus }) {
+const revealSchema = z.object({
+  // Re-auth — must match webConfig.auth.token. Required even when auth is
+  // disabled globally, so revealing a stored secret always demands at least
+  // the configured token (matches the auth model — if no token is set, the
+  // server has no way to verify identity and will refuse).
+  password: z.string().min(1).max(500)
+}).strict();
+
+export function createBackendsRouter({ backendsStore, eventBus, webConfig }) {
   const router = Router();
 
   router.get('/', (req, res) => {
@@ -72,6 +80,36 @@ export function createBackendsRouter({ backendsStore, eventBus }) {
       if (err.message?.includes('no envKey')) {
         return next(new HttpError(400, err.message, 'NO_ENVKEY'));
       }
+      next(err);
+    }
+  });
+
+  // Reveal stored secret/OAuth for a backend after re-authenticating with the
+  // server's auth token. Returns the raw values (e.g. `sk-ant-api03-...`) so
+  // the user can copy them. We deliberately require `webConfig.auth.token` to
+  // be set — without it, there is no way to verify the requester's identity.
+  router.post('/:id/reveal', async (req, res, next) => {
+    try {
+      const { password } = revealSchema.parse(req.body);
+      const expected = webConfig?.auth?.token;
+      if (!expected) {
+        throw new HttpError(
+          503,
+          '서버에 인증 토큰이 설정되지 않아 토큰을 노출할 수 없습니다. 설정 > 보안에서 토큰을 먼저 설정하세요.',
+          'AUTH_NOT_CONFIGURED'
+        );
+      }
+      if (password !== expected) {
+        throw new HttpError(403, '비밀번호가 일치하지 않습니다', 'BAD_PASSWORD');
+      }
+      if (!backendsStore.getBackend(req.params.id)) {
+        throw new HttpError(404, 'Backend not found', 'BACKEND_NOT_FOUND');
+      }
+      const secret = backendsStore.getSecretValue(req.params.id);
+      const oauthToken = backendsStore.getOAuthToken(req.params.id);
+      res.json({ secret, oauthToken });
+    } catch (err) {
+      if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
       next(err);
     }
   });

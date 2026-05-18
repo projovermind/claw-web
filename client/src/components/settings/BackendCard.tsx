@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Trash2, ChevronDown, ChevronRight, Check, XCircle, Plus } from 'lucide-react';
+import { Trash2, ChevronDown, ChevronRight, Check, XCircle, Plus, Eye } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { BackendPublic } from '../../lib/types';
 import { InlineEditText } from './InlineEditText';
@@ -15,13 +15,15 @@ export function BackendCard({
   isActive,
   isAusterity,
   allBackends,
-  onDelete
+  onDelete,
+  onReveal
 }: {
   backend: ApiBackend;
   isActive: boolean;
   isAusterity: boolean;
   allBackends: ApiBackend[];
   onDelete: () => void;
+  onReveal?: () => void;
 }) {
   const qc = useQueryClient();
   const t = useT();
@@ -88,6 +90,15 @@ export function BackendCard({
             )}
           </div>
         </div>
+        {onReveal && (
+          <button
+            onClick={onReveal}
+            className="p-1 rounded hover:bg-zinc-800 text-zinc-500 hover:text-amber-300"
+            title="저장된 토큰 보기 (비밀번호 필요)"
+          >
+            <Eye size={14} />
+          </button>
+        )}
         <button
           onClick={onDelete}
           className="p-1 rounded hover:bg-red-900/40 text-zinc-500 hover:text-red-400"

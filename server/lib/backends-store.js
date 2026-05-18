@@ -252,6 +252,20 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
       return secretsStore?.getOAuth?.(id) ?? null;
     },
 
+    /**
+     * Reveal a backend's raw stored secret value (env-style API key, e.g.
+     * `sk-ant-api03-...` for Anthropic, ZAI/OpenAI keys etc).
+     *
+     * Returns null when no secret is stored. ONLY callers that have already
+     * re-authenticated the user should expose this value to the browser.
+     */
+    getSecretValue(id) {
+      if (!secretsStore?._getState) return null;
+      const entry = secretsStore._getState().backends?.[id];
+      if (!entry?.value) return null;
+      return { envKey: entry.envKey, value: entry.value };
+    },
+
     async setActive(backendId) {
       await writeWithLock((current) => {
         if (!current.backends?.[backendId]) throw new Error(`Unknown backend ${backendId}`);

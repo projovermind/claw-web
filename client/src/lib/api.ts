@@ -205,6 +205,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ value })
     }),
+  revealBackendSecret: (id: string, password: string) =>
+    post<{
+      secret: { envKey: string; value: string } | null;
+      oauthToken: string | null;
+    }>(`/backends/${id}/reveal`, { password }),
   deleteBackend: (id: string) => del<void>(`/backends/${id}`),
   setActiveBackend: (backendId: string) => post<{ activeBackend: string }>('/backends/active', { backendId }),
   setAusterity: (enabled: boolean, backendId?: string) =>

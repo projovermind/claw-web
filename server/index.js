@@ -632,7 +632,7 @@ async function main() {
     configStore,
     metadataStore
   }));
-  app.use('/api/backends', createBackendsRouter({ backendsStore, eventBus }));
+  app.use('/api/backends', createBackendsRouter({ backendsStore, eventBus, webConfig }));
   app.use('/api/accounts', createAccountsRouter({ accountsStore, eventBus, backendsStore }));
   app.use('/api/uploads', createUploadsRouter({ uploadsDir: UPLOADS_DIR, eventBus }));
   app.use(
