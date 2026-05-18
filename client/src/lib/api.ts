@@ -209,6 +209,16 @@ export const api = {
     post<{
       secret: { envKey: string; value: string } | null;
       oauthToken: string | null;
+      claudeCreds: {
+        source: 'credentials.json' | 'keychain';
+        path?: string;
+        accessToken?: string;
+        refreshToken?: string;
+        expiresAt?: string;
+        scopes?: string[];
+        subscriptionType?: string;
+      } | null;
+      env: Record<string, string> | null;
     }>(`/backends/${id}/reveal`, { password }),
   deleteBackend: (id: string) => del<void>(`/backends/${id}`),
   setActiveBackend: (backendId: string) => post<{ activeBackend: string }>('/backends/active', { backendId }),

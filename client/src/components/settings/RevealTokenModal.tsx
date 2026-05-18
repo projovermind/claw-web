@@ -11,6 +11,16 @@ interface Props {
 interface RevealResult {
   secret: { envKey: string; value: string } | null;
   oauthToken: string | null;
+  claudeCreds: {
+    source: 'credentials.json' | 'keychain';
+    path?: string;
+    accessToken?: string;
+    refreshToken?: string;
+    expiresAt?: string;
+    scopes?: string[];
+    subscriptionType?: string;
+  } | null;
+  env: Record<string, string> | null;
 }
 
 /**
@@ -58,7 +68,7 @@ export function RevealTokenModal({ backendId, backendLabel, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-md"
+        className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-md max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
@@ -104,14 +114,17 @@ export function RevealTokenModal({ backendId, backendLabel, onClose }: Props) {
             </>
           ) : (
             <>
-              {!result.secret && !result.oauthToken && (
-                <div className="text-[11px] text-zinc-400 bg-zinc-950 border border-zinc-800 rounded px-3 py-2">
-                  이 백엔드에 저장된 토큰이 없습니다 (shell env / .credentials.json / Keychain 등 외부 위치를 사용 중일 수 있음).
-                </div>
-              )}
+              {!result.secret &&
+                !result.oauthToken &&
+                !result.claudeCreds &&
+                !result.env && (
+                  <div className="text-[11px] text-zinc-400 bg-zinc-950 border border-zinc-800 rounded px-3 py-2">
+                    이 백엔드에 저장된 토큰을 찾을 수 없습니다. (configDir 미설정 또는 외부 keychain 접근 실패)
+                  </div>
+                )}
               {result.secret && (
                 <RevealedSecret
-                  label={`API 키 (${result.secret.envKey})`}
+                  label={`저장된 API 키 (secrets.json · ${result.secret.envKey})`}
                   value={result.secret.value}
                 />
               )}
@@ -120,6 +133,35 @@ export function RevealTokenModal({ backendId, backendLabel, onClose }: Props) {
                   label="Managed OAuth Token (CLAUDE_CODE_OAUTH_TOKEN)"
                   value={result.oauthToken}
                 />
+              )}
+              {result.claudeCreds?.accessToken && (
+                <RevealedSecret
+                  label={`Claude OAuth Access Token (${result.claudeCreds.source})`}
+                  value={result.claudeCreds.accessToken}
+                  hint={
+                    result.claudeCreds.expiresAt
+                      ? `만료: ${new Date(result.claudeCreds.expiresAt).toLocaleString()}`
+                      : undefined
+                  }
+                />
+              )}
+              {result.claudeCreds?.refreshToken && (
+                <RevealedSecret
+                  label={`Claude OAuth Refresh Token (${result.claudeCreds.source})`}
+                  value={result.claudeCreds.refreshToken}
+                />
+              )}
+              {result.env &&
+                Object.entries(result.env).map(([k, v]) => (
+                  <RevealedSecret key={k} label={`shell env · ${k}`} value={v} />
+                ))}
+              {result.claudeCreds?.subscriptionType && (
+                <div className="text-[10px] text-zinc-500">
+                  Subscription: <span className="font-mono">{result.claudeCreds.subscriptionType}</span>
+                  {result.claudeCreds.scopes?.length
+                    ? ` · scopes: ${result.claudeCreds.scopes.join(', ')}`
+                    : ''}
+                </div>
               )}
               <div className="text-[10px] text-zinc-600">
                 * 2분 후 자동으로 닫힙니다. 직접 닫으려면 우측 상단 ✕ 또는 배경 클릭.
@@ -150,7 +192,7 @@ export function RevealTokenModal({ backendId, backendLabel, onClose }: Props) {
   );
 }
 
-function RevealedSecret({ label, value }: { label: string; value: string }) {
+function RevealedSecret({ label, value, hint }: { label: string; value: string; hint?: string }) {
   const [show, setShow] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -174,7 +216,10 @@ function RevealedSecret({ label, value }: { label: string; value: string }) {
 
   return (
     <div className="space-y-1">
-      <div className="text-[11px] uppercase tracking-wider text-zinc-500">{label}</div>
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="text-[11px] uppercase tracking-wider text-zinc-500 truncate">{label}</div>
+        {hint && <div className="text-[10px] text-zinc-600 shrink-0">{hint}</div>}
+      </div>
       <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5">
         <code className="text-[11px] text-emerald-300 font-mono flex-1 break-all">
           {show ? value : masked}

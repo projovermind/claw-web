@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import fssync from 'node:fs';
 import EventEmitter from 'node:events';
 import lockfile from 'proper-lockfile';
-import { inspectCreds } from './cred-inspector.js';
+import { inspectCreds, readClaudeCreds } from './cred-inspector.js';
 import { resolveConfigDir, ensureConfigDirSync } from './config-dir.js';
 
 const EMPTY = () => ({
@@ -264,6 +264,19 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
       const entry = secretsStore._getState().backends?.[id];
       if (!entry?.value) return null;
       return { envKey: entry.envKey, value: entry.value };
+    },
+
+    /**
+     * For Claude CLI backends: read the raw OAuth credentials (accessToken /
+     * refreshToken) from the backend's configDir/.credentials.json — or the
+     * macOS Keychain if that's where the user actually stored them. Returns
+     * null for non-claude-cli backends or when nothing is found.
+     */
+    getClaudeCliCreds(id) {
+      const b = cache.backends?.[id];
+      if (!b || b.type !== 'claude-cli') return null;
+      const effectiveConfigDir = resolveConfigDir(id, b.configDir);
+      return readClaudeCreds(effectiveConfigDir);
     },
 
     async setActive(backendId) {

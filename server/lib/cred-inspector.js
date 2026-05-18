@@ -84,6 +84,64 @@ function _inspectCreds(configDir, { managedOAuth = false } = {}) {
 }
 
 /**
+ * Read the raw Claude CLI OAuth credentials (accessToken / refreshToken) from
+ * configDir/.credentials.json or macOS Keychain. Returns null when nothing is
+ * found. Used by the reveal-token endpoint AFTER re-authentication.
+ *
+ * Output: { source, accessToken, refreshToken?, expiresAt?, scopes? }
+ */
+export function readClaudeCreds(configDir) {
+  if (configDir) {
+    try {
+      const credsFile = path.join(configDir, '.credentials.json');
+      if (fssync.existsSync(credsFile)) {
+        const raw = fssync.readFileSync(credsFile, 'utf8');
+        const parsed = parseCredsBlob(raw);
+        if (parsed) return { source: 'credentials.json', path: credsFile, ...parsed };
+      }
+    } catch { /* fall through */ }
+  }
+  const kc = readKeychainCreds();
+  if (kc) return { source: 'keychain', ...kc };
+  return null;
+}
+
+function parseCredsBlob(raw) {
+  try {
+    const data = JSON.parse(raw);
+    const token = data?.claudeAiOauth ?? data;
+    if (!token) return null;
+    const out = {};
+    if (typeof token.accessToken === 'string') out.accessToken = token.accessToken;
+    if (typeof token.refreshToken === 'string') out.refreshToken = token.refreshToken;
+    if (token.expiresAt) {
+      const ms = token.expiresAt > 1e12 ? token.expiresAt : token.expiresAt * 1000;
+      out.expiresAt = new Date(ms).toISOString();
+    }
+    if (Array.isArray(token.scopes)) out.scopes = token.scopes;
+    if (token.subscriptionType) out.subscriptionType = token.subscriptionType;
+    return Object.keys(out).length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function readKeychainCreds() {
+  if (process.platform !== 'darwin') return null;
+  try {
+    const out = execFileSync(
+      '/usr/bin/security',
+      ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 1500 }
+    ).trim();
+    if (!out) return null;
+    return parseCredsBlob(out);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * macOS Keychain 의 "Claude Code-credentials" generic password 항목을 조회.
  * 시스템 전역 1개만 존재하므로 멀티 계정 불가 — UI 에서 keychainShared 플래그로 경고.
  */

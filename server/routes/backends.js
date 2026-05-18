@@ -105,9 +105,26 @@ export function createBackendsRouter({ backendsStore, eventBus, webConfig }) {
       if (!backendsStore.getBackend(req.params.id)) {
         throw new HttpError(404, 'Backend not found', 'BACKEND_NOT_FOUND');
       }
+      const backend = backendsStore.getBackend(req.params.id);
       const secret = backendsStore.getSecretValue(req.params.id);
       const oauthToken = backendsStore.getOAuthToken(req.params.id);
-      res.json({ secret, oauthToken });
+      const claudeCreds = backendsStore.getClaudeCliCreds(req.params.id);
+      // For convenience, also expose well-known process.env API keys so the
+      // user can copy the value the runner will actually inject. Only
+      // includes keys that are SET — never reports `null` / `undefined`.
+      const envCandidates = backend?.envKey
+        ? [backend.envKey]
+        : ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'];
+      const env = {};
+      for (const k of envCandidates) {
+        if (process.env[k]) env[k] = process.env[k];
+      }
+      res.json({
+        secret,
+        oauthToken,
+        claudeCreds,
+        env: Object.keys(env).length ? env : null
+      });
     } catch (err) {
       if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
       next(err);
