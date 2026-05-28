@@ -75,7 +75,7 @@ export async function createSessionsStore(legacyFilePath) {
     }
   } else {
     const dirents = await fs.readdir(storeDir);
-    const sessionFiles = dirents.filter((f) => f.endsWith('.json') && f !== '_index.json');
+    const sessionFiles = dirents.filter((f) => f.endsWith('.json') && f !== '_index.json' && !f.startsWith('._'));
     await Promise.all(sessionFiles.map(async (f) => {
       try {
         const raw = await fs.readFile(path.join(storeDir, f), 'utf8');

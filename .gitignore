@@ -51,3 +51,9 @@ auth-modal-*.md
 backends-tab-*.md
 modal-*.png
 data/.layout-migration-done
+
+# Local agents/channels config (do not commit — contains private setup)
+/config.json
+/config.json.bak-*
+data/user/agents-config.json.bak-*
+data/user/agents-config.json.moved-*

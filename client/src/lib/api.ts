@@ -415,6 +415,28 @@ export const api = {
     path: string;
     createdAt: string;
   }> => {
+    // Must match server/routes/uploads.js MAX_BYTES
+    const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+    const UPLOAD_TIMEOUT_MS = 60_000;
+    // Executable / installer / native binary extensions — useless for chat context
+    // and tend to be large enough to stall the synchronous base64 step.
+    const BLOCKED_EXTENSIONS = new Set([
+      'exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'ps1', 'vbs', 'vbe',
+      'wsf', 'wsh', 'jar', 'app', 'dmg', 'pkg', 'deb', 'rpm', 'apk',
+      'dll', 'sys'
+    ]);
+
+    const name = file.name || 'pasted-image.png';
+    const dot = name.lastIndexOf('.');
+    const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+    if (BLOCKED_EXTENSIONS.has(ext)) {
+      throw new Error(`실행 파일은 업로드할 수 없습니다 (.${ext})`);
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      const mb = (file.size / 1024 / 1024).toFixed(1);
+      throw new Error(`파일이 너무 큽니다 (${mb}MB, 최대 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB)`);
+    }
+
     const buffer = await file.arrayBuffer();
     const bytes = new Uint8Array(buffer);
     let binary = '';
@@ -423,10 +445,26 @@ export const api = {
       binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
     }
     const dataBase64 = btoa(binary);
-    return post('/uploads', {
-      filename: file.name || 'pasted-image.png',
-      contentType: file.type || 'application/octet-stream',
-      dataBase64
-    });
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+    try {
+      return await req('/uploads', {
+        method: 'POST',
+        body: JSON.stringify({
+          filename: name,
+          contentType: file.type || 'application/octet-stream',
+          dataBase64
+        }),
+        signal: controller.signal
+      });
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') {
+        throw new Error(`업로드 시간 초과 (${UPLOAD_TIMEOUT_MS / 1000}초)`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 };

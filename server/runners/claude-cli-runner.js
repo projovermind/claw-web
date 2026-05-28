@@ -191,6 +191,29 @@ export function startClaudeRun({
   let resumeSessionFile = null;
   if (effectiveResumeId) {
     resumeSessionFile = findClaudeSessionFile(agent.workingDir, effectiveResumeId, cleanEnv.CLAUDE_CONFIG_DIR || null);
+
+    // 계정별 configDir 에서 못 찾은 경우 — 크로스 계정 폴백 검색.
+    // 이 상황은 에이전트의 backendId 가 변경됐거나 이전 스케줄러가 다른 계정으로 세션을
+    // 생성했을 때 발생. --resume 은 세션을 생성한 configDir 의 인증으로만 유효하므로,
+    // 실제 파일이 있는 계정의 CLAUDE_CONFIG_DIR 을 사용해야 이어가기가 성공한다.
+    if (!resumeSessionFile && cleanEnv.CLAUDE_CONFIG_DIR) {
+      const crossFile = findClaudeSessionFile(agent.workingDir, effectiveResumeId, null);
+      if (crossFile) {
+        const clawBase = path.join(process.env.HOME || '', '.claude-claw');
+        // ~/.claude-claw/account-X/projects/.../SESSION.jsonl → account-X 부분 추출
+        const rel = crossFile.startsWith(clawBase + path.sep) ? crossFile.slice(clawBase.length + 1) : null;
+        const sessionConfigDir = rel ? path.join(clawBase, rel.split(path.sep)[0]) : null;
+        if (sessionConfigDir && sessionConfigDir !== cleanEnv.CLAUDE_CONFIG_DIR) {
+          logger.info(
+            { agent: agent.id, sessionId: effectiveResumeId, from: cleanEnv.CLAUDE_CONFIG_DIR, to: sessionConfigDir },
+            'runner: session found in different account dir — switching CLAUDE_CONFIG_DIR for resume'
+          );
+          cleanEnv.CLAUDE_CONFIG_DIR = sessionConfigDir;
+        }
+        resumeSessionFile = crossFile;
+      }
+    }
+
     if (!resumeSessionFile) {
       logger.warn(
         { agent: agent.id, sessionId: effectiveResumeId, cwd: agent.workingDir },
@@ -215,7 +238,11 @@ export function startClaudeRun({
 
   // MCP permission-prompt bridge: user modal approves tool use at runtime.
   // plan 모드에서는 도구 실행 자체가 제한되므로 생략.
-  if (!agent.planMode && agent.mcpConfigPath && agent.permissionPromptTool) {
+  // dangerouslySkipPermissions=true 면 mcp prompt 우회하고 모든 권한 자동 통과.
+  // (사용자 명시 — 위험한 모드, 모든 Bash 도구가 모달 없이 실행됨)
+  if (agent.dangerouslySkipPermissions) {
+    args.push('--dangerously-skip-permissions');
+  } else if (!agent.planMode && agent.mcpConfigPath && agent.permissionPromptTool) {
     args.push('--mcp-config', agent.mcpConfigPath);
     args.push('--permission-prompt-tool', agent.permissionPromptTool);
   }

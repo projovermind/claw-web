@@ -64,7 +64,9 @@ export function registerRestartRoute(router, { runner }) {
         } catch (err) {
           logger.warn({ err: err.message }, 'failed to write soft-restart flag');
         }
-        process.kill(process.pid, 'SIGTERM');
+        // exit(1) 로 종료 — launchd KeepAlive(Crashed:true)가 즉시 재시작.
+        // SIGTERM 방식은 SIGTERM 핸들러가 hang 걸리면 좀비 상태로 남을 수 있어 위험.
+        setTimeout(() => process.exit(1), 300);
       }
     }, 200);
   });
