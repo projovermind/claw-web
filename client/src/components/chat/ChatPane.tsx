@@ -6,6 +6,7 @@ import { api } from '../../lib/api';
 import type { Session, ChatMessage, Agent, BackendsState } from '../../lib/types';
 import { useChatStore } from '../../store/chat-store';
 import { useProgressToastStore } from '../../store/progress-toast-store';
+import { useToastStore } from '../../store/toast-store';
 import { useT, useI18nStore } from '../../lib/i18n';
 import { useVoice } from '../../hooks/useVoice';
 import MessageList from './MessageList';
@@ -533,6 +534,24 @@ function PaneControls({
     return { short: agent.model, bid };
   }, [agent, backends]);
 
+  // 세션 모델 셀렉터 옵션: 에이전트 백엔드의 models 별칭 목록. 백엔드 미지정/모델
+  // 딕셔너리 없음 → 기본 opus/sonnet/haiku 폴백. 빈 값('')은 "에이전트 기본 따름".
+  const modelOptions = useMemo(() => {
+    const bid = (agent as { backendId?: string } | undefined)?.backendId;
+    const allBackends = backends?.backends ?? {};
+    const b = bid ? allBackends[bid] : null;
+    const entries = b ? Object.entries(b.models ?? {}) : [];
+    if (entries.length === 0) {
+      return [
+        { value: 'fable', label: 'fable' },
+        { value: 'opus', label: 'opus' },
+        { value: 'sonnet', label: 'sonnet' },
+        { value: 'haiku', label: 'haiku' },
+      ];
+    }
+    return entries.map(([alias]) => ({ value: alias, label: alias }));
+  }, [agent, backends]);
+
   const totals = useMemo(() => {
     // Prefer server-aggregated totals (cover the full history), fall back to
     // summing the locally loaded slice for older sessions without the field.
@@ -546,12 +565,31 @@ function PaneControls({
 
   return (
     <>
-      {shortModelKey && (
-        <div className="h-7 px-2 rounded bg-zinc-800/50 text-[11px] text-zinc-400 font-mono flex items-center gap-1">
-          {shortModelKey.bid && shortModelKey.bid !== 'claude' && (
+      {agent && session && (
+        <div className="h-7 rounded bg-zinc-800/50 text-[11px] font-mono flex items-center gap-1 pl-2">
+          {shortModelKey?.bid && shortModelKey.bid !== 'claude' && (
             <span className="text-emerald-400">{shortModelKey.bid}</span>
           )}
-          <span>{shortModelKey.short}</span>
+          <select
+            value={session.model ?? ''}
+            onChange={(e) => {
+              e.stopPropagation();
+              const val = e.target.value || null;
+              api.setSessionModel(session.id, val)
+                .then(() => qc.invalidateQueries({ queryKey: ['session', session.id] }))
+                .catch((err) => useToastStore.getState().add('error', `모델 변경 실패: ${err?.message ?? err}`));
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className={`h-7 pl-1 pr-1.5 rounded bg-transparent text-[11px] font-mono border-none focus:outline-none cursor-pointer ${
+              session.model ? 'text-amber-300' : 'text-zinc-400'
+            }`}
+            title="세션 모델 (기본 = 에이전트 모델). 이 세션에만 적용됩니다."
+          >
+            <option value="">{(shortModelKey?.short ?? agent.model ?? 'default')} · 기본</option>
+            {modelOptions.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
         </div>
       )}
       {totals && (
@@ -565,8 +603,10 @@ function PaneControls({
           <button
             onClick={(e) => {
               e.stopPropagation();
-              api.patchAgent(agent.id, { planMode: !isPlan } as Partial<Agent>);
-              qc.invalidateQueries({ queryKey: ['agents'] });
+              // PATCH 완료 후에 invalidate — 먼저 하면 refetch 가 옛 값으로 UI를 되돌릴 수 있음
+              api.patchAgent(agent.id, { planMode: !isPlan } as Partial<Agent>)
+                .then(() => qc.invalidateQueries({ queryKey: ['agents'] }))
+                .catch((err) => useToastStore.getState().add('error', `Plan 모드 변경 실패: ${err?.message ?? err}`));
             }}
             className={`h-7 px-2.5 rounded text-[11px] flex items-center gap-1 ${
               isPlan ? 'bg-sky-900/40 text-sky-300 border border-sky-800' : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'
@@ -581,8 +621,9 @@ function PaneControls({
           value={(agent as { thinkingEffort?: string }).thinkingEffort ?? 'auto'}
           onChange={(e) => {
             e.stopPropagation();
-            api.patchAgent(agent.id, { thinkingEffort: e.target.value } as Partial<Agent>);
-            qc.invalidateQueries({ queryKey: ['agents'] });
+            api.patchAgent(agent.id, { thinkingEffort: e.target.value } as Partial<Agent>)
+              .then(() => qc.invalidateQueries({ queryKey: ['agents'] }))
+              .catch((err) => useToastStore.getState().add('error', `Thinking 변경 실패: ${err?.message ?? err}`));
           }}
           onClick={(e) => e.stopPropagation()}
           className="h-7 px-1.5 rounded bg-zinc-800 text-[11px] text-zinc-400 border-none focus:outline-none cursor-pointer"

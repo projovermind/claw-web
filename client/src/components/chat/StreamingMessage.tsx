@@ -12,6 +12,7 @@ import type { ToolCall } from '../../store/chat-store';
 import ToolCallCard from './ToolCallCard';
 import { ChoicesList, extractChoices } from './MessageList';
 import { stripDownloadsForStreaming } from '../../lib/parse-downloads';
+import { editorUrlTransform } from '../../lib/editor';
 import { Loader2, Activity, Wrench, ChevronDown, ChevronRight } from 'lucide-react';
 import { useT } from '../../lib/i18n';
 
@@ -80,7 +81,7 @@ export default function StreamingMessage({ text, toolCalls, running, error, onCh
         {/* Streaming text — 마크다운 렌더 */}
         {body && (
           <div className="markdown-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>{body}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents} urlTransform={editorUrlTransform}>{body}</ReactMarkdown>
           </div>
         )}
 

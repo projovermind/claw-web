@@ -35,7 +35,7 @@ export function BulkModelChangeModal({ onClose }: { onClose: () => void }) {
       }
     }
     // 기본 aliases
-    ['opus', 'sonnet', 'haiku', 'glm-5.1', 'glm-4.6', 'deepseek-chat'].forEach((m) => set.add(m));
+    ['fable', 'opus', 'sonnet', 'haiku', 'glm-5.1', 'glm-4.6', 'deepseek-chat'].forEach((m) => set.add(m));
     return Array.from(set).sort();
   }, [backends]);
 

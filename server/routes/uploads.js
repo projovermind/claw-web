@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import fs from 'node:fs/promises';
 import fssync from 'node:fs';
 import path from 'node:path';
@@ -59,8 +59,10 @@ const uploadSchema = z.object({
   dataBase64: z.string().min(1) // raw base64 without data URL prefix
 }).strict();
 
-// Max 20 MB per upload (base64 expands ~33%, so ~27 MB on wire)
-const MAX_BYTES = 20 * 1024 * 1024;
+// Max 200 MB per upload — supports arbitrary binaries (zip, exe, installers…).
+// Base64 route is capped lower in practice by the global express.json limit,
+// so large files should use the /raw binary route below.
+const MAX_BYTES = 200 * 1024 * 1024;
 
 function sanitizeFilename(name) {
   // Remove path separators, keep basename only, replace unsafe chars
@@ -76,44 +78,72 @@ export function createUploadsRouter({ uploadsDir, eventBus }) {
     fssync.mkdirSync(uploadsDir, { recursive: true });
   }
 
-  // POST /api/uploads  — receive base64 JSON, persist to disk
+  // Shared: validate buffer, resize images, write to disk, publish event.
+  async function persistUpload({ buffer, filename, contentType }) {
+    if (!buffer || buffer.length === 0) {
+      throw new HttpError(400, 'Empty upload', 'EMPTY');
+    }
+    if (buffer.length > MAX_BYTES) {
+      throw new HttpError(413, `File too large (max ${MAX_BYTES / 1024 / 1024} MB)`, 'TOO_LARGE');
+    }
+    const cleanName = sanitizeFilename(filename);
+    const id = nanoid(16);
+    const mimeType = contentType || 'application/octet-stream';
+    const { buffer: finalBuffer, outMime } = await maybeResizeImage(buffer, mimeType);
+
+    // Rename extension if format changed (e.g. PNG-without-alpha → JPEG)
+    let finalName = cleanName;
+    if (outMime === 'image/jpeg' && mimeType !== 'image/jpeg') {
+      finalName = cleanName.replace(/\.[^.]+$/, '.jpg');
+    }
+
+    const diskName = `${id}-${finalName}`;
+    const diskPath = path.join(uploadsDir, diskName);
+    await fs.writeFile(diskPath, finalBuffer);
+
+    const payload = {
+      id,
+      filename: finalName,
+      contentType: outMime,
+      size: finalBuffer.length,
+      path: diskPath,
+      createdAt: new Date().toISOString()
+    };
+    if (eventBus) eventBus.publish('upload.created', payload);
+    return payload;
+  }
+
+  // POST /api/uploads  — receive base64 JSON, persist to disk (small files / pasted images)
   router.post('/', async (req, res, next) => {
     try {
       const body = uploadSchema.parse(req.body);
-      const cleanName = sanitizeFilename(body.filename);
-      const buffer = Buffer.from(body.dataBase64, 'base64');
-      if (buffer.length === 0) {
-        throw new HttpError(400, 'Empty upload', 'EMPTY');
-      }
-      if (buffer.length > MAX_BYTES) {
-        throw new HttpError(413, `File too large (max ${MAX_BYTES / 1024 / 1024} MB)`, 'TOO_LARGE');
-      }
-      const id = nanoid(16);
-      const mimeType = body.contentType ?? 'application/octet-stream';
-      const { buffer: finalBuffer, outMime } = await maybeResizeImage(buffer, mimeType);
-
-      // Rename extension if format changed (e.g. PNG-without-alpha → JPEG)
-      let finalName = cleanName;
-      if (outMime === 'image/jpeg' && mimeType !== 'image/jpeg') {
-        finalName = cleanName.replace(/\.[^.]+$/, '.jpg');
-      }
-
-      const diskName = `${id}-${finalName}`;
-      const diskPath = path.join(uploadsDir, diskName);
-      await fs.writeFile(diskPath, finalBuffer);
-
-      const payload = {
-        id,
-        filename: finalName,
-        contentType: outMime,
-        size: finalBuffer.length,
-        path: diskPath,
-        createdAt: new Date().toISOString()
-      };
-      if (eventBus) eventBus.publish('upload.created', payload);
+      const payload = await persistUpload({
+        buffer: Buffer.from(body.dataBase64, 'base64'),
+        filename: body.filename,
+        contentType: body.contentType
+      });
       res.status(201).json(payload);
     } catch (err) {
       if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
+      next(err);
+    }
+  });
+
+  // POST /api/uploads/raw?name=<filename>  — raw binary body, any file type.
+  // Avoids base64 inflation + the global express.json limit, so large
+  // binaries (zip, exe, installers) can be transferred efficiently.
+  router.post('/raw', express.raw({ type: () => true, limit: MAX_BYTES }), async (req, res, next) => {
+    try {
+      const rawName = typeof req.query.name === 'string' ? req.query.name : '';
+      let filename = 'upload.bin';
+      try { filename = decodeURIComponent(rawName) || filename; } catch { filename = rawName || filename; }
+      const payload = await persistUpload({
+        buffer: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
+        filename,
+        contentType: req.headers['x-upload-content-type'] || req.headers['content-type']
+      });
+      res.status(201).json(payload);
+    } catch (err) {
       next(err);
     }
   });
@@ -154,7 +184,12 @@ export function createUploadsRouter({ uploadsDir, eventBus }) {
       const entries = await fs.readdir(uploadsDir);
       const match = entries.find((n) => n.startsWith(`${req.params.id}-`));
       if (!match) return next(new HttpError(404, 'Upload not found', 'UPLOAD_NOT_FOUND'));
-      res.sendFile(path.join(uploadsDir, match));
+      // html/svg 업로드를 앱 origin 에서 inline 렌더하면 스크립트 실행(XSS) 가능
+      // → text/plain 으로 강등 + nosniff.
+      const ext = path.extname(match).toLowerCase();
+      const headers = { 'X-Content-Type-Options': 'nosniff' };
+      if (ext === '.html' || ext === '.svg') headers['Content-Type'] = 'text/plain; charset=utf-8';
+      res.sendFile(path.join(uploadsDir, match), { headers });
     } catch (err) {
       next(err);
     }

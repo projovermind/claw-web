@@ -10,7 +10,9 @@ const createSchema = z.object({
 const updateSchema = z.object({
   title: z.string().max(200).optional(),
   claudeSessionId: z.string().nullable().optional(),
-  pinned: z.boolean().optional()
+  pinned: z.boolean().optional(),
+  // 세션별 모델 별칭 오버라이드. null → 에이전트 기본 모델을 따름.
+  model: z.string().max(64).nullable().optional()
 }).strict();
 
 const loopStartSchema = z.object({

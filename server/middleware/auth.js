@@ -1,4 +1,55 @@
+import { timingSafeEqual } from 'node:crypto';
 import { logger } from '../lib/logger.js';
+
+/** 길이가 달라도 타이밍 차이가 새지 않는 토큰 비교 */
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
+
+// ── Brute-force guard ──
+// 토큰이 짧은 PIN 형태일 수 있고 서버가 인터넷(cloudflared 터널)에 노출되므로
+// IP당 연속 실패를 추적해 잠금. 성공 시 해당 IP 기록 즉시 해제.
+const MAX_FAILURES = 10;
+const LOCK_MS = 15 * 60_000;
+const failures = new Map(); // ip → { count, lockedUntil }
+
+function clientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  return (
+    req.headers['cf-connecting-ip'] ||
+    (typeof xff === 'string' ? xff.split(',')[0].trim() : null) ||
+    req.socket?.remoteAddress ||
+    'unknown'
+  );
+}
+
+function isLocked(ip) {
+  const f = failures.get(ip);
+  if (!f) return false;
+  if (f.lockedUntil && Date.now() < f.lockedUntil) return true;
+  if (f.lockedUntil && Date.now() >= f.lockedUntil) failures.delete(ip);
+  return false;
+}
+
+function recordFailure(ip) {
+  // 스푸핑된 헤더로 맵이 무한히 크지 않도록 주기적 lazy purge
+  if (failures.size > 10_000) {
+    const now = Date.now();
+    for (const [k, v] of failures) {
+      if (!v.lockedUntil || now >= v.lockedUntil) failures.delete(k);
+    }
+  }
+  const f = failures.get(ip) ?? { count: 0, lockedUntil: 0 };
+  f.count += 1;
+  if (f.count >= MAX_FAILURES) {
+    f.lockedUntil = Date.now() + LOCK_MS;
+    logger.warn({ ip, count: f.count }, 'auth: too many failures — locked out 15m');
+  }
+  failures.set(ip, f);
+}
 
 /**
  * Bearer token middleware.
@@ -33,6 +84,11 @@ export function createAuthMiddleware({ webConfig }) {
       });
     }
 
+    const ip = clientIp(req);
+    if (isLocked(ip)) {
+      return res.status(429).json({ error: 'Too many failed attempts. Try later.', code: 'AUTH_LOCKED' });
+    }
+
     const header = req.headers.authorization ?? '';
     const m = /^Bearer\s+(.+)$/i.exec(header);
     // Also accept token as query param `_token` — needed for <img src> and
@@ -44,11 +100,13 @@ export function createAuthMiddleware({ webConfig }) {
     if (!provided) {
       return res.status(401).json({ error: 'Missing Bearer token', code: 'AUTH_REQUIRED' });
     }
-    if (provided !== expected) {
-      logger.warn({ path: req.path }, 'auth: bad token');
+    if (!safeEqual(provided, expected)) {
+      recordFailure(ip);
+      logger.warn({ path: req.path, ip }, 'auth: bad token');
       return res.status(401).json({ error: 'Invalid token', code: 'AUTH_INVALID' });
     }
 
+    failures.delete(ip);
     return next();
   };
 }
@@ -60,10 +118,17 @@ export function authorizeWsUpgrade(req, webConfig) {
   if (!webConfig.auth?.enabled) return true;
   const expected = webConfig.auth.token;
   if (!expected) return false;
+  const ip = clientIp(req);
+  if (isLocked(ip)) return false;
   try {
     const url = new URL(req.url, 'http://localhost');
     const provided = url.searchParams.get('token');
-    return provided === expected;
+    if (provided !== null && safeEqual(provided, expected)) {
+      failures.delete(ip);
+      return true;
+    }
+    recordFailure(ip);
+    return false;
   } catch {
     return false;
   }

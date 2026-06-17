@@ -22,7 +22,8 @@ interface Props {
  * Deny → POST behavior:"deny"
  *
  * Closing the modal itself does not cancel the request; only user action or
- * server timeout does. Esc = deny.
+ * server timeout does. Esc = deny. 승인은 반드시 명시적 클릭으로만 —
+ * Enter 단축키는 채팅 입력 중 모달이 뜨면 의도치 않은 즉시 승인이 되므로 두지 않는다.
  */
 export default function PermissionPromptModal({ sessionId, prompt }: Props) {
   const t = useT();
@@ -51,9 +52,6 @@ export default function PermissionPromptModal({ sessionId, prompt }: Props) {
       if (e.key === 'Escape') {
         e.preventDefault();
         respond('deny');
-      } else if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) {
-        e.preventDefault();
-        respond('allow');
       }
     }
     window.addEventListener('keydown', onKey);

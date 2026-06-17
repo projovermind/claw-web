@@ -116,7 +116,8 @@ export function createMessageSender(ctx) {
     const session = sessionsStore.get(sessionId);
     if (!session) return;
     const resolved = resolveAgent(session.agentId, {
-      configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore, accountsStore
+      configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore, accountsStore,
+      modelOverride: session.model || undefined
     });
     if (!resolved) return;
     const { agent, envOverrides, backendType, backendConfig } = resolved;
@@ -508,8 +509,8 @@ export function createMessageSender(ctx) {
           const { canRetry, delay, label } = classifyError(err.message);
           const counter = retryCounters.get(sessionId) ?? { count: 0, lastError: '' };
 
-          // cli_exit / silent_fallback 은 동일 조건 반복 가능성이 크므로 1회만 재시도.
-          const maxForLabel = (label === 'cli_exit' || label === 'silent_fallback') ? 1 : MAX_AUTO_RETRIES;
+          // cli_exit / silent_fallback / no_conversation 은 동일 조건 반복 가능성이 크므로 1회만 재시도.
+          const maxForLabel = (label === 'cli_exit' || label === 'silent_fallback' || label === 'no_conversation') ? 1 : MAX_AUTO_RETRIES;
 
           if (canRetry && counter.count < maxForLabel) {
             const attempt = counter.count + 1;
@@ -520,10 +521,10 @@ export function createMessageSender(ctx) {
               content: `🔄 **자동 복구 중** (${attempt}/${maxForLabel}) — \`${label}\` 오류 감지. ${delay >= 1000 ? `${delay / 1000}초 후 재시도합니다...` : '즉시 재시도합니다...'}`
             }).catch(() => {});
             eventBus.publish('chat.error', { sessionId, error: `[auto-retry ${attempt}/${maxForLabel}] ${err.message}` });
-            // context_length / silent_fallback: --resume 유지 시 같은 실패 반복 → fresh-start 로 전환.
+            // context_length / silent_fallback / no_conversation: --resume 유지 시 같은 실패 반복 → fresh-start 로 전환.
             //   summary prefix 는 sendRunnerMessage 내부(isFirstMsg 분기)에서 자동 주입되므로
             //   여기서 추가 prefix 하면 요약이 두 번 들어감 → 호출은 원본 메시지 그대로.
-            const needsFreshStart = label === 'context_length' || label === 'silent_fallback';
+            const needsFreshStart = label === 'context_length' || label === 'silent_fallback' || label === 'no_conversation';
             if (needsFreshStart) {
               sessionsStore.update(sessionId, { claudeSessionId: null, personaBakedInto: null }).catch(() => {});
             }

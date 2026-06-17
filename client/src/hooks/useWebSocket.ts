@@ -121,7 +121,10 @@ export function useWebSocket() {
             return;
           }
           if (topic === 'chat.error') {
-            useChatStore.getState().finishRun(msg.sessionId as string, (msg.error as string) ?? 'error');
+            const errText = (msg.error as string) ?? 'error';
+            useChatStore.getState().finishRun(msg.sessionId as string, errText);
+            // 세션 페인이 닫혀 있어도 사용자가 실패를 알 수 있도록 토스트 표시
+            useToastStore.getState().add('error', tRef.current('ws.chatError', { error: errText }));
             // 에러 알림음 (띠-리-ㅇ 두번)
             try {
               const settings = queryClient.getQueryData<{ appearance?: { soundEnabled?: boolean; soundVolume?: number } }>(['settings-appearance']);
@@ -184,10 +187,6 @@ export function useWebSocket() {
             const reason = (msg.reason as string) ?? tRef.current('ws.escalateDefault');
             useToastStore.getState().add('warning', tRef.current('ws.escalate', { reason }));
           }
-          if (topic === 'chat.error') {
-            const errMsg = (msg.error as string) ?? 'error';
-            useToastStore.getState().add('error', tRef.current('ws.chatError', { error: errMsg }));
-          }
           if (topic === 'delegation.started') {
             const agent = (msg.targetAgentId as string) ?? '?';
             useToastStore.getState().add('info', tRef.current('ws.delegateStart', { agent }));
@@ -213,6 +212,11 @@ export function useWebSocket() {
           const keys = TOPICS_TO_INVALIDATE[topic];
           if (keys) {
             for (const k of keys) queryClient.invalidateQueries({ queryKey: [k] });
+          }
+          // loop 배너는 ['session', id] 쿼리를 읽음 — 목록(['sessions'])만 무효화하면
+          // 실행 중이 아닐 때(폴링 없음) 배너가 갱신되지 않으므로 개별 세션도 무효화.
+          if (topic.startsWith('session.loop.') && typeof msg.sessionId === 'string') {
+            queryClient.invalidateQueries({ queryKey: ['session', msg.sessionId] });
           }
         } catch {
           /* ignore */

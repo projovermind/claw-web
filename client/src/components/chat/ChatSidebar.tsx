@@ -80,7 +80,7 @@ export function ChatSidebar({
   const runningSessions = useMemo(() => {
     const all = allSessionsData?.sessions ?? [];
     return all.filter((s: SessionMeta) => isSessionRunning(s, runtime) && !isHiddenDelegation(s));
-  }, [allSessionsData]);
+  }, [allSessionsData, runtime]);
 
   const unreadSessions = useMemo(() => {
     const all = allSessionsData?.sessions ?? [];

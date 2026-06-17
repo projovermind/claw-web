@@ -27,6 +27,13 @@ export function classifyError(errMsg = '') {
   if (msg.includes('silent_fallback')) {
     return { canRetry: true, delay: 300, label: 'silent_fallback' };
   }
+  // Claude CLI 가 --resume 대상 jsonl 을 못 찾고 stderr 로 "No conversation found
+  // with session ID: <uuid>" 출력 후 종료. pre-check(findClaudeSessionFile) 통과
+  // 후에도 발생 가능 — cross-account configDir 전환 실패, 파일 손상, race condition 등.
+  // → 동일 sessionId 반복 시도해도 같은 결과이므로 fresh-start 로 전환 필요.
+  if (msg.includes('no conversation found with session id')) {
+    return { canRetry: true, delay: 300, label: 'no_conversation' };
+  }
   // Claude CLI 가 stderr 없이 exit != 0 로 종료 (runner.js 가 생성한 'claude CLI exited N'
   // 또는 'exit N' fallback 메시지). 주로 --resume 세션 손상/모델 일시 장애.
   // → 1회만 재시도 허용 (message-sender 에서 counter 로 cap). claudeSessionId 는 자동 클리어됨.
@@ -193,11 +200,17 @@ export function buildBackendEnv(agent, backendsStore) {
 /**
  * Resolve an agent with full inheritance (skills, tools, backend).
  */
-export function resolveAgent(agentId, { configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore, accountsStore }) {
+export function resolveAgent(agentId, { configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore, accountsStore, modelOverride }) {
   const agentConfig = configStore.getAgent(agentId);
   if (!agentConfig) return null;
   const meta = metadataStore?.getAgent(agentId) ?? {};
   const agent = { id: agentId, ...agentConfig, ...meta };
+
+  // 세션별 모델 오버라이드: 아래 백엔드 라우팅/별칭 해석이 모두 이 값을 기준으로
+  // 동작하도록 가장 먼저 덮어쓴다. (별칭 또는 raw 모델 ID 모두 허용)
+  if (typeof modelOverride === 'string' && modelOverride.trim()) {
+    agent.model = modelOverride.trim();
+  }
 
   // 멀티 계정: accountId 지정 시 configDir 주입 → runner에서 CLAUDE_CONFIG_DIR로 사용
   if (agent.accountId && accountsStore) {

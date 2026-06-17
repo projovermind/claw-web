@@ -120,6 +120,8 @@ export const api = {
     post<Session>('/sessions', { agentId, title }),
   renameSession: (id: string, title: string) => patch<Session>(`/sessions/${id}`, { title }),
   pinSession: (id: string, pinned: boolean) => patch<Session>(`/sessions/${id}`, { pinned }),
+  setSessionModel: (id: string, model: string | null) =>
+    patch<Session>(`/sessions/${id}`, { model }),
   deleteSession: (id: string) => del<void>(`/sessions/${id}`),
   bulkDeleteSessions: (ids: string[]) =>
     post<{ deleted: number; skipped: number; total: number }>(`/sessions/bulk-delete`, { ids }),
@@ -415,49 +417,45 @@ export const api = {
     path: string;
     createdAt: string;
   }> => {
-    // Must match server/routes/uploads.js MAX_BYTES
-    const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
-    const UPLOAD_TIMEOUT_MS = 60_000;
-    // Executable / installer / native binary extensions — useless for chat context
-    // and tend to be large enough to stall the synchronous base64 step.
-    const BLOCKED_EXTENSIONS = new Set([
-      'exe', 'msi', 'bat', 'cmd', 'com', 'scr', 'ps1', 'vbs', 'vbe',
-      'wsf', 'wsh', 'jar', 'app', 'dmg', 'pkg', 'deb', 'rpm', 'apk',
-      'dll', 'sys'
-    ]);
+    // Must match server/routes/uploads.js MAX_BYTES — any file type allowed.
+    const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+    const UPLOAD_TIMEOUT_MS = 300_000;
 
     const name = file.name || 'pasted-image.png';
-    const dot = name.lastIndexOf('.');
-    const ext = dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
-    if (BLOCKED_EXTENSIONS.has(ext)) {
-      throw new Error(`실행 파일은 업로드할 수 없습니다 (.${ext})`);
-    }
     if (file.size > MAX_UPLOAD_BYTES) {
       const mb = (file.size / 1024 / 1024).toFixed(1);
       throw new Error(`파일이 너무 큽니다 (${mb}MB, 최대 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB)`);
     }
 
-    const buffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    const chunk = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunk) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
-    }
-    const dataBase64 = btoa(binary);
-
+    // Send the raw binary directly (no base64) so large zip/exe/installers
+    // transfer efficiently and bypass the JSON body-size limit.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
     try {
-      return await req('/uploads', {
+      const token = getAuthToken();
+      // Always octet-stream on the wire so the global express.json parser
+      // never intercepts (e.g. uploading a .json file). True type goes in a
+      // custom header for server-side image detection.
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/octet-stream',
+        'X-Upload-Content-Type': file.type || 'application/octet-stream'
+      };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`${BASE}/uploads/raw?name=${encodeURIComponent(name)}`, {
         method: 'POST',
-        body: JSON.stringify({
-          filename: name,
-          contentType: file.type || 'application/octet-stream',
-          dataBase64
-        }),
+        headers,
+        body: file,
         signal: controller.signal
       });
+      if (res.status === 401) {
+        authEvents.dispatchEvent(new CustomEvent('unauthorized', { detail: { path: '/uploads/raw' } }));
+      }
+      if (!res.ok) {
+        let body: { error?: string } | null = null;
+        try { body = await res.json(); } catch { body = null; }
+        throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+      }
+      return await res.json();
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
         throw new Error(`업로드 시간 초과 (${UPLOAD_TIMEOUT_MS / 1000}초)`);

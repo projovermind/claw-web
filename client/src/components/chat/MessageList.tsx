@@ -11,7 +11,7 @@ import ToolCallCard from './ToolCallCard';
 import DownloadCard from './DownloadCard';
 import { extractDownloads, type DownloadItem } from '../../lib/parse-downloads';
 import { useT } from '../../lib/i18n';
-import { linkifyFilePaths, useEditorConfig, openFileDiff, pathFromEditorUrl } from '../../lib/editor';
+import { linkifyFilePaths, useEditorConfig, openFileDiff, pathFromEditorUrl, editorUrlTransform } from '../../lib/editor';
 
 // 에디터 스킴 링크 옆에 diff 모달 트리거를 끼워 넣는 커스텀 렌더러
 function EditorLinkWithDiff({ href, children, ...props }: React.ComponentPropsWithoutRef<'a'>) {
@@ -497,14 +497,14 @@ function MessageBubble({ message, searchQuery, onChoice, nextUserContent, hasLat
             <HighlightText text={message.content} query={searchQuery} />
           ) : (
             <div className="markdown-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={mdComponents}>
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={mdComponents} urlTransform={editorUrlTransform}>
                 {message.content}
               </ReactMarkdown>
             </div>
           )
         ) : (
           <div className="markdown-body">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]} components={mdComponents} urlTransform={editorUrlTransform}>
               {body}
             </ReactMarkdown>
           </div>

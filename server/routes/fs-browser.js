@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import fs from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
@@ -33,6 +34,25 @@ export function createFsBrowserRouter({ webConfig }) {
     const resolved = path.resolve(absPath);
     const roots = resolveAllowedRoots();
     return roots.some((root) => resolved === root || resolved.startsWith(root + path.sep));
+  }
+
+  // path.resolve 는 symlink 를 풀지 않음 — allowedRoots 내부의 symlink 가
+  // 외부(~/.ssh 등)를 가리키면 isInsideAllowed 를 통과해 버린다.
+  // 실제 디스크 경로(realpath)로 한 번 더 검증. 존재하지 않으면 ENOENT throw.
+  // root 쪽도 realpath 로 비교 — macOS 의 /var → /private/var 처럼 root 경로
+  // 자체에 symlink 구성요소가 있으면 정상 요청까지 403 이 되는 것을 방지.
+  async function assertRealInsideAllowed(absPath) {
+    const real = await fs.realpath(absPath);
+    const realRoots = await Promise.all(
+      resolveAllowedRoots().map(async (r) => {
+        try { return await fs.realpath(r); } catch { return r; }
+      })
+    );
+    const ok = realRoots.some((root) => real === root || real.startsWith(root + path.sep));
+    if (!ok) {
+      throw new HttpError(403, 'Path escapes allowedRoots (symlink)', 'OUTSIDE_ALLOWED_ROOTS');
+    }
+    return real;
   }
 
   router.get('/roots', (req, res) => {
@@ -119,6 +139,13 @@ export function createFsBrowserRouter({ webConfig }) {
           'OUTSIDE_ALLOWED_ROOTS'
         );
       }
+      try {
+        await assertRealInsideAllowed(absPath);
+      } catch (err) {
+        if (err instanceof HttpError) throw err;
+        if (err.code === 'ENOENT') throw new HttpError(404, `Directory not found: ${absPath}`, 'NOT_FOUND');
+        throw err;
+      }
       let entries;
       try {
         entries = await fs.readdir(absPath, { withFileTypes: true });
@@ -170,6 +197,13 @@ export function createFsBrowserRouter({ webConfig }) {
       const root = path.resolve(rootRaw);
       if (!isInsideAllowed(root)) {
         throw new HttpError(403, 'Root outside allowedRoots', 'OUTSIDE_ALLOWED_ROOTS');
+      }
+      try {
+        await assertRealInsideAllowed(root);
+      } catch (err) {
+        if (err instanceof HttpError) throw err;
+        if (err.code === 'ENOENT') throw new HttpError(404, 'Root not found', 'NOT_FOUND');
+        throw err;
       }
       if (!q) {
         return res.json({ root, results: [] });
@@ -243,6 +277,13 @@ export function createFsBrowserRouter({ webConfig }) {
       if (!isInsideAllowed(absPath)) {
         throw new HttpError(403, `Path outside allowedRoots: ${absPath}`, 'OUTSIDE_ALLOWED_ROOTS');
       }
+      try {
+        await assertRealInsideAllowed(absPath);
+      } catch (err) {
+        if (err instanceof HttpError) throw err;
+        if (err.code === 'ENOENT') throw new HttpError(404, 'Not found', 'NOT_FOUND');
+        throw err;
+      }
       let entries;
       try {
         entries = await fs.readdir(absPath, { withFileTypes: true });
@@ -303,12 +344,21 @@ export function createFsBrowserRouter({ webConfig }) {
         throw new HttpError(403, 'Path outside allowedRoots', 'OUTSIDE_ALLOWED_ROOTS');
       }
       try {
+        await assertRealInsideAllowed(absPath);
+      } catch (err) {
+        if (err instanceof HttpError) throw err;
+        if (err.code === 'ENOENT') throw new HttpError(404, 'File not found', 'NOT_FOUND');
+        throw err;
+      }
+      let fileSize = 0;
+      try {
         const stat = await fs.stat(absPath);
         if (!stat.isFile()) throw new HttpError(400, 'Not a file', 'NOT_FILE');
-        // Size limit: 50MB
-        if (stat.size > 50 * 1024 * 1024) {
-          throw new HttpError(413, 'File too large (max 50MB)', 'TOO_LARGE');
+        // Size limit: 500MB
+        if (stat.size > 500 * 1024 * 1024) {
+          throw new HttpError(413, 'File too large (max 500MB)', 'TOO_LARGE');
         }
+        fileSize = stat.size;
       } catch (err) {
         if (err instanceof HttpError) throw err;
         if (err.code === 'ENOENT') throw new HttpError(404, 'File not found', 'NOT_FOUND');
@@ -325,14 +375,28 @@ export function createFsBrowserRouter({ webConfig }) {
         '.ts': 'text/typescript', '.tsx': 'text/typescript',
         '.zip': 'application/zip', '.tar': 'application/x-tar',
       };
-      const contentType = MIME[ext] || 'application/octet-stream';
+      let contentType = MIME[ext] || 'application/octet-stream';
       const isDownload = req.query.download === 'true';
-      if (isDownload) {
-        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(absPath)}"`);
+      // html/svg 를 앱 origin 에서 inline 렌더하면 파일 내 스크립트가 실행되어
+      // localStorage 토큰 탈취 가능 (에이전트가 만든 파일 = 신뢰 불가).
+      // 다운로드가 아니면 text/plain 으로 강등.
+      if (!isDownload && (ext === '.html' || ext === '.svg')) {
+        contentType = 'text/plain; charset=utf-8';
       }
+      if (isDownload) {
+        const safeName = path.basename(absPath).replace(/["\r\n]/g, '_');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}"`);
+      }
+      res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader('Content-Type', contentType);
-      const data = await fs.readFile(absPath);
-      res.send(data);
+      res.setHeader('Content-Length', fileSize);
+      // Stream from disk to avoid buffering large files (installers, archives) in memory.
+      const stream = createReadStream(absPath);
+      stream.on('error', (err) => {
+        if (!res.headersSent) next(err);
+        else res.destroy(err);
+      });
+      stream.pipe(res);
     } catch (err) {
       next(err);
     }

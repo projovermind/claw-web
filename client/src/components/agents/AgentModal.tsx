@@ -146,8 +146,9 @@ export function AgentModal({
     const b = backendsState?.backends?.[form.backend];
     const entries = b ? Object.entries(b.models ?? {}) : [];
     if (entries.length === 0) {
-      // models 미설정 백엔드(기본 claude 포함) → opus/sonnet/haiku 폴백
+      // models 미설정 백엔드(기본 claude 포함) → fable/opus/sonnet/haiku 폴백
       return [
+        { value: 'fable',  label: 'fable' },
         { value: 'opus',   label: 'opus' },
         { value: 'sonnet', label: 'sonnet' },
         { value: 'haiku',  label: 'haiku' },

@@ -1,6 +1,17 @@
 import { useQuery } from '@tanstack/react-query';
+import { defaultUrlTransform } from 'react-markdown';
 import { api } from './api';
 import type { EditorConfig, WebSettings } from './types';
+
+/**
+ * react-markdown 기본 새니타이저는 http(s)/mailto 등만 허용하고 vscode:/cursor:
+ * 스킴을 빈 문자열로 만들어 파일 링크·diff 버튼이 조용히 죽는다.
+ * 에디터 file 링크 형태만 정확히 추가 허용하고 나머지는 기본 동작 유지.
+ */
+export function editorUrlTransform(url: string): string {
+  if (/^(?:vscode|cursor):\/\/file\//.test(url)) return url;
+  return defaultUrlTransform(url);
+}
 
 export const DEFAULT_EDITOR: EditorConfig = { scheme: 'vscode', pathMap: {} };
 

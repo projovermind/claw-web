@@ -76,6 +76,8 @@ export interface Session {
   pinned?: boolean;
   loop?: LoopConfig | null;
   isDelegation?: boolean;
+  /** Per-session model alias override. null/undefined → follow the agent's model. */
+  model?: string | null;
 }
 
 /** Lightweight session descriptor returned by GET /api/sessions (no messages). */

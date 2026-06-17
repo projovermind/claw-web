@@ -84,6 +84,7 @@ export function findClaudeSessionFile(workingDir, sessionId, configDir = null) {
 
 // 봇과 동일한 MODEL_ID_MAP
 const MODEL_ID_MAP = {
+  fable: 'claude-fable-5',
   opus: 'claude-opus-4-7',
   sonnet: 'claude-sonnet-4-6',
   haiku: 'claude-sonnet-4-6', // haiku banned → sonnet fallback
@@ -110,6 +111,9 @@ export function startClaudeRun({
   delete cleanEnv.CLAUDE_CODE_ENTRYPOINT;
   // OAuth 토큰: 기본은 제거 (configDir 인증 방식 우선). 백엔드별 managed 토큰이
   // 있으면 아래에서 다시 주입. 이렇게 함으로써 부모 프로세스의 ENV 가 누수되지 않음.
+  // 단, 다른 인증 수단(managed token / configDir / ANTHROPIC_AUTH_TOKEN)이 하나도
+  // 설정되지 않은 경우엔 이 hydrate 된 토큰을 fallback 으로 복원한다 (단일 계정 배포).
+  const inheritedOAuthToken = cleanEnv.CLAUDE_CODE_OAUTH_TOKEN || null;
   delete cleanEnv.CLAUDE_CODE_OAUTH_TOKEN;
 
   // PATH 보강 (launchctl에서 제한적)
@@ -161,6 +165,17 @@ export function startClaudeRun({
         delete cleanEnv.CLAUDE_CONFIG_DIR;
       }
     } catch { /* ignore */ }
+  }
+
+  // ── Fallback: hydrate 된 OAuth 토큰 복원 ──
+  // managed token 도, configDir 도, ANTHROPIC_AUTH_TOKEN 도 없으면 인증 수단이 전무해
+  // 401 이 난다. 이 경우 startup 시 secrets→process.env 로 hydrate 된 토큰을 되살린다.
+  // (멀티 계정: configDir/managed 가 잡혀 있으면 이 블록은 건너뜀 — 충돌 없음)
+  if (!cleanEnv.CLAUDE_CODE_OAUTH_TOKEN &&
+      !cleanEnv.CLAUDE_CONFIG_DIR &&
+      !cleanEnv.ANTHROPIC_AUTH_TOKEN &&
+      inheritedOAuthToken) {
+    cleanEnv.CLAUDE_CODE_OAUTH_TOKEN = inheritedOAuthToken;
   }
 
   // ── 모델 결정 (봇 bot.js 라인 2391-2410 동일) ──
