@@ -450,6 +450,9 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.choices.selected': '선택됨',
     // Queued message badge
     'chat.queued': '대기 중',
+    'chat.queueDelete': '대기 메시지 삭제',
+    'chat.queueMerge': '대기 메시지 {count}개 합치기',
+    'chat.queueMergeShort': '합치기',
 
     // Command palette
     'palette.placeholder': '검색: 에이전트, 프로젝트, 스킬, 세션, 페이지…',
@@ -1284,6 +1287,9 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.choices.selected': 'Selected',
     // Queued message badge
     'chat.queued': 'Queued',
+    'chat.queueDelete': 'Delete queued message',
+    'chat.queueMerge': 'Merge {count} queued messages',
+    'chat.queueMergeShort': 'Merge',
 
     // Command palette
     'palette.placeholder': 'Search: agents, projects, skills, sessions, pages…',

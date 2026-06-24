@@ -79,7 +79,19 @@ export function createChatRouter({
 
   // Local references for route handlers
   const { sendRunnerMessage } = ctx;
-  const { enqueueMessage, messageQueue } = ctx;
+  const { enqueueMessage, messageQueue, getQueue, setQueue } = ctx;
+
+  // Trailing contiguous queued user messages (newest run's pending queue,
+  // mirrors the in-memory messageQueue 1:1 in order).
+  function trailingQueuedIndices(messages) {
+    const idx = [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m?.queued === true && m?.role === 'user') idx.unshift(i);
+      else break;
+    }
+    return idx;
+  }
 
   // ── Routes ─────────────────────────────────────────────
 
@@ -151,6 +163,67 @@ export function createChatRouter({
     if (approvalBroker) approvalBroker.cancelForSession(sid, 'session aborted');
     if (eventBus) eventBus.publish('chat.aborted', { sessionId: sid });
     res.json({ aborted });
+  });
+
+  // DELETE /api/chat/:sessionId/queue/:ts — drop one pending queued message.
+  router.delete('/:sessionId/queue/:ts', async (req, res, next) => {
+    try {
+      const { sessionId, ts } = req.params;
+      const session = sessionsStore.get(sessionId);
+      if (!session) throw new HttpError(404, 'Session not found', 'SESSION_NOT_FOUND');
+      const messages = Array.isArray(session.messages) ? session.messages : [];
+      const qIdx = trailingQueuedIndices(messages);
+      const posInRun = qIdx.findIndex((i) => messages[i].ts === ts);
+      if (posInRun < 0) throw new HttpError(404, 'Queued message not found', 'QUEUED_NOT_FOUND');
+
+      const absIdx = qIdx[posInRun];
+      await sessionsStore.setMessages(sessionId, messages.filter((_, i) => i !== absIdx));
+
+      const q = getQueue(sessionId).slice();
+      if (posInRun < q.length) q.splice(posInRun, 1);
+      setQueue(sessionId, q);
+
+      const count = getQueue(sessionId).length;
+      eventBus.publish('chat.queued', { sessionId, count });
+      logger.info({ sessionId, ts, remaining: count }, 'chat: queued message deleted');
+      res.json({ sessionId, queueLength: count });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // POST /api/chat/:sessionId/queue/merge — combine all pending queued messages into one.
+  router.post('/:sessionId/queue/merge', async (req, res, next) => {
+    try {
+      const { sessionId } = req.params;
+      const session = sessionsStore.get(sessionId);
+      if (!session) throw new HttpError(404, 'Session not found', 'SESSION_NOT_FOUND');
+      const messages = Array.isArray(session.messages) ? session.messages : [];
+      const qIdx = trailingQueuedIndices(messages);
+      if (qIdx.length < 2) throw new HttpError(400, 'Nothing to merge', 'QUEUE_TOO_SHORT');
+
+      const mergedContent = qIdx.map((i) => messages[i].content).join('\n\n');
+      const mergedAttachments = qIdx.flatMap((i) => messages[i].attachmentPaths ?? []);
+      const firstIdx = qIdx[0];
+      const dropSet = new Set(qIdx.slice(1));
+      const newMessages = messages
+        .map((m, i) => (i === firstIdx
+          ? { ...m, content: mergedContent, attachmentPaths: mergedAttachments }
+          : m))
+        .filter((_, i) => !dropSet.has(i));
+      await sessionsStore.setMessages(sessionId, newMessages);
+
+      // Mirror in-memory queue: collapse to a single combined entry.
+      const q = getQueue(sessionId);
+      setQueue(sessionId, q.length >= 2 ? [q.join('\n\n')] : q);
+
+      const count = getQueue(sessionId).length;
+      eventBus.publish('chat.queued', { sessionId, count });
+      logger.info({ sessionId, merged: qIdx.length, remaining: count }, 'chat: queued messages merged');
+      res.json({ sessionId, queueLength: count });
+    } catch (err) {
+      next(err);
+    }
   });
 
   /**

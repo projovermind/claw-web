@@ -175,6 +175,22 @@ export async function createSessionsStore(legacyFilePath) {
       return msg;
     },
 
+    async setMessages(id, messages) {
+      let updated = null;
+      await withSessionLock(id, async () => {
+        const s = cache.get(id);
+        if (!s) return;
+        updated = { ...s, messages, updatedAt: new Date().toISOString() };
+        await atomicWriteJson(sessionFilePath(storeDir, id), updated);
+        cache.set(id, updated);
+      });
+      if (updated) {
+        await scheduleIndexWrite();
+        fire();
+      }
+      return updated;
+    },
+
     async update(id, patch) {
       let updated = null;
       await withSessionLock(id, async () => {

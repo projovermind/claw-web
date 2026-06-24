@@ -3,9 +3,10 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeHighlight from 'rehype-highlight';
-import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle, Loader2, Maximize2, Pencil, X } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle, Loader2, Maximize2, Pencil, X, Merge, Trash2 } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import { useToastStore } from '../../store/toast-store';
 import type { ChatMessage, SessionMeta } from '../../lib/types';
 import ToolCallCard from './ToolCallCard';
 import DownloadCard from './DownloadCard';
@@ -271,6 +272,8 @@ interface MessageListProps {
   searchQuery?: string;
   onChoice?: (choice: string) => void;
   isLastAssistant?: (idx: number) => boolean;
+  /** 대기열(queued) 메시지 삭제/합치기 컨트롤을 활성화하려면 필요 */
+  sessionId?: string;
 }
 
 export interface ChoiceItem { text: string; recommended: boolean }
@@ -302,9 +305,10 @@ export function extractChoices(text: string): { body: string; choices: ChoiceIte
   return { body: text, choices: [] };
 }
 
-export default function MessageList({ messages, searchQuery, onChoice }: MessageListProps) {
+export default function MessageList({ messages, searchQuery, onChoice, sessionId }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
   // 위임 카드에 대상 세션의 라이브 running 상태 반영용
   const { data: allSessionsData } = useQuery<{ sessions: SessionMeta[] }>({
     queryKey: ['sessions-all'],
@@ -348,6 +352,38 @@ export default function MessageList({ messages, searchQuery, onChoice }: Message
     return messages.filter((m) => m.content.toLowerCase().includes(q));
   }, [messages, searchQuery]);
 
+  // 끝에 연속으로 붙은 대기열(queued) user 메시지 인덱스 — 삭제/합치기 대상
+  const trailingQueuedIdx = useMemo(() => {
+    const idx: number[] = [];
+    for (let i = filtered.length - 1; i >= 0; i--) {
+      const m = filtered[i] as ChatMessage & { queued?: boolean };
+      if (m.queued === true && m.role === 'user') idx.unshift(i);
+      else break;
+    }
+    return idx;
+  }, [filtered]);
+  const queuedCount = trailingQueuedIdx.length;
+  const firstQueuedIdx = trailingQueuedIdx[0];
+
+  const handleDeleteQueued = async (ts?: string) => {
+    if (!sessionId || !ts) return;
+    try {
+      await api.deleteQueued(sessionId, ts);
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] });
+    } catch (err) {
+      useToastStore.getState().add('error', err instanceof Error ? err.message : String(err));
+    }
+  };
+  const handleMergeQueued = async () => {
+    if (!sessionId) return;
+    try {
+      await api.mergeQueued(sessionId);
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] });
+    } catch (err) {
+      useToastStore.getState().add('error', err instanceof Error ? err.message : String(err));
+    }
+  };
+
   return (
     <div
       ref={containerRef}
@@ -378,6 +414,14 @@ export default function MessageList({ messages, searchQuery, onChoice }: Message
           hasLaterAssistant={hasLaterAssistant}
           delegationStage={isReportResponse ? 'final' : isEscalateResponse ? 'escalate-resolution' : undefined}
           runningSessionIds={runningSessionIds}
+          queuedControls={sessionId && trailingQueuedIdx.includes(i)
+            ? {
+                count: queuedCount,
+                isFirst: i === firstQueuedIdx,
+                onDelete: () => handleDeleteQueued(m.ts),
+                onMerge: handleMergeQueued
+              }
+            : undefined}
         />
         );
       })}
@@ -413,7 +457,7 @@ function HighlightText({ text, query }: { text: string; query: string }) {
   );
 }
 
-function MessageBubble({ message, searchQuery, onChoice, nextUserContent, hasLaterAssistant, delegationStage, runningSessionIds }: {
+function MessageBubble({ message, searchQuery, onChoice, nextUserContent, hasLaterAssistant, delegationStage, runningSessionIds, queuedControls }: {
   message: ChatMessage;
   searchQuery?: string;
   onChoice?: (c: string) => void;
@@ -425,6 +469,8 @@ function MessageBubble({ message, searchQuery, onChoice, nextUserContent, hasLat
   delegationStage?: 'final' | 'escalate-resolution';
   /** 현재 러닝 중인 세션 ID 집합 (위임 카드의 라이브 작업 중 표시) */
   runningSessionIds?: Set<string>;
+  /** 대기열(queued) 메시지일 때 삭제/합치기 컨트롤 */
+  queuedControls?: { count: number; isFirst: boolean; onDelete: () => void; onMerge: () => void };
 }) {
   const t = useT();
   const isUser = message.role === 'user';
@@ -478,8 +524,30 @@ function MessageBubble({ message, searchQuery, onChoice, nextUserContent, hasLat
         }`}
       >
         {isQueued && (
-          <div className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-sky-600 text-white text-[10px] font-semibold animate-pulse">
-            {t('chat.queued')}
+          <div className="absolute -top-2 right-2 flex items-center gap-1">
+            {queuedControls && queuedControls.isFirst && queuedControls.count >= 2 && (
+              <button
+                type="button"
+                onClick={queuedControls.onMerge}
+                title={t('chat.queueMerge', { count: queuedControls.count })}
+                className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-zinc-700 hover:bg-emerald-700 text-zinc-100 text-[10px] font-semibold transition-colors"
+              >
+                <Merge size={10} /> {t('chat.queueMergeShort')}
+              </button>
+            )}
+            <span className="px-1.5 py-0.5 rounded bg-sky-600 text-white text-[10px] font-semibold animate-pulse">
+              {t('chat.queued')}
+            </span>
+            {queuedControls && (
+              <button
+                type="button"
+                onClick={queuedControls.onDelete}
+                title={t('chat.queueDelete')}
+                className="flex items-center px-1 py-0.5 rounded bg-zinc-700 hover:bg-red-700 text-zinc-100 transition-colors"
+              >
+                <Trash2 size={10} />
+              </button>
+            )}
           </div>
         )}
         {delegationStage === 'final' && (

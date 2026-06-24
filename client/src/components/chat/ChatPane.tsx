@@ -471,6 +471,7 @@ export default function ChatPane({
                 {currentSession && (
                   <MessageList
                     key={currentSession.id}
+                    sessionId={currentSession.id}
                     messages={currentSession.messages ?? []}
                     searchQuery={searchQuery || undefined}
                     onChoice={onSendMessage}

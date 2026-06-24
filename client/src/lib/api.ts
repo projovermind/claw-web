@@ -152,6 +152,10 @@ export const api = {
   sendMessage: (sessionId: string, message: string, attachmentPaths: string[] = []) =>
     post<{ sessionId: string; status: string }>('/chat', { sessionId, message, attachmentPaths }),
   abortChat: (sessionId: string) => del<{ aborted: boolean }>(`/chat/${sessionId}`),
+  deleteQueued: (sessionId: string, ts: string) =>
+    del<{ sessionId: string; queueLength: number }>(`/chat/${sessionId}/queue/${encodeURIComponent(ts)}`),
+  mergeQueued: (sessionId: string) =>
+    post<{ sessionId: string; queueLength: number }>(`/chat/${sessionId}/queue/merge`, {}),
   approveTool: (
     sessionId: string,
     reqId: string,

@@ -16,6 +16,15 @@ export function createQueue(ctx) {
     messageQueue.get(sessionId).push(message);
   }
 
+  function getQueue(sessionId) {
+    return messageQueue.get(sessionId) ?? [];
+  }
+
+  function setQueue(sessionId, arr) {
+    if (!arr || arr.length === 0) messageQueue.delete(sessionId);
+    else messageQueue.set(sessionId, arr);
+  }
+
   function flushQueue(sessionId) {
     const q = messageQueue.get(sessionId);
     if (!q || q.length === 0) return null;
@@ -34,5 +43,5 @@ export function createQueue(ctx) {
     }, 500);
   }
 
-  return { messageQueue, agentQueue, enqueueMessage, flushQueue, dequeueNextAgent };
+  return { messageQueue, agentQueue, enqueueMessage, getQueue, setQueue, flushQueue, dequeueNextAgent };
 }
