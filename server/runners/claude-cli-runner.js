@@ -18,6 +18,14 @@ function findClaudeBin() {
   for (const p of candidates) {
     if (fs.existsSync(p)) return p;
   }
+  // PATH 전체를 뒤져서 claude 바이너리를 찾는다 (nvm/asdf/volta 등 버전매니저 경로 포함).
+  // LaunchAgent PATH 가 인터랙티브 셸과 달라 위 고정 후보로 못 찾는 경우 대비.
+  const pathDirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  for (const dir of pathDirs) {
+    try {
+      if (fs.existsSync(path.join(dir, 'claude'))) return path.join(dir, 'claude');
+    } catch { /* ignore */ }
+  }
   return 'claude';
 }
 const CLAUDE_BIN = findClaudeBin();
@@ -597,18 +605,31 @@ export function startClaudeRun({
       onResult?.({ text: final ?? '(응답이 중단되었습니다)', claudeSessionId: resultSessionId, model: resultModel, usage: resultUsage, exitCode: code });
     } else {
       const rawStderr = stderrChunks.join('').trim();
-      // stderr 가 비었는데 exit != 0 인 경우: Claude CLI 가 조용히 죽은 상황 (주로
-      // --resume 세션 파일 손상/버전 불일치). 에러 메시지에 resume 상태를 포함해서
-      // classifyError 가 'cli_exit' 로 재시도 가능하도록 판단할 수 있게 함.
-      const errMsg = rawStderr
-        ? rawStderr.slice(0, 400)
-        : `claude CLI exited ${code} (no stderr${effectiveResumeId ? ', resume=true' : ''})`;
+      // 음수 종료코드 = libuv 시스템에러 (예: -2 = ENOENT). spawn 자체는 됐지만
+      // 셸/래퍼가 claude 바이너리를 못 찾은 경우. 설치 안내를 명확히 띄운다.
+      let errMsg;
+      if (!rawStderr && typeof code === 'number' && code < 0) {
+        errMsg = `Claude CLI 실행 실패 (exit ${code}). claude 명령을 찾을 수 없습니다 — 설치/PATH 를 확인하세요: npm install -g @anthropic-ai/claude-code`;
+      } else {
+        // stderr 가 비었는데 exit != 0 인 경우: Claude CLI 가 조용히 죽은 상황 (주로
+        // --resume 세션 파일 손상/버전 불일치). 에러 메시지에 resume 상태를 포함해서
+        // classifyError 가 'cli_exit' 로 재시도 가능하도록 판단할 수 있게 함.
+        errMsg = rawStderr
+          ? rawStderr.slice(0, 400)
+          : `claude CLI exited ${code} (no stderr${effectiveResumeId ? ', resume=true' : ''})`;
+      }
       onError?.(new Error(errMsg));
     }
     onExit?.({ code });
   });
 
-  proc.on('error', (err) => onError?.(err));
+  proc.on('error', (err) => {
+    if (err && err.code === 'ENOENT') {
+      onError?.(new Error(`Claude CLI를 찾을 수 없습니다 (${CLAUDE_BIN}). 설치하세요: npm install -g @anthropic-ai/claude-code`));
+      return;
+    }
+    onError?.(err);
+  });
 
   return {
     process: proc,

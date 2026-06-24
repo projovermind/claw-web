@@ -1,7 +1,7 @@
 #!/bin/bash
-# Claw Web — postinstall (최소화 버전 v1.2.43)
-# - 파일 권한 고정 + 데이터 디렉토리 + LaunchAgent 만 수행
-# - Claude CLI 설치/인증/터널 설정은 웹 UI Settings 에서 사용자가 직접 처리
+# Claw Web — postinstall
+# - 파일 권한 고정 + 데이터 디렉토리 + Claude CLI 자동 설치 + LaunchAgent
+# - 계정 인증/터널 설정은 웹 UI Settings 에서 사용자가 직접 처리
 set -e
 
 export LANG=en_US.UTF-8
@@ -18,6 +18,12 @@ export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:$PATH"
 REAL_USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "$SUDO_USER")
 REAL_HOME=$(eval echo "~$REAL_USER" 2>/dev/null)
 [ -z "$REAL_HOME" ] || [ "$REAL_HOME" = "~" ] && REAL_HOME="$HOME"
+
+notify() {
+  osascript -e "display notification \"$1\" with title \"Claw Web 설치 중\"" 2>/dev/null || true
+  echo "[postinstall] $1" >> "$LOG"
+}
+as_user() { su "$REAL_USER" -c "$1" 2>> "$LOG" || true; }
 
 # ── Node.js 탐색 (brew / nvm / volta / fnm / asdf) ───────
 find_node() {
@@ -53,12 +59,59 @@ find_node() {
   command -v node 2>/dev/null
 }
 
+# ── 툴체인 원큐 부트스트랩 (Xcode CLT → Homebrew → Node → git) ──
+# fresh Mac 에 아무것도 없어도 claw-web 이 돌도록 의존성을 자동 설치한다.
+# 모두 best-effort: 실패해도 계속 진행하고, 최종적으로 node 가 없으면 아래서 fatal 처리.
+ensure_toolchain() {
+  # 1) Xcode Command Line Tools (git + 컴파일러 제공)
+  if ! xcode-select -p >/dev/null 2>&1; then
+    notify "① 개발 도구(Xcode CLT) 설치 중... (git 포함, 수 분)"
+    local SENT="/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress"
+    touch "$SENT"
+    local LABEL
+    LABEL=$(softwareupdate -l 2>/dev/null | awk -F'Label: ' '/Label: Command Line Tools/{print $2}' | sort -V | tail -1)
+    [ -n "$LABEL" ] && softwareupdate -i "$LABEL" --verbose >> "$LOG" 2>&1 || true
+    rm -f "$SENT"
+    # headless 설치 실패 시 GUI 설치 다이얼로그라도 띄움
+    xcode-select -p >/dev/null 2>&1 || xcode-select --install >/dev/null 2>&1 || true
+  fi
+
+  # 2) Homebrew (node 가 이미 있으면 굳이 설치 안 함)
+  local BREW=""
+  [ -x /opt/homebrew/bin/brew ] && BREW=/opt/homebrew/bin/brew
+  [ -z "$BREW" ] && [ -x /usr/local/bin/brew ] && BREW=/usr/local/bin/brew
+  [ -z "$BREW" ] && command -v brew >/dev/null 2>&1 && BREW=$(command -v brew)
+  if [ -z "$BREW" ] && [ -z "$(find_node)" ]; then
+    notify "② Homebrew 설치 중... (수 분)"
+    local PREFIX="/usr/local"
+    [ "$(uname -m)" = "arm64" ] && PREFIX="/opt/homebrew"
+    # prefix 를 미리 user 소유로 만들어 NONINTERACTIVE 설치가 sudo 없이 진행되게 함
+    mkdir -p "$PREFIX" 2>/dev/null || true
+    chown -R "$REAL_USER:admin" "$PREFIX" 2>/dev/null || true
+    as_user "NONINTERACTIVE=1 /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+    [ -x "$PREFIX/bin/brew" ] && BREW="$PREFIX/bin/brew"
+  fi
+  [ -n "$BREW" ] && export PATH="$(dirname "$BREW"):$PATH"
+
+  # 3) Node.js (brew 로)
+  if [ -z "$(find_node)" ] && [ -n "$BREW" ]; then
+    notify "③ Node.js 설치 중..."
+    as_user "'$BREW' install node"
+  fi
+
+  # 4) git (보통 CLT 에 포함되지만 없으면 brew 로 보강)
+  if ! command -v git >/dev/null 2>&1 && [ -n "$BREW" ]; then
+    as_user "'$BREW' install git"
+  fi
+}
+ensure_toolchain
+
 NODE_BIN=$(find_node)
 if [ -n "$NODE_BIN" ] && ! "$NODE_BIN" --version >/dev/null 2>&1; then
   NODE_BIN=""
 fi
 if [ -z "$NODE_BIN" ]; then
-  osascript -e 'display dialog "Node.js 를 찾을 수 없습니다.\nhttps://nodejs.org 에서 설치 후 다시 시도하세요." buttons {"확인"} default button 1 with icon stop with title "Claw Web"' 2>/dev/null || true
+  osascript -e 'display dialog "Node.js 자동 설치에 실패했습니다.\nhttps://nodejs.org 에서 직접 설치 후 인스톨러를 다시 실행하세요." buttons {"확인"} default button 1 with icon stop with title "Claw Web"' 2>/dev/null || true
   echo "[postinstall] FATAL: Node.js not found" >> "$LOG"
   exit 1
 fi
@@ -69,11 +122,41 @@ PLIST_DIR="$REAL_HOME/Library/LaunchAgents"
 mkdir -p "$USER_DATA" "$PLIST_DIR"
 echo "[postinstall] node=$NODE_BIN home=$REAL_HOME user=$REAL_USER" >> "$LOG"
 
-notify() {
-  osascript -e "display notification \"$1\" with title \"Claw Web 설치 중\"" 2>/dev/null || true
-  echo "[postinstall] $1" >> "$LOG"
+# ── Claude CLI 자동 설치 (없으면 npm 으로 글로벌 설치) ──────
+# 새 머신에서 claude 바이너리가 없으면 러너가 exit -2 (ENOENT) 로 죽는다.
+# node 와 같은 prefix 의 npm 으로 설치 → 바이너리가 NODE_DIR 에 생겨 LaunchAgent PATH 안에 들어옴.
+NPM_BIN="$NODE_DIR/npm"
+[ -x "$NPM_BIN" ] || NPM_BIN="$(command -v npm 2>/dev/null)"
+
+find_claude() {
+  for p in \
+    "$NODE_DIR/claude" \
+    /opt/homebrew/bin/claude \
+    /usr/local/bin/claude \
+    "$REAL_HOME/.npm-global/bin/claude"; do
+    [ -x "$p" ] && echo "$p" && return 0
+  done
+  command -v claude 2>/dev/null
 }
-as_user() { su "$REAL_USER" -c "$1" 2>> "$LOG" || true; }
+
+CLAUDE_BIN_PATH="$(find_claude)"
+if [ -z "$CLAUDE_BIN_PATH" ] && [ -n "$NPM_BIN" ]; then
+  notify "③ Claude CLI 설치 중... (최초 1회, 1~2분 소요)"
+  # REAL_USER 권한으로 먼저 시도 (사용자 npm prefix), 실패 시 root 로 재시도
+  as_user "'$NPM_BIN' install -g @anthropic-ai/claude-code"
+  CLAUDE_BIN_PATH="$(find_claude)"
+  if [ -z "$CLAUDE_BIN_PATH" ]; then
+    "$NPM_BIN" install -g @anthropic-ai/claude-code >> "$LOG" 2>&1 || true
+    CLAUDE_BIN_PATH="$(find_claude)"
+  fi
+fi
+if [ -n "$CLAUDE_BIN_PATH" ]; then
+  CLAUDE_DIR=$(dirname "$CLAUDE_BIN_PATH")
+  echo "[postinstall] claude=$CLAUDE_BIN_PATH" >> "$LOG"
+else
+  CLAUDE_DIR=""
+  echo "[postinstall] WARN: claude CLI not installed (npm=$NPM_BIN)" >> "$LOG"
+fi
 
 # ═══════════════════════════════════════════════════════
 # Step 1. 파일 소유권 + 권한 (v1.2.43 핵심 fix)
@@ -250,7 +333,7 @@ cat > "$PLIST_DIR/com.claw-web.server.plist" <<EOFPLIST
     <key>StandardErrorPath</key><string>/tmp/claw-web.log</string>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>PATH</key><string>$NODE_DIR:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <key>PATH</key><string>${CLAUDE_DIR:+$CLAUDE_DIR:}$NODE_DIR:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
         <key>HOME</key><string>$REAL_HOME</string>
         <key>NODE_ENV</key><string>production</string>
     </dict>
@@ -301,7 +384,8 @@ $WORK_DIR
 
 🏠 접속: http://localhost:3838
 
-Claude CLI 및 원격 접속 설정은 웹에서 Settings 메뉴를 통해 처리하세요."
+${CLAUDE_DIR:+✅ Claude CLI 설치됨 ($CLAUDE_BIN_PATH)
+}계정 인증·원격 접속 설정은 웹 Settings 메뉴에서 처리하세요."
 
 echo "$BEARER_TOKEN" > "$USER_DATA/.bearer-token"
 chown "$REAL_USER" "$USER_DATA/.bearer-token" 2>/dev/null || true
