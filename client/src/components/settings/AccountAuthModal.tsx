@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { X, Terminal, Key, Globe, Download, Upload, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { X, Terminal, Key, Globe, Download, Upload, CheckCircle2, AlertCircle, Loader2, Zap } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { ClaudeCliBackend } from '../../lib/types';
 
-type Tab = 'token' | 'terminal' | 'headless' | 'backup';
+type Tab = 'reauth' | 'token' | 'terminal' | 'headless' | 'backup';
 
 /**
  * 계정 인증 통합 관리 모달.
@@ -20,9 +20,8 @@ export function AccountAuthModal({
   backend: ClaudeCliBackend;
   onClose: () => void;
 }) {
-  // 기본 탭: Pro/Max 구독자가 다수 → 백업/복원 우선 노출.
-  //  managed API 토큰이 이미 설정돼 있으면 token 탭으로.
-  const [tab, setTab] = useState<Tab>(backend.oauthSource === 'managed' ? 'token' : 'backup');
+  // 기본 탭: 만료 후 재인증이 가장 흔한 시나리오 → 원클릭 "재인증"(setup-token) 우선.
+  const [tab, setTab] = useState<Tab>('reauth');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" onClick={onClose}>
@@ -41,6 +40,7 @@ export function AccountAuthModal({
         </div>
 
         <div className="border-b border-zinc-800 px-2 flex gap-1 text-xs overflow-x-auto">
+          <TabButton current={tab} value="reauth" onClick={() => setTab('reauth')} icon={<Zap size={12} />} label="재인증" badge="추천" badgeTone="sky" />
           <TabButton current={tab} value="backup" onClick={() => setTab('backup')} icon={<Download size={12} />} label="백업/복원" badge="Pro/Max" badgeTone="emerald" />
           <TabButton current={tab} value="terminal" onClick={() => setTab('terminal')} icon={<Terminal size={12} />} label="Terminal" badge="신규" badgeTone="sky" />
           <TabButton current={tab} value="headless" onClick={() => setTab('headless')} icon={<Globe size={12} />} label="헤드리스" badge="실험적" badgeTone="amber" />
@@ -94,6 +94,7 @@ export function AccountAuthModal({
         )}
 
         <div className="p-4 max-h-[70vh] overflow-y-auto">
+          {tab === 'reauth' && <ReauthTab backend={backend} />}
           {tab === 'token' && <TokenPasteTab backend={backend} />}
           {tab === 'headless' && <HeadlessLoginTab backend={backend} />}
           {tab === 'terminal' && <TerminalLoginTab backend={backend} />}
@@ -130,6 +131,87 @@ function TabButton({
 }
 
 // ─────────────────────────────────────────────────────────
+// Tab 0: 원클릭 재인증 — claude setup-token → 붙여넣기 (2단계)
+// ─────────────────────────────────────────────────────────
+function ReauthTab({ backend }: { backend: ClaudeCliBackend }) {
+  const qc = useQueryClient();
+  const [token, setToken] = useState('');
+  const [reveal, setReveal] = useState(false);
+
+  const openTerminal = useMutation({ mutationFn: () => api.claudeLogin() });
+  const save = useMutation({
+    mutationFn: (val: string) => api.setAccountOAuthToken(backend.id, val),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['backends'] });
+      qc.invalidateQueries({ queryKey: ['accounts'] });
+      setToken('');
+    },
+  });
+
+  return (
+    <div className="space-y-4 text-sm">
+      <div className="rounded border border-sky-900/50 bg-sky-950/30 p-3 text-[12px] text-sky-200 leading-relaxed">
+        <div className="font-semibold mb-1">⚡ 가장 빠른 재인증 — 2단계</div>
+        토큰이 만료됐을 때 제일 간단합니다. Terminal 에서 <code className="text-sky-300">claude setup-token</code> 을 실행하고,
+        출력된 <code className="text-sky-300">sk-ant-oat01-…</code> 토큰을 아래에 붙여넣으면 끝.
+      </div>
+
+      <div className="space-y-1.5">
+        <div className="text-[11px] text-zinc-400 uppercase tracking-wider">1단계 — 토큰 발급</div>
+        <button
+          onClick={() => openTerminal.mutate()}
+          disabled={openTerminal.isPending}
+          className="w-full rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-30 px-3 py-2 text-white flex items-center justify-center gap-2"
+        >
+          <Terminal size={14} />
+          {openTerminal.isPending ? '여는 중...' : 'Terminal 열고 claude setup-token 실행'}
+        </button>
+        {openTerminal.isError && (
+          <div className="text-[11px] text-amber-300 rounded border border-amber-900/50 bg-amber-950/30 p-2">
+            자동으로 못 열었습니다 (macOS 아님 등). Terminal 에서 직접 실행하세요:
+            <code className="block mt-1 text-amber-200 font-mono">claude setup-token</code>
+          </div>
+        )}
+        <div className="text-[11px] text-zinc-500">브라우저 OAuth 완료 후 Terminal 에 토큰이 출력됩니다.</div>
+      </div>
+
+      <div className="space-y-1.5">
+        <div className="text-[11px] text-zinc-400 uppercase tracking-wider">2단계 — 토큰 붙여넣기</div>
+        <div className="flex gap-1">
+          <input
+            type={reveal ? 'text' : 'password'}
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="sk-ant-oat01-..."
+            className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-2 text-xs font-mono outline-none focus:border-sky-600"
+          />
+          <button
+            type="button"
+            onClick={() => setReveal((v) => !v)}
+            className="px-2 rounded border border-zinc-800 text-zinc-400 hover:text-zinc-200 text-[11px]"
+          >{reveal ? '숨김' : '표시'}</button>
+        </div>
+        <button
+          onClick={() => save.mutate(token.trim())}
+          disabled={!token.trim() || save.isPending}
+          className="w-full rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-30 px-3 py-2 text-sm text-white"
+        >{save.isPending ? '저장 중...' : '저장하고 재인증 완료'}</button>
+        {save.isSuccess && (
+          <div className="text-[11px] text-emerald-400 flex items-center gap-1"><CheckCircle2 size={12} /> 재인증 완료!</div>
+        )}
+        {save.isError && (
+          <div className="text-[11px] text-red-400">저장 실패: {(save.error as Error).message}</div>
+        )}
+      </div>
+
+      <div className="text-[11px] text-zinc-500 leading-relaxed border-t border-zinc-800 pt-2">
+        구독권(Pro/Max) 계정을 여러 개 격리 관리하거나 다른 머신으로 이전하려면 위쪽 <span className="font-semibold">"백업/복원"</span> 탭을 사용하세요.
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────
 // Tab 1: OAuth 토큰 직접 붙여넣기 (managed)
 // ─────────────────────────────────────────────────────────
 function TokenPasteTab({ backend }: { backend: ClaudeCliBackend }) {
@@ -150,9 +232,13 @@ function TokenPasteTab({ backend }: { backend: ClaudeCliBackend }) {
   return (
     <div className="space-y-3 text-sm">
       <div className="rounded border border-amber-900/50 bg-amber-950/30 p-3 text-[12px] text-amber-200/90 leading-relaxed">
-        <div className="font-semibold mb-1">⚠️ 이 방법은 API 결제용입니다 (구독권 아님)</div>
+        <div className="font-semibold mb-1">ℹ️ Console 에서 직접 발급한 토큰 붙여넣기</div>
         Anthropic Console 의 <span className="font-semibold">"OAuth Tokens"</span> 메뉴에서 발급한
-        long-lived 토큰(<code className="text-amber-300">sk-ant-oat01-...</code>) 은 <span className="font-semibold">API 크레딧으로 결제</span>됩니다 — Pro/Max 구독권 한도와 별개.
+        long-lived 토큰(<code className="text-amber-300">sk-ant-oat01-...</code>) 을 붙여넣습니다.
+        결제 방식(구독권 한도 vs API 크레딧)은 <span className="font-semibold">발급한 계정 종류에 따라 다릅니다</span>.
+        <div className="mt-1 text-amber-300/70">
+          ※ 만료 후 빠른 재인증은 <span className="font-semibold">"재인증"</span> 탭(<code>claude setup-token</code>)이 더 간단합니다.
+        </div>
         <div className="mt-1 text-amber-300/70">
           ※ Pro/Max 구독권을 쓰려면 <span className="font-semibold">"백업/복원"</span> 또는 <span className="font-semibold">"헤드리스 로그인"</span> 탭을 사용하세요.
         </div>
