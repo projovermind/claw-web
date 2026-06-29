@@ -275,6 +275,15 @@ export function resolveAgent(agentId, { configStore, metadataStore, projectsStor
     }
   }
 
+  // 러너의 managed OAuth 토큰 주입 / 사용량·쿨다운 기록이 동작하려면 backendsStore
+  // 참조와 "해석된" backendId 가 필요하다. agent.backendId 가 비어 있어도(전역 active
+  // 백엔드 사용) 재인증으로 저장한 managed 토큰이 주입되도록 resolved id 를 함께 넘긴다.
+  // (_ 프리픽스 키는 러너 env 주입 루프에서 제외되어 child env 로 새지 않음)
+  if (backendsStore) {
+    envOverrides._backendsStore = backendsStore;
+    envOverrides._resolvedBackendId = backendId;
+  }
+
   return {
     agent, envOverrides, backendType,
     backendConfig: { backendName: backendId, fallbackId: backendObj?.fallback || null }

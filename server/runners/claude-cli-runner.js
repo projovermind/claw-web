@@ -131,7 +131,9 @@ export function startClaudeRun({
   }
 
   // 백엔드 env 주입 (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN 등)
+  // _ 프리픽스 키(_backendsStore, _resolvedBackendId 등)는 내부 참조이므로 child env 로 새지 않게 제외.
   for (const [k, v] of Object.entries(envOverrides)) {
+    if (k.startsWith('_')) continue;
     if (v !== undefined && v !== null) cleanEnv[k] = String(v);
   }
 
@@ -157,7 +159,9 @@ export function startClaudeRun({
   }
 
   // 백엔드 스케줄러: backendsStore 기반 pickBackend 지원
-  let pickedBackendId = agent.backendId ?? agent.accountId ?? null;
+  // agent 에 backendId/accountId 가 없으면 전역 active 백엔드로 해석된 id 를 사용한다.
+  // (이게 없으면 default 백엔드에 저장한 managed 토큰이 주입되지 않아 옛 인증을 계속 씀)
+  let pickedBackendId = agent.backendId ?? agent.accountId ?? envOverrides?._resolvedBackendId ?? null;
 
   // ── Managed OAuth 토큰 주입 ──
   // 백엔드별로 secrets.json 에 저장된 long-lived OAuth 토큰이 있으면 spawn env 에 주입.

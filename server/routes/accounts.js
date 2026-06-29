@@ -268,6 +268,11 @@ export function createAccountsRouter({ accountsStore, eventBus, backendsStore })
       if (token && (acc.status === 'disabled' || acc.status === 'needs-relogin')) {
         await accountsStore.update(req.params.id, { status: 'active' }).catch(() => {});
       }
+      // 러너가 auth-expiry 시 backendsStore 쪽 status 를 needs-relogin/cooldown 으로 마킹할 수
+      // 있으므로, 새 토큰을 받으면 백엔드 status 도 active 로 풀어 스케줄러가 다시 선택하게 한다.
+      if (token) {
+        await backendsStore.updateBackend(req.params.id, { status: 'active', cooldownUntil: null }).catch(() => {});
+      }
       eventBus?.publish('accounts.updated', {});
       res.json({ ok: true, hasToken: !!token, account: accountsStore.getById(req.params.id) });
     } catch (err) {
