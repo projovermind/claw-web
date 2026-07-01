@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { logger } from './logger.js';
+import { recentDeployLog } from './deploy-log-store.js';
 
 const MAX_FILE_BYTES = 64 * 1024;        // 64 KB per file
 const MAX_TOTAL_BYTES = 256 * 1024;      // 256 KB across all pinned files
@@ -179,4 +180,104 @@ export function buildBridgeContext(ctx, workingDir) {
 
   const ide = ctx.ideVersion ? ` [${ctx.ideVersion}]` : '';
   return `<ide-context${ide}>\n사용자가 현재 IDE에서 보고 있는 상태입니다:\n\n${lines.join('\n')}${selBlock}\n</ide-context>`;
+}
+
+/** Run a git command in workingDir, return trimmed stdout or null on any failure. */
+function git(workingDir, args) {
+  try {
+    return execFileSync('git', args, {
+      cwd: workingDir,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 2 * 1024 * 1024,
+    }).toString().trim();
+  } catch {
+    return null;
+  }
+}
+
+const MAX_LEDGER_LINES = 8;
+
+/**
+ * Deploy Guard — per-turn injection (NOT cached).
+ *
+ * Every session of a project shares one git working tree but has no idea what
+ * OTHER sessions changed or deployed. That blind spot causes cross-session
+ * rollbacks (session B's git redeploy drops session A's uncommitted WIP; a
+ * local `vercel --prod` overwrites work that only lives in git). This block
+ * gives every turn a live snapshot of the shared tree + the cross-session
+ * deploy ledger, plus hard rules for destructive/deploy operations.
+ *
+ * Emits null when the tree is clean, in sync, and has no recent deploys —
+ * nothing to collide with, so no tokens spent.
+ *
+ * @param {string} workingDir
+ * @returns {string|null}
+ */
+export function buildDeployGuardContext(workingDir) {
+  if (!workingDir) return null;
+  // fail-fast: is it a git repo?
+  if (git(workingDir, ['rev-parse', '--is-inside-work-tree']) !== 'true') return null;
+
+  const porcelain = git(workingDir, ['status', '--porcelain']);
+  const dirtyLines = porcelain ? porcelain.split('\n').filter(Boolean) : [];
+  const dirtyCount = dirtyLines.length;
+
+  const branch = git(workingDir, ['rev-parse', '--abbrev-ref', 'HEAD']) || '(detached)';
+
+  // Unpushed commits (only meaningful when an upstream is configured).
+  let unpushed = [];
+  const hasUpstream = git(workingDir, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}']) !== null;
+  if (hasUpstream) {
+    const out = git(workingDir, ['log', '@{u}..HEAD', '--oneline', '--no-color', '-n', '10']);
+    unpushed = out ? out.split('\n').filter(Boolean) : [];
+  }
+
+  const ledger = recentDeployLog(workingDir);
+
+  // Nothing to warn about → skip (clean, synced, no recent deploys).
+  if (dirtyCount === 0 && unpushed.length === 0 && ledger.length === 0) return null;
+
+  const recentCommits = git(workingDir, ['log', '--oneline', '--no-color', '-n', '5']) || '(none)';
+
+  const parts = [];
+  parts.push('<deploy-guard>');
+  parts.push('⚠️ 이 프로젝트는 여러 세션이 같은 워킹트리를 공유합니다. 아래는 매 턴 갱신되는 실시간 상태입니다.');
+  parts.push('다른 세션이 작업/배포한 내용을 덮어쓰지 않도록 배포·git 파괴적 작업 전에 반드시 확인하세요.\n');
+
+  parts.push(`- 브랜치: ${branch}`);
+  parts.push(`- 커밋 안 된 변경: ${dirtyCount}개 파일`);
+  if (dirtyCount > 0) {
+    const shown = dirtyLines.slice(0, 12).join('\n');
+    parts.push('```\n' + shown + (dirtyCount > 12 ? `\n... (+${dirtyCount - 12}개 더)` : '') + '\n```');
+  }
+  if (hasUpstream) {
+    parts.push(`- 미푸시 커밋: ${unpushed.length}개`);
+    if (unpushed.length > 0) parts.push('```\n' + unpushed.join('\n') + '\n```');
+  } else {
+    parts.push('- 미푸시 커밋: (upstream 미설정 — 원격 대비 상태 불명)');
+  }
+  parts.push('- 최근 커밋:\n```\n' + recentCommits + '\n```');
+
+  if (ledger.length > 0) {
+    const lines = ledger.slice(0, MAX_LEDGER_LINES).map((e) => {
+      const when = e.ts?.replace('T', ' ').slice(0, 16) || '?';
+      const who = e.session ? ` [${e.session}]` : '';
+      const tgt = e.target ? ` → ${e.target}` : '';
+      const cm = e.commit ? ` (${e.commit})` : '';
+      const note = e.note ? ` — ${e.note}` : '';
+      return `- ${when}${who}${tgt}${cm}${note}`;
+    });
+    parts.push('\n최근 배포 이력 (모든 세션 공유):\n' + lines.join('\n'));
+  }
+
+  parts.push('\n[배포/파괴적 작업 규칙]');
+  parts.push('- 커밋 안 된 변경은 다른 세션의 진행 중 작업(WIP)일 수 있습니다. 임의로 stash/reset/checkout/삭제하지 마세요.');
+  parts.push('- 배포 전 반드시 `git status`·`git log`로 현재 트리가 의도한 모든 작업을 포함하는지 확인하세요.');
+  parts.push('- 로컬 워킹트리를 직접 프로덕션에 올리지 말고(`vercel --prod` 등), 커밋·푸시 후 git 연동 배포를 우선하세요.');
+  parts.push('- force-push/reset --hard/이전 커밋으로의 redeploy 전에는 다른 세션 작업 유실 여부를 반드시 검토하세요.');
+  parts.push('- 배포를 완료하면 아래 명령으로 배포 이력을 기록해 다른 세션이 알 수 있게 하세요:');
+  parts.push('  curl -s -X POST http://localhost:3838/api/projects/PROJECT_ID/deploy-log -H "Content-Type: application/json" -d \'{"target":"배포대상 URL","note":"무엇을 배포했는지"}\'');
+  parts.push('</deploy-guard>');
+
+  return parts.join('\n');
 }

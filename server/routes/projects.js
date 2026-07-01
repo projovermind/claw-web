@@ -1,6 +1,20 @@
 import { Router } from 'express';
+import { execFileSync } from 'node:child_process';
 import { HttpError } from '../middleware/error-handler.js';
 import { projectCreateSchema, projectUpdateSchema } from '../schemas/project.js';
+import { appendDeployLog, recentDeployLog } from '../lib/deploy-log-store.js';
+
+// Best-effort short HEAD commit for a working dir (null if not a git repo).
+function headCommit(workingDir) {
+  if (!workingDir) return null;
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd: workingDir, stdio: ['ignore', 'pipe', 'ignore'],
+    }).toString().trim() || null;
+  } catch {
+    return null;
+  }
+}
 
 export function createProjectsRouter({ projectsStore, configStore, metadataStore, eventBus }) {
   const router = Router();
@@ -153,6 +167,31 @@ export function createProjectsRouter({ projectsStore, configStore, metadataStore
       await projectsStore.update(req.params.id, { dashboard });
       if (eventBus) eventBus.publish('project.updated', { project: { ...project, dashboard } });
       res.json({ notes: dashboard.notes });
+    } catch (err) { next(err); }
+  });
+
+  // 배포 이력 조회 — 프로젝트 워킹트리 기준 (모든 세션 공유)
+  router.get('/:id/deploy-log', (req, res, next) => {
+    try {
+      const project = projectsStore.getById(req.params.id);
+      if (!project) return next(new HttpError(404, 'Project not found', 'PROJECT_NOT_FOUND'));
+      res.json({ entries: recentDeployLog(project.path) });
+    } catch (err) { next(err); }
+  });
+
+  // 배포 이력 기록 (에이전트 curl 직접 호출용) — 세션 간 롤백 방지 원장
+  router.post('/:id/deploy-log', async (req, res, next) => {
+    try {
+      const project = projectsStore.getById(req.params.id);
+      if (!project) return next(new HttpError(404, 'Project not found', 'PROJECT_NOT_FOUND'));
+      if (!project.path) return next(new HttpError(400, 'Project has no working path', 'NO_PATH'));
+      const entry = await appendDeployLog(project.path, {
+        target: req.body?.target,
+        note: req.body?.note,
+        session: req.body?.session,
+        commit: req.body?.commit ?? headCommit(project.path),
+      });
+      res.status(201).json({ entry });
     } catch (err) { next(err); }
   });
 
