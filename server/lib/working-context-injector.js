@@ -276,7 +276,7 @@ export function buildDeployGuardContext(workingDir) {
   parts.push('- 로컬 워킹트리를 직접 프로덕션에 올리지 말고(`vercel --prod` 등), 커밋·푸시 후 git 연동 배포를 우선하세요.');
   parts.push('- force-push/reset --hard/이전 커밋으로의 redeploy 전에는 다른 세션 작업 유실 여부를 반드시 검토하세요.');
   parts.push('- 배포를 완료하면 아래 명령으로 배포 이력을 기록해 다른 세션이 알 수 있게 하세요:');
-  parts.push('  curl -s -X POST http://localhost:3838/api/projects/PROJECT_ID/deploy-log -H "Content-Type: application/json" -d \'{"target":"배포대상 URL","note":"무엇을 배포했는지"}\'');
+  parts.push('  curl -s -X POST http://localhost:3838/api/projects/PROJECT_ID/deploy-logAUTH_HEADER -H "Content-Type: application/json" -d \'{"target":"배포대상 URL","note":"무엇을 배포했는지"}\'');
   parts.push('</deploy-guard>');
 
   return parts.join('\n');

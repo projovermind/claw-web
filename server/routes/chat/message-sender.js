@@ -269,10 +269,15 @@ export function createMessageSender(ctx) {
     try {
       let guard = buildDeployGuardContext(agent.workingDir);
       if (guard) {
-        // Substitute the real project id into the logging curl instruction.
-        guard = meta?.projectId
-          ? guard.replaceAll('PROJECT_ID', meta.projectId)
-          : guard;
+        // Substitute the real project id + auth header into the logging curl example.
+        // The deploy-log endpoint requires the Bearer token when auth is enabled;
+        // without this the guard's example would fail with AUTH_REQUIRED.
+        const authHeader = webConfig?.auth?.enabled && webConfig?.auth?.token
+          ? ` -H "Authorization: Bearer ${webConfig.auth.token}"`
+          : '';
+        guard = guard
+          .replaceAll('PROJECT_ID', meta?.projectId ?? 'PROJECT_ID')
+          .replaceAll('AUTH_HEADER', authHeader);
         message = `${guard}\n\n${message}`;
       }
     } catch (err) {
