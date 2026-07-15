@@ -19,6 +19,13 @@ export function classifyError(errMsg = '') {
   if (msg.includes('econnreset') || msg.includes('econnrefused') || msg.includes('timeout') || msg.includes('network')) {
     return { canRetry: true, delay: 3000, label: 'network' };
   }
+  // Claude CLI 내부 fetch()(undici) 가 API 스트림 도중 소켓이 끊길 때 던지는 에러.
+  // "The socket connection was closed unexpectedly" / "other side closed" / "terminated" 등.
+  // 일시적 네트워크/터널(cloudflared) 흔들림이라 재시도로 대개 복구됨.
+  if (msg.includes('socket connection was closed') || msg.includes('closed unexpectedly')
+      || msg.includes('other side closed') || (msg.includes('connection') && msg.includes('closed'))) {
+    return { canRetry: true, delay: 3000, label: 'socket_closed' };
+  }
   if (msg.includes('context') && (msg.includes('long') || msg.includes('length') || msg.includes('exceed'))) {
     return { canRetry: true, delay: 1000, label: 'context_length' };
   }
