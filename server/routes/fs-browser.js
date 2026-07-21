@@ -2,6 +2,7 @@ import { Router } from 'express';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
 import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
 
@@ -45,6 +46,34 @@ export function createFsBrowserRouter({ webConfig }) {
     const real = await fs.realpath(absPath);
     const realRoots = await Promise.all(
       resolveAllowedRoots().map(async (r) => {
+        try { return await fs.realpath(r); } catch { return r; }
+      })
+    );
+    const ok = realRoots.some((root) => real === root || real.startsWith(root + path.sep));
+    if (!ok) {
+      throw new HttpError(403, 'Path escapes allowedRoots (symlink)', 'OUTSIDE_ALLOWED_ROOTS');
+    }
+    return real;
+  }
+
+  // /file 전용: allowedRoots 에 더해 임시 디렉토리(에이전트 산출물)도 허용.
+  // ls/mkdir/read/write 등 다른 엔드포인트는 여전히 allowedRoots 로만 제한.
+  function resolveServeRoots() {
+    const temp = [os.tmpdir(), '/tmp', '/private/tmp'].map((r) => path.resolve(r));
+    return [...resolveAllowedRoots(), ...temp];
+  }
+
+  function isServeAllowed(absPath) {
+    const resolved = path.resolve(absPath);
+    return resolveServeRoots().some(
+      (root) => resolved === root || resolved.startsWith(root + path.sep)
+    );
+  }
+
+  async function assertRealServeAllowed(absPath) {
+    const real = await fs.realpath(absPath);
+    const realRoots = await Promise.all(
+      resolveServeRoots().map(async (r) => {
         try { return await fs.realpath(r); } catch { return r; }
       })
     );
@@ -340,11 +369,11 @@ export function createFsBrowserRouter({ webConfig }) {
       const rawPath = typeof req.query.path === 'string' ? req.query.path : '';
       if (!rawPath) throw new HttpError(400, 'path required', 'MISSING_PATH');
       const absPath = path.resolve(rawPath);
-      if (!isInsideAllowed(absPath)) {
+      if (!isServeAllowed(absPath)) {
         throw new HttpError(403, 'Path outside allowedRoots', 'OUTSIDE_ALLOWED_ROOTS');
       }
       try {
-        await assertRealInsideAllowed(absPath);
+        await assertRealServeAllowed(absPath);
       } catch (err) {
         if (err instanceof HttpError) throw err;
         if (err.code === 'ENOENT') throw new HttpError(404, 'File not found', 'NOT_FOUND');
