@@ -200,8 +200,8 @@ export function createDelegation(ctx) {
    */
   async function sendWhenIdle(sessionId, iterLabel, rawPrompt, maxRetries = 10) {
     for (let i = 0; i < maxRetries; i++) {
-      const isIdle = ctx.runner?.isSessionIdle?.(sessionId) ?? true;
-      if (isIdle) break;
+      const busy = ctx.runner?.isRunning?.(sessionId) ?? false;
+      if (!busy) break;
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     try {

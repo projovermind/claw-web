@@ -449,6 +449,27 @@ export function startClaudeRun({
     scheduleStallTimer();
   }
 
+  // ── 종료 유예 (result 이후 프로세스 미종료 방어) ──
+  // Claude CLI 는 턴의 마지막에 `result` 이벤트를 흘린 뒤 정상적으로 exit 해야 한다.
+  // 그런데 MCP 서버 child 프로세스가 stdio 파이프를 붙들고 있거나 API 스트림 소켓이
+  // 반쯤 닫힌 채 남으면, `result` 는 왔는데 부모 프로세스가 exit 하지 못하고 매달린다.
+  // 완료 신호(onResult/onExit→isRunning=false, flushQueue)는 전부 proc 'close' 에만
+  // 걸려 있어서, 이 경우 IDLE_STALL_MS(20분) 스톨 타이머가 kill 할 때까지 턴이 안 끝난다.
+  // → 유저 입장에선 "응답중" 이 20분 지속되고 그 사이 보낸 답이 대기큐에 갇힌다.
+  // 대응: result 를 받으면 짧은 유예만 두고, 그 안에 스스로 안 죽으면 강제 종료해
+  //       close 핸들러(SIGTERM=143 경로)가 즉시 턴을 마감하도록 한다.
+  const EXIT_GRACE_MS = 2_000;
+  let exitGraceTimer = null;
+  function scheduleExitGrace() {
+    if (exitGraceTimer) return;
+    clearTimeout(idleTimer); // 20분 스톨 타이머 대신 짧은 유예로 대체
+    exitGraceTimer = setTimeout(() => {
+      logger.warn({ agent: agent.id }, 'runner: result received but process lingering — forcing exit to finalize turn');
+      try { proc.kill('SIGTERM'); } catch { /* ignore */ }
+      setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 2000);
+    }, EXIT_GRACE_MS);
+  }
+
   function handleEvent(event) {
     // ── Silent-fallback 조기 감지 ──
     // Claude CLI 는 세션 시작 직후 system.init 이벤트로 실제 사용된 session_id 를 흘려보냄.
@@ -539,6 +560,8 @@ export function startClaudeRun({
           contextTokens: lastCallUsage,
         };
       }
+      // 턴의 최종 이벤트. 프로세스가 스스로 종료 안 하면 유예 후 강제 종료해 즉시 마감.
+      scheduleExitGrace();
     }
   }
 
@@ -594,6 +617,7 @@ export function startClaudeRun({
 
   proc.on('close', (code) => {
     clearTimeout(idleTimer);
+    clearTimeout(exitGraceTimer);
     // init 단계에서 silent-fallback 을 감지해 abort 한 경우: 응답 없음 → fresh-start 재시도 에러로 즉시 종료.
     if (silentFallbackDetected) {
       onError?.(new Error('silent_fallback: --resume dropped by CLI, fresh-start retry required'));
