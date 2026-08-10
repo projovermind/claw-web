@@ -4,6 +4,7 @@ import { HttpError } from '../../middleware/error-handler.js';
 import { logger } from '../../lib/logger.js';
 import { createQueue } from './queue.js';
 import { createDelegation } from './delegation.js';
+import { createWakeup } from './wakeup.js';
 import { createMessageSender } from './message-sender.js';
 
 const sendSchema = z.object({
@@ -72,6 +73,10 @@ export function createChatRouter({
   const delegation = createDelegation(ctx);
   Object.assign(ctx, delegation);
 
+  // Wire wakeup (needs ctx.sendRunnerMessage — resolved later)
+  const wakeup = createWakeup(ctx);
+  Object.assign(ctx, wakeup);
+
   // Wire message-sender (needs ctx.handleDelegation, ctx.handleLoopContinuation,
   // ctx.flushQueue, ctx.dequeueNextAgent — all resolved now)
   const sender = createMessageSender(ctx);
@@ -103,6 +108,9 @@ export function createChatRouter({
       if (!configStore.getAgent(session.agentId)) {
         throw new HttpError(404, `Agent ${session.agentId} not found`, 'AGENT_NOT_FOUND');
       }
+
+      // 유저가 개입했으면 예약된 자동 재개는 의미가 없다 — 취소.
+      ctx.cancelWakeup(sessionId, 'user message');
 
       // Running → queue for next turn
       if (runner.isRunning(sessionId)) {
@@ -159,6 +167,7 @@ export function createChatRouter({
   router.delete('/:sessionId', (req, res) => {
     const sid = req.params.sessionId;
     const aborted = runner.abort(sid);
+    ctx.cancelWakeup(sid, 'session aborted');
     // Cancel any pending permission-prompt modal for this session so the UI clears.
     if (approvalBroker) approvalBroker.cancelForSession(sid, 'session aborted');
     if (eventBus) eventBus.publish('chat.aborted', { sessionId: sid });
@@ -262,5 +271,5 @@ export function createChatRouter({
     return true;
   }
 
-  return { router, resumeInterruptedSession };
+  return { router, resumeInterruptedSession, clearAllWakeups: ctx.clearAllWakeups };
 }

@@ -602,7 +602,7 @@ async function main() {
   app.use('/api/sessions', createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker }));
   // Phase 5: bridge router is created up-front so chat can inject IDE context
   const bridgeRouter = createBridgeRouter({ webConfig });
-  const { router: chatRouter, resumeInterruptedSession } = createChatRouter({
+  const { router: chatRouter, resumeInterruptedSession, clearAllWakeups } = createChatRouter({
     sessionsStore,
     configStore,
     metadataStore,
@@ -841,6 +841,8 @@ async function main() {
     } catch (err) {
       logger.warn({ err: err.message }, 'failed to persist resume queue');
     }
+
+    try { clearAllWakeups(); } catch { /* ignore */ }
 
     // Phase 1.5: quick tunnel 자식 명시적 정리 — SIGKILL 이 아니라 정상 shutdown 경로.
     // 이 경로를 안 타면 cloudflared 가 고아로 남아 다음 기동 시 중복 누적.

@@ -453,6 +453,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.queueDelete': '대기 메시지 삭제',
     'chat.queueMerge': '대기 메시지 {count}개 합치기',
     'chat.queueMergeShort': '합치기',
+    // Auto-resume (wakeup) badge
+    'chat.wakeup': '{seconds}초 후 자동 재개',
 
     // Command palette
     'palette.placeholder': '검색: 에이전트, 프로젝트, 스킬, 세션, 페이지…',
@@ -1290,6 +1292,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.queueDelete': 'Delete queued message',
     'chat.queueMerge': 'Merge {count} queued messages',
     'chat.queueMergeShort': 'Merge',
+    // Auto-resume (wakeup) badge
+    'chat.wakeup': 'Auto-resume in {seconds}s',
 
     // Command palette
     'palette.placeholder': 'Search: agents, projects, skills, sessions, pages…',

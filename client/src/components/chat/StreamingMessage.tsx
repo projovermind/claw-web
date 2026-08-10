@@ -10,7 +10,7 @@ const mdComponents = {
 } as const;
 import type { ToolCall } from '../../store/chat-store';
 import ToolCallCard from './ToolCallCard';
-import { ChoicesList, extractChoices } from './MessageList';
+import { ChoicesList, extractChoices, stripWakeupForStreaming } from './MessageList';
 import { stripDownloadsForStreaming } from '../../lib/parse-downloads';
 import { editorUrlTransform } from '../../lib/editor';
 import { Loader2, Activity, Wrench, ChevronDown, ChevronRight } from 'lucide-react';
@@ -30,7 +30,8 @@ export default function StreamingMessage({ text, toolCalls, running, error, onCh
   const { body, choices } = useMemo(() => {
     // 스트리밍 중에는 <claw-download> 마커를 숨겨 두고, 메시지 finalize(스토어 메시지로 전환) 시
     // MessageList 가 카드로 렌더한다. 부분 도착한 마커도 잘라낸다.
-    return extractChoices(stripDownloadsForStreaming(text));
+    // 스트리밍 중에는 <wakeup> 배지를 띄우지 않고 마커만 숨긴다 — finalize 후 MessageList 가 배지로 렌더한다.
+    return extractChoices(stripWakeupForStreaming(stripDownloadsForStreaming(text)));
   }, [text]);
 
   // running=false 이어도 text/toolCalls 가 남아있으면 최종 메시지 로드 전까지 계속 표시

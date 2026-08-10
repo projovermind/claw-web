@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkBreaks from 'remark-breaks';
 import rehypeHighlight from 'rehype-highlight';
-import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle, Loader2, Maximize2, Pencil, X, Merge, Trash2 } from 'lucide-react';
+import { Wrench, ChevronDown, ChevronRight, ArrowRight, CheckCircle2, XCircle, Loader2, Maximize2, Pencil, X, Merge, Trash2, Timer } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { useToastStore } from '../../store/toast-store';
@@ -305,6 +305,40 @@ export function extractChoices(text: string): { body: string; choices: ChoiceIte
   return { body: text, choices: [] };
 }
 
+export interface WakeupInfo { seconds: number; reason: string }
+
+// 서버(server/routes/chat/wakeup.js)의 WAKEUP_RE 와 동일한 형태를 인식한다.
+const WAKEUP_RE = /<wakeup\s+seconds\s*=\s*["']?(\d{1,5})["']?\s*>([\s\S]*?)<\/wakeup>/i;
+
+export function extractWakeup(text: string): { body: string; wakeup: WakeupInfo | null } {
+  const match = text.match(WAKEUP_RE);
+  if (!match) return { body: text, wakeup: null };
+  const body = text.replace(match[0], '').replace(/\n{3,}/g, '\n\n').trim();
+  return { body, wakeup: { seconds: Number(match[1]), reason: match[2].trim() } };
+}
+
+// 스트리밍 중 부분 도착한 마커가 원문으로 노출되지 않게 잘라낸다.
+export function stripWakeupForStreaming(text: string): string {
+  if (!text) return text;
+  const cleaned = text.replace(WAKEUP_RE, '');
+  const openIdx = cleaned.lastIndexOf('<wakeup');
+  if (openIdx !== -1 && !cleaned.slice(openIdx).includes('</wakeup>')) {
+    return cleaned.slice(0, openIdx);
+  }
+  return cleaned;
+}
+
+export function WakeupBadge({ wakeup }: { wakeup: WakeupInfo }) {
+  const t = useT();
+  return (
+    <div className="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded border border-sky-800/60 bg-sky-950/30 text-[10px] text-sky-300">
+      <Timer size={10} />
+      <span>{t('chat.wakeup', { seconds: wakeup.seconds })}</span>
+      {wakeup.reason && <span className="text-sky-400/70">— {wakeup.reason}</span>}
+    </div>
+  );
+}
+
 export default function MessageList({ messages, searchQuery, onChoice, sessionId }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -478,11 +512,12 @@ function MessageBubble({ message, searchQuery, onChoice, nextUserContent, hasLat
     && (message as ChatMessage & { queued?: boolean }).queued
     && !hasLaterAssistant;
   const editorCfg = useEditorConfig();
-  const { body, choices, downloads } = useMemo(() => {
-    if (isUser) return { body: message.content, choices: [], downloads: [] as DownloadItem[] };
+  const { body, choices, downloads, wakeup } = useMemo(() => {
+    if (isUser) return { body: message.content, choices: [], downloads: [] as DownloadItem[], wakeup: null };
     const dl = extractDownloads(message.content);
     const parsed = extractChoices(dl.body);
-    return { body: linkifyFilePaths(parsed.body, editorCfg), choices: parsed.choices, downloads: dl.items };
+    const wk = extractWakeup(parsed.body);
+    return { body: linkifyFilePaths(wk.body, editorCfg), choices: parsed.choices, downloads: dl.items, wakeup: wk.wakeup };
   }, [message.content, isUser, editorCfg]);
   // 위임 메시지는 특수 카드로 렌더 (사이드바에서는 위임 세션 숨김 → 여기서 인라인 표시)
   const delegationMatch = !isUser && parseDelegationMessage(message.content);
@@ -593,6 +628,7 @@ function MessageBubble({ message, searchQuery, onChoice, nextUserContent, hasLat
             alreadySent={nextUserContent ?? null}
           />
         )}
+        {!isUser && wakeup && <WakeupBadge wakeup={wakeup} />}
         {message.toolCalls && message.toolCalls.length > 0 && (
           <ToolCallsCollapsed toolCalls={message.toolCalls} ts={message.ts ?? ''} />
         )}
