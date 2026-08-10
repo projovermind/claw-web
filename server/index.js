@@ -640,7 +640,7 @@ async function main() {
     createSkillsRouter({ skillsStore, systemSkillsStore, metadataStore, eventBus })
   );
   app.use('/api/activity', createActivityRouter({ activityLog }));
-  app.use('/api/fs', createFsBrowserRouter({ webConfig }));
+  app.use('/api/fs', createFsBrowserRouter({ webConfig, configStore }));
   app.use('/api/tunnel', createTunnelRouter());
   app.use('/api/admin', createAdminRouter({ runner, eventBus }));
   app.use('/api/domain', createDomainRouter({ secretsStore }));

@@ -24,7 +24,7 @@ const mkdirSchema = z.object({
  * clean. The allowedRoots check blocks any traversal outside the sandboxed
  * roots — even if the path the client sends is absolute.
  */
-export function createFsBrowserRouter({ webConfig }) {
+export function createFsBrowserRouter({ webConfig, configStore }) {
   const router = Router();
 
   function resolveAllowedRoots() {
@@ -56,11 +56,19 @@ export function createFsBrowserRouter({ webConfig }) {
     return real;
   }
 
-  // /file 전용: allowedRoots 에 더해 임시 디렉토리(에이전트 산출물)도 허용.
+  // /file 전용: allowedRoots 에 더해 임시 디렉토리와 에이전트 workingDir 도 허용.
+  // 에이전트가 실행 권한을 가진 디렉토리는 allowedRoots 밖일 수 있고, 그곳의
+  // 산출물도 다운로드할 수 있어야 한다.
   // ls/mkdir/read/write 등 다른 엔드포인트는 여전히 allowedRoots 로만 제한.
   function resolveServeRoots() {
     const temp = [os.tmpdir(), '/tmp', '/private/tmp'].map((r) => path.resolve(r));
-    return [...resolveAllowedRoots(), ...temp];
+    const agents = configStore?.getAgents?.() || {};
+    const workingDirs = Object.values(agents)
+      .map((a) => a?.workingDir)
+      .filter((d) => typeof d === 'string' && d.trim() && path.isAbsolute(d))
+      .map((d) => path.resolve(d))
+      .filter((d) => d !== path.sep);
+    return [...resolveAllowedRoots(), ...temp, ...workingDirs];
   }
 
   function isServeAllowed(absPath) {
