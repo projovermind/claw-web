@@ -453,12 +453,23 @@ export function createMessageSender(ctx) {
             ctx.handleWakeup(sessionId, responseText);
 
             const queued = ctx.flushQueue(sessionId);
-            if (queued) {
-              logger.info({ sessionId }, 'chat: flushing queued messages — next turn with context ref');
+            const reports = ctx.pendingReports.get(sessionId) ?? [];
+            if (reports.length) ctx.pendingReports.delete(sessionId);
+            if (queued || reports.length) {
+              const parts = [];
+              if (queued) parts.push(`[이전 답변 중에 추가된 요청 — 이전 맥락을 참고해서 답변하세요]\n\n${queued}`);
+              parts.push(...reports);
+              const combined = parts.join('\n\n---\n\n');
+              if (reports.length) {
+                ctx.reEntryCounters.set(sessionId, (ctx.reEntryCounters.get(sessionId) ?? 0) + 1);
+              }
+              logger.info(
+                { sessionId, queued: !!queued, reports: reports.length },
+                'chat: flushing queued messages / deferred delegation reports'
+              );
               setTimeout(() => {
                 try {
-                  const prefixed = `[이전 답변 중에 추가된 요청 — 이전 맥락을 참고해서 답변하세요]\n\n${queued}`;
-                  sendRunnerMessage(sessionId, prefixed);
+                  sendRunnerMessage(sessionId, combined);
                 } catch (err) {
                   logger.warn({ err, sessionId }, 'chat: failed to flush queue');
                 }
@@ -492,17 +503,17 @@ export function createMessageSender(ctx) {
                   try {
                     const alreadyRunning = runner.isRunning(completed.originSessionId);
                     const reEntryCount = (ctx.reEntryCounters.get(completed.originSessionId) ?? 0) + 1;
+                    const trigger =
+                      `[위임 결과 보고]\n\n` +
+                      `**대상 에이전트**: ${completed.targetAgentId}\n` +
+                      `**작업**: ${completed.task}\n` +
+                      `**결과 요약**:\n${summary}\n\n` +
+                      `위 결과를 바탕으로 계획을 계속 진행하세요. ` +
+                      `다음 위임할 작업이 있으면 즉시 위임 JSON을 출력하세요. ` +
+                      `사용자에게 확인받거나 choices 태그로 질문하지 말고 자동으로 계속 진행하세요. ` +
+                      `모든 작업이 완료됐을 때만 최종 결과를 사용자에게 보고하세요.`;
                     if (!alreadyRunning && reEntryCount <= ctx.MAX_REENTRY) {
                       ctx.reEntryCounters.set(completed.originSessionId, reEntryCount);
-                      const trigger =
-                        `[위임 결과 보고]\n\n` +
-                        `**대상 에이전트**: ${completed.targetAgentId}\n` +
-                        `**작업**: ${completed.task}\n` +
-                        `**결과 요약**:\n${summary}\n\n` +
-                        `위 결과를 바탕으로 계획을 계속 진행하세요. ` +
-                        `다음 위임할 작업이 있으면 즉시 위임 JSON을 출력하세요. ` +
-                        `사용자에게 확인받거나 choices 태그로 질문하지 말고 자동으로 계속 진행하세요. ` +
-                        `모든 작업이 완료됐을 때만 최종 결과를 사용자에게 보고하세요.`;
                       await sessionsStore.appendMessage(completed.originSessionId, {
                         role: 'user',
                         content: trigger
@@ -515,7 +526,19 @@ export function createMessageSender(ctx) {
                         content: `⚠️ **위임 자동 진행 한계 도달** (${reEntryCount - 1}/${ctx.MAX_REENTRY}회) — 무한 루프 방지를 위해 자동 진행을 중단합니다. 다음 단계를 직접 지시해 주세요.`
                       });
                     } else {
-                      logger.info({ originSessionId: completed.originSessionId }, 'delegation re-entry skipped (planner already running)');
+                      // 원 세션이 실행 중 — 보고를 버리지 말고 보류 큐에 쌓아 다음 턴 종료 시 드레인.
+                      // (병렬 위임에서 첫 보고 외 전부 유실되던 버그)
+                      const pending = ctx.pendingReports.get(completed.originSessionId) ?? [];
+                      pending.push(trigger);
+                      ctx.pendingReports.set(completed.originSessionId, pending);
+                      await sessionsStore.appendMessage(completed.originSessionId, {
+                        role: 'user',
+                        content: trigger
+                      });
+                      logger.info(
+                        { originSessionId: completed.originSessionId, pending: pending.length },
+                        'delegation re-entry deferred (planner already running) — report queued'
+                      );
                     }
                   } catch (err) {
                     logger.warn({ err: err.message }, 'delegation re-entry failed');

@@ -41,6 +41,10 @@ export function createChatRouter({
   const reEntryCounters = new Map();
   const MAX_REENTRY = 8;
 
+  // 위임 보고가 도착했지만 원 세션이 아직 실행 중이라 즉시 전달 못 한 트리거들
+  // (originSessionId → string[]). 다음 턴 종료 시 한 번에 드레인.
+  const pendingReports = new Map();
+
   // ── Shared ctx — resolved lazily to enable circular wiring ──
   const ctx = {
     sessionsStore,
@@ -59,6 +63,7 @@ export function createChatRouter({
     getBridgeContext,
     retryCounters,
     reEntryCounters,
+    pendingReports,
     MAX_AUTO_RETRIES,
     MAX_REENTRY,
     approvalBroker,
@@ -156,6 +161,7 @@ export function createChatRouter({
       }
 
       reEntryCounters.delete(sessionId);
+      pendingReports.delete(sessionId);
       sendRunnerMessage(sessionId, augmentedMessage);
       res.status(202).json({ sessionId, status: 'started' });
     } catch (err) {
