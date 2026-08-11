@@ -14,6 +14,7 @@ export default function AtFilePopover({
   cursor,
   onSelect,
   onCursorChange,
+  onResultsChange,
   onClose: _onClose
 }: {
   /** Text after `@`, e.g. "src/comp" */
@@ -23,6 +24,8 @@ export default function AtFilePopover({
   cursor: number;
   onSelect: (path: string) => void;
   onCursorChange: (idx: number) => void;
+  /** Absolute paths of the current candidates, so the input can handle Enter/Tab. */
+  onResultsChange: (paths: string[]) => void;
   onClose: () => void;
 }) {
   const t = useT();
@@ -61,6 +64,11 @@ export default function AtFilePopover({
   useEffect(() => {
     if (cursor >= results.length) onCursorChange(Math.max(0, results.length - 1));
   }, [results.length, cursor, onCursorChange]);
+
+  useEffect(() => {
+    onResultsChange(results.map((r) => r.path));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results]);
 
   useEffect(() => {
     const el = listRef.current?.children[cursor] as HTMLElement | undefined;

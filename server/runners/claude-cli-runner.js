@@ -313,7 +313,9 @@ export function startClaudeRun({
   if (composedPrompt) {
     args.push('--append-system-prompt', composedPrompt);
   }
-  args.push(message);
+  // 프롬프트(message)는 argv 가 아니라 stdin 으로 전달한다 (아래 spawn 참고).
+  // argv 로 넘기면 append-system-prompt + 유저 메시지 + 첨부가 합쳐져 ARG_MAX(1MB)를
+  // 넘는 순간 spawn 이 E2BIG 로 죽는다.
 
   // ── CWD (워킹 디렉토리) ──
   let cwd = agent.workingDir || process.cwd();
@@ -327,24 +329,54 @@ export function startClaudeRun({
     cwd = process.cwd();
   }
 
+  const argsBytes = args.reduce((n, a) => n + Buffer.byteLength(String(a), 'utf8') + 1, 0);
+  const promptBytes = Buffer.byteLength(message ?? '', 'utf8');
+  const ARGV_WARN_BYTES = 900_000; // ARG_MAX(≈1MB) 근접 경고선
+
   logger.info(
     {
       agent: agent.id,
       model,
       cwd,
+      argsBytes,
+      promptBytes,
       resume: !!effectiveResumeId,
       resumeRequested: !!claudeSessionId,
       resumeFile: resumeSessionFile ? path.basename(resumeSessionFile) : null
     },
     'runner: spawn claude'
   );
+  if (argsBytes > ARGV_WARN_BYTES) {
+    logger.warn(
+      { agent: agent.id, argsBytes, promptBytes, limit: ARGV_WARN_BYTES },
+      'runner: argv size near ARG_MAX — spawn may fail with E2BIG'
+    );
+  }
 
-  // ── 프로세스 실행 (봇 bot.js 라인 2420 동일) ──
-  const proc = spawn(CLAUDE_BIN, args, {
+  // ── 프로세스 실행 ──
+  // 프롬프트는 stdin 으로 전달 (`claude -p` 는 positional prompt 가 없으면 stdin 을 읽음).
+  // stdin 쓰기가 실패하면 기존 방식(argv 마지막 인자)으로 폴백.
+  let proc = spawn(CLAUDE_BIN, args, {
     env: cleanEnv,
     cwd,
-    stdio: ['ignore', 'pipe', 'pipe']
+    stdio: ['pipe', 'pipe', 'pipe']
   });
+  try {
+    // CLI 가 먼저 죽으면 EPIPE 가 uncaught 로 튀므로 흡수
+    proc.stdin.on('error', () => {});
+    proc.stdin.end(message);
+  } catch (err) {
+    logger.warn(
+      { agent: agent.id, err: err?.message },
+      'runner: stdin prompt write failed — falling back to argv'
+    );
+    try { proc.kill('SIGKILL'); } catch { /* ignore */ }
+    proc = spawn(CLAUDE_BIN, [...args, message], {
+      env: cleanEnv,
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+  }
 
   // spawn 직후 사용 기록
   if (accountScheduler && pickedAccountId) {

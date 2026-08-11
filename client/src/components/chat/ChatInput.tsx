@@ -282,26 +282,35 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
   const [popoverCursor, setPopoverCursor] = useState(0);
   // Start position of the trigger character in the input (/ or @)
   const [triggerStart, setTriggerStart] = useState(0);
+  // Mirrored from AtFilePopover so Enter/Tab can act on the current candidates
+  const [atFilePaths, setAtFilePaths] = useState<string[]>([]);
+  const atFileCount = atFilePaths.length;
 
   // Detect popover triggers as user types
   const handleInput = useCallback((newVal: string) => {
     setValue(newVal);
 
-    // Slash commands: `/` at position 0
-    if (newVal.startsWith('/')) {
-      setPopover('slash');
-      setPopoverQuery(newVal.slice(1).split(' ')[0]); // text between / and first space
-      setPopoverCursor(0);
-      setTriggerStart(0);
-      return;
+    // Slash commands: `/` at position 0 of a short, single-line input.
+    // A long or multi-line message that happens to start with `/` is a real
+    // message, not a command — keeping the popover open there swallows Enter.
+    const firstLine = newVal.split('\n')[0];
+    if (newVal.startsWith('/') && newVal.indexOf('\n') === -1 && firstLine.length <= 40) {
+      const cmdToken = newVal.slice(1).split(' ')[0];
+      if (/^[a-zA-Z0-9_-]*$/.test(cmdToken)) {
+        setPopover('slash');
+        setPopoverQuery(cmdToken); // text between / and first space
+        setPopoverCursor(0);
+        setTriggerStart(0);
+        return;
+      }
     }
 
     // @file: find the last `@` that's preceded by a space or is at position 0
     const lastAt = newVal.lastIndexOf('@');
     if (lastAt >= 0 && (lastAt === 0 || newVal[lastAt - 1] === ' ')) {
       const afterAt = newVal.slice(lastAt + 1);
-      // Only activate if there's no space after @ yet (still typing the reference)
-      if (!afterAt.includes(' ') || afterAt.length < 30) {
+      // Only activate if there's no space/newline after @ yet (still typing the reference)
+      if (!/\s/.test(afterAt) && afterAt.length < 30) {
         setPopover('atfile');
         setPopoverQuery(afterAt.split(' ')[0]); // text until space
         setPopoverCursor(0);
@@ -318,6 +327,7 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
     setPopover('none');
     setPopoverQuery('');
     setPopoverCursor(0);
+    setAtFilePaths([]);
   }, []);
 
   // Slash: user picked a command
@@ -409,12 +419,25 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
     setTimeout(() => { if (textareaRef.current) textareaRef.current.style.height = 'auto'; }, 0);
   };
 
+  const filteredCommands = COMMANDS.filter((c) =>
+    !popoverQuery
+    || c.name.includes(popoverQuery.toLowerCase())
+    || c.desc.toLowerCase().includes(popoverQuery.toLowerCase())
+  );
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // When a popover is open, arrow keys and Enter control the popover
-    if (popover !== 'none') {
-      const maxLen = popover === 'slash'
-        ? COMMANDS.filter((c) => !popoverQuery || c.name.includes(popoverQuery.toLowerCase())).length
-        : 15; // @file max results
+    // When a popover is open with candidates, arrow keys and Enter control it.
+    // With zero candidates the popover must not swallow Enter — fall through to send.
+    const candidateCount = popover === 'slash' ? filteredCommands.length
+      : popover === 'atfile' ? atFileCount
+      : 0;
+    if (popover !== 'none' && e.key === 'Escape') {
+      e.preventDefault();
+      closePopover();
+      return;
+    }
+    if (popover !== 'none' && candidateCount > 0) {
+      const maxLen = candidateCount;
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setPopoverCursor((c) => Math.min(c + 1, maxLen - 1));
@@ -426,30 +449,31 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
         return;
       }
       if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-        e.preventDefault();
-        // Delegate to the popover's current selection
         if (popover === 'slash') {
-          const filtered = COMMANDS.filter((c) =>
-            !popoverQuery || c.name.includes(popoverQuery.toLowerCase()) || c.desc.toLowerCase().includes(popoverQuery.toLowerCase())
-          );
-          if (filtered[popoverCursor]) onSlashSelect(filtered[popoverCursor]);
+          const picked = filteredCommands[popoverCursor];
+          if (picked) {
+            e.preventDefault();
+            onSlashSelect(picked);
+            return;
+          }
+        } else if (popover === 'atfile') {
+          const path = atFilePaths[popoverCursor];
+          if (path) {
+            e.preventDefault();
+            onAtFileSelect(path);
+            return;
+          }
         }
-        // @file: popover handles via onSelect callback from the component
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        closePopover();
-        return;
       }
       if (e.key === 'Tab') {
         e.preventDefault();
         // Tab = accept current selection (same as Enter)
         if (popover === 'slash') {
-          const filtered = COMMANDS.filter((c) =>
-            !popoverQuery || c.name.includes(popoverQuery.toLowerCase())
-          );
-          if (filtered[popoverCursor]) onSlashSelect(filtered[popoverCursor]);
+          const picked = filteredCommands[popoverCursor];
+          if (picked) onSlashSelect(picked);
+        } else if (popover === 'atfile') {
+          const path = atFilePaths[popoverCursor];
+          if (path) onAtFileSelect(path);
         }
         return;
       }
@@ -528,7 +552,8 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
         )}
         {popover === 'atfile' && (
           <AtFilePopover query={popoverQuery} workingDir={workingDir ?? null}
-            cursor={popoverCursor} onSelect={onAtFileSelect} onCursorChange={setPopoverCursor} onClose={closePopover} />
+            cursor={popoverCursor} onSelect={onAtFileSelect} onCursorChange={setPopoverCursor}
+            onResultsChange={setAtFilePaths} onClose={closePopover} />
         )}
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-lg focus-within:border-zinc-600 transition-colors">
