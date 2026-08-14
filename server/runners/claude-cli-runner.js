@@ -411,8 +411,11 @@ export function startClaudeRun({
   // is_error result 이벤트가 API 스트림 소켓 끊김 에러를 담고 있는지.
   // 이 경우 resultText 가 truthy 라도 정상 응답(onResult)이 아니라 onError 로 라우팅해
   // message-sender 의 classifyError('socket_closed') 자동 재시도가 발동하게 한다.
-  let socketErrorText = null;
+  let retryableErrorText = null;
   const SOCKET_ERROR_RE = /socket connection was closed|closed unexpectedly|other side closed/i;
+  // API 일시 장애(과부하/게이트웨이) — 소켓 끊김과 동일하게 재시도 대상.
+  // 429/사용량 한도는 handleRateLimit 의 쿨다운/계정 전환 경로가 담당하므로 제외.
+  const RETRYABLE_RESULT_ERROR_RE = /api error: 529|overloaded|api error: 503|502 bad gateway/i;
 
   function handleRateLimit(text) {
     if (rateLimitDetected) return;
@@ -574,8 +577,10 @@ export function startClaudeRun({
       if (event.is_error && resultText) {
         handleRateLimit(resultText);
         handleAuthExpired(resultText);
-        // is_error 로 온 소켓 끊김 에러는 정상 응답이 아니라 재시도 대상 → 플래그.
-        if (SOCKET_ERROR_RE.test(resultText)) socketErrorText = resultText;
+        // is_error 로 온 소켓 끊김/API 일시 장애는 정상 응답이 아니라 재시도 대상 → 플래그.
+        if (SOCKET_ERROR_RE.test(resultText) || RETRYABLE_RESULT_ERROR_RE.test(resultText)) {
+          retryableErrorText = resultText;
+        }
       }
       resultSessionId = event.session_id || null;
       if (!resultModel) resultModel = event.model || null;
@@ -666,9 +671,9 @@ export function startClaudeRun({
     // API 스트림 소켓 끊김: is_error result 로 왔지만 정상 응답이 아니다.
     // resultText 가 truthy 라 아래 onResult 로 새면 에러 문구가 그대로 화면에 남고
     // 자동 재시도도 안 됨. → onError 로 라우팅해 classifyError('socket_closed') 재시도 발동.
-    if (socketErrorText) {
-      logger.warn({ agent: agent.id }, 'runner: API socket closed mid-stream — routing to onError for auto-retry');
-      onError?.(new Error(socketErrorText));
+    if (retryableErrorText) {
+      logger.warn({ agent: agent.id }, 'runner: retryable API error in result event — routing to onError for auto-retry');
+      onError?.(new Error(retryableErrorText));
       onExit?.({ code });
       return;
     }
