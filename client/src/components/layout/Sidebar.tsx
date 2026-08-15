@@ -15,11 +15,12 @@ import {
   ChevronLeft,
   ChevronRight,
   TerminalSquare,
-  FolderTree
+  FolderTree,
+  LogOut
 } from 'lucide-react';
 import { useI18nStore, useT } from '../../lib/i18n';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../../lib/api';
+import { api, setAuthToken } from '../../lib/api';
 import { useChatStore } from '../../store/chat-store';
 import { isSessionRunning } from '../../lib/visibility';
 import { DEFAULT_APPEARANCE } from '../../hooks/useAppearance';
@@ -46,6 +47,12 @@ export default function Sidebar() {
   // appName — settings 에서 커스텀 가능 (App 최상위 useAppearance 가 react-query 캐시에 적재)
   const settingsQ = useQuery({ queryKey: ['settings-appearance'], queryFn: api.getSettings, staleTime: 30_000 });
   const appName = (settingsQ.data as { appearance?: { appName?: string } } | undefined)?.appearance?.appName ?? DEFAULT_APPEARANCE.appName;
+  const authEnabled = (settingsQ.data as { auth?: { enabled?: boolean } } | undefined)?.auth?.enabled === true;
+  const handleLogout = () => {
+    if (!confirm('로그아웃할까요?')) return;
+    setAuthToken(null);
+    window.location.reload();
+  };
   const currentSessionId = useChatStore((s) => s.currentSessionId);
   const { data: sessionsData } = useQuery({
     queryKey: ['sessions-all'],
@@ -199,30 +206,44 @@ export default function Sidebar() {
           </div>
         ))}
       </nav>
-      {!isCollapsed && (
-        <div className="p-2 border-t border-zinc-800">
-          <div className="flex items-center gap-1 text-[11px] text-zinc-500 mb-1 px-2">
-            <Languages size={11} />
-            <span>Language</span>
-          </div>
-          <div className="flex gap-1">
+      {(!isCollapsed || authEnabled) && (
+        <div className={`${isCollapsed ? 'p-1' : 'p-2'} border-t border-zinc-800`}>
+          {!isCollapsed && (
+            <>
+              <div className="flex items-center gap-1 text-[11px] text-zinc-500 mb-1 px-2">
+                <Languages size={11} />
+                <span>Language</span>
+              </div>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setLang('ko')}
+                  className={`flex-1 rounded px-2 py-1.5 text-xs whitespace-nowrap transition-colors ${
+                    lang === 'ko' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900'
+                  }`}
+                >
+                  한국어
+                </button>
+                <button
+                  onClick={() => setLang('en')}
+                  className={`flex-1 rounded px-2 py-1.5 text-xs whitespace-nowrap transition-colors ${
+                    lang === 'en' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900'
+                  }`}
+                >
+                  English
+                </button>
+              </div>
+            </>
+          )}
+          {authEnabled && (
             <button
-              onClick={() => setLang('ko')}
-              className={`flex-1 rounded px-2 py-1.5 text-xs whitespace-nowrap transition-colors ${
-                lang === 'ko' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900'
-              }`}
+              onClick={handleLogout}
+              title={isCollapsed ? '로그아웃' : undefined}
+              className={`w-full flex items-center gap-3 ${isCollapsed ? 'justify-center px-0' : 'mt-2 px-3'} h-9 rounded-md text-sm text-zinc-500 hover:bg-zinc-900 hover:text-red-300 transition-colors`}
             >
-              한국어
+              <LogOut size={16} className="shrink-0" />
+              {!isCollapsed && <span className="flex-1 min-w-0 text-left truncate whitespace-nowrap">로그아웃</span>}
             </button>
-            <button
-              onClick={() => setLang('en')}
-              className={`flex-1 rounded px-2 py-1.5 text-xs whitespace-nowrap transition-colors ${
-                lang === 'en' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900'
-              }`}
-            >
-              English
-            </button>
-          </div>
+          )}
         </div>
       )}
     </>
