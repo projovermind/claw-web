@@ -64,9 +64,65 @@ export function createDelegation(ctx) {
     if (!delegationTracker || !responseText) return;
     const parsed = extractDelegateJson(responseText);
     if (!parsed.length) return;
+    const failures = [];
     for (const p of parsed) {
-      await executeDelegation(originSessionId, p.delegate.agent, p.delegate.task, JSON.stringify(p));
+      const res = await executeDelegation(originSessionId, p.delegate.agent, p.delegate.task, JSON.stringify(p));
+      if (res?.badId) failures.push(res);
     }
+    if (failures.length) await retryWithValidTargets(originSessionId, failures);
+  }
+
+  /** 원 세션 에이전트와 같은 프로젝트에 속한 위임 가능 대상 ID 목록. */
+  function listDelegateTargets(originSessionId) {
+    const all = configStore.getAgents() || {};
+    const originAgentId = sessionsStore.get(originSessionId)?.agentId ?? null;
+    const myProj = originAgentId ? ctx.metadataStore?.getAgent(originAgentId)?.projectId ?? null : null;
+    if (!myProj) return [];
+    const out = [];
+    for (const id of Object.keys(all)) {
+      if (id === originAgentId) continue;
+      if (ctx.metadataStore?.getAgent(id)?.projectId === myProj) out.push(id);
+    }
+    return out;
+  }
+
+  function formatTargets(ids) {
+    if (!ids.length) return '- (같은 프로젝트에 다른 에이전트가 없습니다 — planner_office 등 범용 에이전트를 쓰세요)';
+    return ids.map((id) => `- ${id}`).join('\n');
+  }
+
+  /** 현재 턴 종료 직후라 러너가 아직 running 일 수 있어 idle 을 기다렸다 보낸다. */
+  async function sendWhenRunnerIdle(sessionId, trigger, maxRetries = 20) {
+    for (let i = 0; i < maxRetries; i++) {
+      if (!(ctx.runner?.isRunning?.(sessionId) ?? false)) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    try {
+      await sessionsStore.appendMessage(sessionId, { role: 'user', content: trigger });
+      ctx.sendRunnerMessage(sessionId, trigger);
+    } catch (err) {
+      logger.warn({ err: err.message, sessionId }, 'delegation: retry trigger send failed');
+    }
+  }
+
+  /**
+   * 존재하지 않는 ID 로 위임이 실패하면 실제 명단을 플래너에게 돌려주고 재시도시킨다.
+   * 되먹임이 없으면 플래너는 실패를 모른 채 턴을 끝내고 위임한 작업이 통째로 사라진다.
+   */
+  async function retryWithValidTargets(originSessionId, failures) {
+    const count = (reEntryCounters.get(originSessionId) ?? 0) + 1;
+    if (count > MAX_REENTRY) {
+      logger.warn({ originSessionId, count }, 'delegation: retry limit exceeded — not re-entering');
+      return;
+    }
+    reEntryCounters.set(originSessionId, count);
+    const trigger =
+      `[위임 실패 — 존재하지 않는 에이전트 ID]\n\n` +
+      failures.map((f) => `**요청한 ID**: ${f.badId} (존재하지 않음)\n**작업**: ${f.task}`).join('\n\n') +
+      `\n\n**실제 사용 가능한 에이전트**\n${formatTargets(failures[0].targets)}\n\n` +
+      `위 작업은 아직 아무에게도 전달되지 않았습니다. 목록에 있는 정확한 ID 로 위임 JSON 을 다시 출력하세요. ` +
+      `적합한 담당자가 없으면 위임하지 말고 직접 처리하거나 사용자에게 알리세요. 방금 쓴 잘못된 ID 를 다시 쓰지 마세요.`;
+    await sendWhenRunnerIdle(originSessionId, trigger);
   }
 
   /** Normalize agent ID (cf.router → cf_router, case-insensitive). */
@@ -91,12 +147,13 @@ export function createDelegation(ctx) {
     try {
       const targetAgentId = resolveAgentId(targetAgentIdRaw);
       if (!targetAgentId) {
-        logger.warn({ targetAgentIdRaw }, 'delegation: target agent not found');
+        const targets = listDelegateTargets(originSessionId);
+        logger.warn({ targetAgentIdRaw, candidates: targets.length }, 'delegation: target agent not found');
         await sessionsStore.appendMessage(originSessionId, {
           role: 'assistant',
-          content: `⚠️ 위임 실패 — 에이전트 "${targetAgentIdRaw}"를 찾을 수 없습니다.`
+          content: `⚠️ 위임 실패 — 에이전트 \`${targetAgentIdRaw}\` 는 존재하지 않습니다. 올바른 ID 로 재시도합니다.\n\n**사용 가능한 에이전트**\n${formatTargets(targets)}`
         });
-        return;
+        return { badId: targetAgentIdRaw, task, targets };
       }
 
       if (delegationTracker && delegationTracker.isAgentBusy(targetAgentId)) {
