@@ -545,7 +545,10 @@ async function main() {
   // leaked tokens from prior runs become worthless.
   const approvalBroker = createApprovalBroker();
   const bridgeToken = nanoid(32);
-  const delegationTracker = createDelegationTracker();
+  const delegationTracker = createDelegationTracker({
+    filePath: path.join(USER_DIR, 'delegations.json'),
+    reportsDir: path.join(USER_DIR, 'delegation-reports')
+  });
   const pushStore = createPushStore({ webConfig, webConfigPath: WEB_CONFIG_PATH });
   pushStore.setRunnerRef(runner); // 작업 중 알림 억제
   const eventBus = createEventBus();

@@ -21,31 +21,66 @@ const PERMISSION_BRIDGE_PATH = path.resolve(__dirname, '../../mcp/permission-bri
  * Priority: tagged content (<choices>/<promise>) + tail (conclusion) + head (intro).
  * Hard limit: 1500 chars.
  */
-function extractDelegationSummary(text, limit = 1500) {
-  if (!text) return '';
-  const parts = [];
+function extractReportBlock(text) {
+  const m = /<report>([\s\S]*?)<\/report>/i.exec(text);
+  if (!m) return null;
+  let raw = m[1].trim();
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(raw);
+  if (fenced) raw = fenced[1].trim();
+  try {
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null;
+  } catch {
+    return null;
+  }
+}
 
-  // 1) Extract special tags
+function renderReport(report) {
+  const bullets = (v) => (Array.isArray(v) ? v : [v])
+    .filter((x) => x != null && String(x).trim())
+    .map((x) => `- ${String(x).trim()}`);
+
+  const sections = [`**상태**: ${report.status ?? 'unknown'}`];
+  if (report.summary) sections.push(String(report.summary).trim());
+  const artifacts = bullets(report.artifacts);
+  if (artifacts.length) sections.push(`**산출물**\n${artifacts.join('\n')}`);
+  const unresolved = bullets(report.unresolved);
+  if (unresolved.length) sections.push(`**미해결**\n${unresolved.join('\n')}`);
+  if (report.nextAction) sections.push(`**다음 단계 제안**: ${String(report.nextAction).trim()}`);
+  return sections.join('\n\n');
+}
+
+/**
+ * Turn a worker's final response into the summary handed back to the planner.
+ *
+ * Preferred path: the worker closes with a <report> block (see reportHint) that
+ * it distilled itself. Fallback path: no block, so we stitch head + tail, which
+ * drops the middle entirely — the caller compensates by writing the full
+ * response to disk and pointing the planner at it.
+ */
+export function extractDelegationSummary(text, limit = 2000) {
+  if (!text) return { summary: '', structured: false };
+
+  const report = extractReportBlock(text);
+  if (report) return { summary: renderReport(report).slice(0, 4000), structured: true };
+
+  const parts = [];
   const tagRe = /<(choices|promise|escalate)>([\s\S]*?)<\/\1>/gi;
   let m;
   while ((m = tagRe.exec(text)) !== null) {
     parts.push(m[0].trim());
   }
 
-  // 2) First 200 chars (context/intro)
   const head = text.slice(0, 200).trim();
   if (head) parts.push(head);
-
-  // 3) Last 800 chars (conclusion)
   if (text.length > 200) {
     const tail = text.slice(-800).trim();
     if (tail) parts.push(tail);
   }
 
   const combined = parts.join('\n\n');
-  // Deduplicate consecutive identical lines
   const deduped = combined.split('\n').filter((line, i, arr) => i === 0 || line !== arr[i - 1]).join('\n');
-  return deduped.slice(0, limit);
+  return { summary: deduped.slice(0, limit), structured: false };
 }
 
 /**
@@ -237,6 +272,10 @@ export function createMessageSender(ctx) {
           : `다른 에이전트에게 작업을 맡기려면 응답에 아래 JSON을 포함하세요 (코드블록 안이어도 됨):`;
         agent.delegateHint = `\n<delegation>\n${delegateIntro}\n\n\`\`\`json\n{"message": "짧은 안내", "delegate": {"agent": "실제_에이전트_ID", "task": "작업 설명(200자 이내)", "model": "glm-5.1 또는 sonnet/opus", "loop": false}}\n\`\`\`\n\n중요:\n- agent ID는 반드시 실제 등록된 ID(언더스코어 표기). 점(.)/대시(-) 표기는 자동 정규화되지만 혼동 방지를 위해 언더스코어 권장.\n- task 는 한국어 200자 이내 요약. 파일 전체 본문을 붙여넣지 마세요.\n- loop:true 면 Ralph Loop 모드 (DONE 출력까지 반복).\n- "새 세션을 열어 붙여넣으세요" 같은 우회 응답 금지 — 직접 이 JSON 을 출력하세요.\n\n같은 프로젝트 내 위임 가능 에이전트:\n${delegateTargets}\n</delegation>`;
       }
+
+      if (isWorkerSession) {
+        agent.reportHint = `\n<delegation-report>\n이 세션은 다른 에이전트(리드)가 위임한 작업입니다. 당신의 마지막 응답은 자동으로 리드에게 회신됩니다.\n\n작업을 마쳤으면(또는 막혔으면) 응답 맨 끝에 아래 블록을 반드시 출력하세요. 이 블록이 없으면 리드는 당신 응답의 앞 200자 + 뒤 800자만 잘라낸 요약을 받게 되어 **중간 내용이 통째로 유실**됩니다.\n\n<report>\n{"status":"completed","summary":"무엇을 했고 결과가 무엇인지 — 핵심 근거·수치·파일경로 포함, 1500자 이내","artifacts":["/절대/경로/변경한파일"],"unresolved":["남은 문제나 확인이 필요한 것"],"nextAction":"리드가 다음에 해야 할 일"}\n</report>\n\n규칙:\n- status 는 completed(완료) / blocked(막힘) / needs_input(추가 정보 필요) 중 하나.\n- summary 는 리드가 그것만 읽고 판단할 수 있게 쓰세요. "완료했습니다" 같은 내용 없는 문장 금지.\n- artifacts 는 실제로 만들거나 고친 파일의 절대 경로. 없으면 [].\n- unresolved 가 비어 있지 않으면 리드가 후속 조치를 합니다. 문제를 숨기지 마세요.\n- 판단 근거가 긴 경우 응답 본문에 그대로 쓰세요. 원문 전체는 파일로 보존되고 리드가 필요할 때 읽습니다.\n</delegation-report>`;
+      }
     } else {
       // 이후 턴: --append-system-prompt 를 완전히 비워 둠.
       // --resume 으로 복원된 원본 시스템 프롬프트만 사용 → 캐시 히트 + 맥락 일관성 유지.
@@ -249,6 +288,7 @@ export function createMessageSender(ctx) {
       agent.choicesHint = null;
       agent.downloadHint = null;
       agent.delegateHint = null;
+      agent.reportHint = null;
       agent.pinnedFilesContext = null;
       // agent.systemPrompt 도 제거 — 첫 턴에 이미 세션에 구워짐
       agent.systemPrompt = null;
@@ -480,14 +520,23 @@ export function createMessageSender(ctx) {
             if (delegationTracker) {
               const del = delegationTracker.getByTarget(sessionId);
               if (del) {
-                const summary = extractDelegationSummary(responseText ?? '') || '(응답 없음)';
-                const completed = delegationTracker.complete(sessionId, summary);
+                const fullText = responseText ?? '';
+                const reportPath = delegationTracker.saveFullReport(sessionId, fullText);
+                const extracted = extractDelegationSummary(fullText);
+                const summary = extracted.summary || '(응답 없음)';
+                const sourceNote = reportPath
+                  ? `**전체 응답 원문**: ${reportPath}\n(요약에 없는 세부사항이 필요하면 이 파일을 Read 하세요)\n`
+                  : '';
+                const truncationWarning = extracted.structured
+                  ? ''
+                  : `⚠️ 워커가 <report> 블록을 출력하지 않아 아래 요약은 응답의 앞뒤만 잘라낸 것입니다 — 중간 내용이 빠져 있으니 판단 전에 원문을 확인하세요.\n`;
+                const completed = delegationTracker.complete(sessionId, summary, reportPath);
                 if (completed) {
                   ctx.dequeueNextAgent(completed.targetAgentId);
 
                   await sessionsStore.appendMessage(completed.originSessionId, {
                     role: 'assistant',
-                    content: `✅ **위임 완료** — ${completed.targetAgentId}\n\n**작업**: ${completed.task}\n\n**결과 요약**:\n${summary}`
+                    content: `✅ **위임 완료** — ${completed.targetAgentId}\n\n**작업**: ${completed.task}\n${sourceNote}\n**결과**:\n${summary}`
                   });
                   eventBus.publish('delegation.completed', {
                     id: completed.id,
@@ -507,7 +556,9 @@ export function createMessageSender(ctx) {
                       `[위임 결과 보고]\n\n` +
                       `**대상 에이전트**: ${completed.targetAgentId}\n` +
                       `**작업**: ${completed.task}\n` +
-                      `**결과 요약**:\n${summary}\n\n` +
+                      sourceNote +
+                      truncationWarning +
+                      `\n**결과**:\n${summary}\n\n` +
                       `위 결과를 바탕으로 계획을 계속 진행하세요. ` +
                       `다음 위임할 작업이 있으면 즉시 위임 JSON을 출력하세요. ` +
                       `사용자에게 확인받거나 choices 태그로 질문하지 말고 자동으로 계속 진행하세요. ` +

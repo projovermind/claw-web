@@ -94,6 +94,7 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
       if (agent.pinnedFilesContext) parts.push(agent.pinnedFilesContext);
       if (agent.choicesHint) parts.push(agent.choicesHint);
       if (agent.delegateHint) parts.push(agent.delegateHint);
+      if (agent.reportHint) parts.push(agent.reportHint);
       if (agent.systemPrompt) parts.push(agent.systemPrompt);
       // dashboardHint 는 systemPrompt 뒤에 위치 → 에이전트 MD보다 높은 우선순위로 강제 적용
       if (agent.dashboardHint) parts.push(agent.dashboardHint);

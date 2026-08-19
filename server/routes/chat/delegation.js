@@ -1,6 +1,13 @@
 import { logger } from '../../lib/logger.js';
 
 /**
+ * Hard ceiling on delegation chain length (planner → worker → sub-worker).
+ * Without it a worker can re-delegate indefinitely; each hop multiplies token
+ * spend and there is no natural termination condition.
+ */
+const MAX_DELEGATION_DEPTH = 3;
+
+/**
  * Creates delegation-related handlers. All cross-module calls (sendRunnerMessage)
  * are resolved lazily via ctx to allow circular wiring.
  */
@@ -64,12 +71,16 @@ export function createDelegation(ctx) {
     if (!delegationTracker || !responseText) return;
     const parsed = extractDelegateJson(responseText);
     if (!parsed.length) return;
-    const failures = [];
+    const badIds = [];
+    const depthBlocked = [];
     for (const p of parsed) {
       const res = await executeDelegation(originSessionId, p.delegate.agent, p.delegate.task, JSON.stringify(p));
-      if (res?.badId) failures.push(res);
+      if (res?.badId) badIds.push(res);
+      else if (res?.depthExceeded) depthBlocked.push(res);
     }
-    if (failures.length) await retryWithValidTargets(originSessionId, failures);
+    if (badIds.length || depthBlocked.length) {
+      await reportUndeliveredTasks(originSessionId, badIds, depthBlocked);
+    }
   }
 
   /** 원 세션 에이전트와 같은 프로젝트에 속한 위임 가능 대상 ID 목록. */
@@ -106,22 +117,38 @@ export function createDelegation(ctx) {
   }
 
   /**
-   * 존재하지 않는 ID 로 위임이 실패하면 실제 명단을 플래너에게 돌려주고 재시도시킨다.
-   * 되먹임이 없으면 플래너는 실패를 모른 채 턴을 끝내고 위임한 작업이 통째로 사라진다.
+   * 전달되지 못한 위임을 플래너에게 되돌려준다. 되먹임이 없으면 플래너는 실패를
+   * 모른 채 턴을 끝내고 위임한 작업이 통째로 사라진다.
    */
-  async function retryWithValidTargets(originSessionId, failures) {
+  async function reportUndeliveredTasks(originSessionId, badIds, depthBlocked) {
     const count = (reEntryCounters.get(originSessionId) ?? 0) + 1;
     if (count > MAX_REENTRY) {
       logger.warn({ originSessionId, count }, 'delegation: retry limit exceeded — not re-entering');
       return;
     }
     reEntryCounters.set(originSessionId, count);
+
+    const sections = [];
+    if (badIds.length) {
+      sections.push(
+        `**존재하지 않는 에이전트 ID**\n\n` +
+        badIds.map((f) => `- 요청한 ID: \`${f.badId}\` (존재하지 않음)\n  작업: ${f.task}`).join('\n') +
+        `\n\n실제 사용 가능한 에이전트:\n${formatTargets(badIds[0].targets)}\n\n` +
+        `목록에 있는 정확한 ID 로 위임 JSON 을 다시 출력하세요. 방금 쓴 잘못된 ID 를 다시 쓰지 마세요.`
+      );
+    }
+    if (depthBlocked.length) {
+      sections.push(
+        `**위임 체인 깊이 한계(${MAX_DELEGATION_DEPTH}단계) 초과 — 재위임이 거부됨**\n\n` +
+        depthBlocked.map((f) => `- 대상: \`${f.targetAgentId}\` (깊이 ${f.depth})\n  작업: ${f.task}`).join('\n') +
+        `\n\n더 깊이 위임할 수 없습니다. 이 작업은 직접 처리하거나, 범위를 줄여 스스로 끝낸 뒤 결과를 보고하세요.`
+      );
+    }
+
     const trigger =
-      `[위임 실패 — 존재하지 않는 에이전트 ID]\n\n` +
-      failures.map((f) => `**요청한 ID**: ${f.badId} (존재하지 않음)\n**작업**: ${f.task}`).join('\n\n') +
-      `\n\n**실제 사용 가능한 에이전트**\n${formatTargets(failures[0].targets)}\n\n` +
-      `위 작업은 아직 아무에게도 전달되지 않았습니다. 목록에 있는 정확한 ID 로 위임 JSON 을 다시 출력하세요. ` +
-      `적합한 담당자가 없으면 위임하지 말고 직접 처리하거나 사용자에게 알리세요. 방금 쓴 잘못된 ID 를 다시 쓰지 마세요.`;
+      `[위임 실패 — 아래 작업은 아무에게도 전달되지 않았습니다]\n\n` +
+      sections.join('\n\n---\n\n') +
+      `\n\n적합한 처리 방법이 없으면 위임을 반복하지 말고 사용자에게 상황을 알리세요.`;
     await sendWhenRunnerIdle(originSessionId, trigger);
   }
 
@@ -156,6 +183,16 @@ export function createDelegation(ctx) {
         return { badId: targetAgentIdRaw, task, targets };
       }
 
+      const depth = delegationTracker.getChainDepth(originSessionId) + 1;
+      if (depth > MAX_DELEGATION_DEPTH) {
+        logger.warn({ originSessionId, targetAgentId, depth }, 'delegation: depth limit exceeded — refused');
+        await sessionsStore.appendMessage(originSessionId, {
+          role: 'assistant',
+          content: `⛔ **위임 거부 — 체인 깊이 한계** (${depth}/${MAX_DELEGATION_DEPTH}단계)\n\n**대상**: \`${targetAgentId}\`\n**작업**: ${task}\n\n이 작업은 전달되지 않았습니다. 직접 처리해야 합니다.`
+        });
+        return { depthExceeded: true, task, targetAgentId, depth };
+      }
+
       if (delegationTracker && delegationTracker.isAgentBusy(targetAgentId)) {
         const agentQueue = ctx.agentQueue;
         if (!agentQueue.has(targetAgentId)) agentQueue.set(targetAgentId, []);
@@ -184,7 +221,8 @@ export function createDelegation(ctx) {
         targetSessionId: targetSession.id,
         targetAgentId,
         task,
-        loop: wantsLoop
+        loop: wantsLoop,
+        depth
       });
 
       await sessionsStore.appendMessage(originSessionId, {
@@ -217,16 +255,6 @@ export function createDelegation(ctx) {
         : task;
       await sessionsStore.appendMessage(targetSession.id, { role: 'user', content: fullTask });
       ctx.sendRunnerMessage(targetSession.id, fullTask);
-
-      // Compute chain depth (how many delegation hops from root)
-      let depth = 1;
-      let checkId = originSessionId;
-      for (let i = 0; i < 10; i++) {
-        const parentDel = delegationTracker.getByTarget(checkId);
-        if (!parentDel) break;
-        depth++;
-        checkId = parentDel.originSessionId;
-      }
 
       logger.info({
         id: entry.id,

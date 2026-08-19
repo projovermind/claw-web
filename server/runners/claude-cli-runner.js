@@ -301,6 +301,7 @@ export function startClaudeRun({
   if (agent.choicesHint) parts.push(agent.choicesHint);
   if (agent.downloadHint) parts.push(agent.downloadHint);
   if (agent.delegateHint) parts.push(agent.delegateHint);
+  if (agent.reportHint) parts.push(agent.reportHint);
   if (!agent.lightweightMode && agent.systemPrompt) {
     parts.push(agent.systemPrompt);
   }
