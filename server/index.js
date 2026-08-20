@@ -602,10 +602,9 @@ async function main() {
   );
   // CLAUDE.md / AGENTS.md editor mounted on same prefix
   app.use('/api/projects', createProjectMdRouter({ projectsStore, webConfig, eventBus }));
-  app.use('/api/sessions', createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker }));
   // Phase 5: bridge router is created up-front so chat can inject IDE context
   const bridgeRouter = createBridgeRouter({ webConfig });
-  const { router: chatRouter, resumeInterruptedSession, clearAllWakeups } = createChatRouter({
+  const { router: chatRouter, resumeInterruptedSession, clearAllWakeups, clearAllDispatch, abortDispatch } = createChatRouter({
     sessionsStore,
     configStore,
     metadataStore,
@@ -624,6 +623,8 @@ async function main() {
     getBridgeContext: (workspace) => bridgeRouter.getContextForWorkspace?.(workspace) ?? null
   });
   app.use('/api/chat', chatRouter);
+  // Mounted after chat so it can share the dispatch queue's abort path.
+  app.use('/api/sessions', createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker, abortDispatch }));
   // MCP approval — mount at root so `/internal/approval/request` (no /api prefix)
   // bypasses user auth; `/api/chat/:sessionId/approval/:reqId` still goes through
   // the `/api` auth middleware registered above.
@@ -846,6 +847,7 @@ async function main() {
     }
 
     try { clearAllWakeups(); } catch { /* ignore */ }
+    try { clearAllDispatch(); } catch { /* ignore */ }
 
     // Phase 1.5: quick tunnel 자식 명시적 정리 — SIGKILL 이 아니라 정상 shutdown 경로.
     // 이 경로를 안 타면 cloudflared 가 고아로 남아 다음 기동 시 중복 누적.

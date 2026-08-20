@@ -25,8 +25,18 @@ const bulkDeleteSchema = z.object({
   ids: z.array(z.string().min(1).max(64)).min(1).max(200)
 }).strict();
 
-export function createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker }) {
+export function createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker, abortDispatch }) {
   const router = Router();
+
+  /**
+   * Stop a session for good: kill the current turn *and* drop whatever the
+   * dispatch queue still has pending, or the queue would immediately start the
+   * next item on a session the user just deleted/stopped.
+   */
+  function stopSession(sessionId, reason) {
+    if (runner.isRunning(sessionId)) runner.abort(sessionId);
+    abortDispatch?.(sessionId, reason);
+  }
 
   // GET /api/sessions — meta only (no messages). Returns messageCount and
   // recent24hCount per session so the dashboard can render activity without
@@ -148,7 +158,7 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
       if (!sessionsStore.get(req.params.id)) {
         throw new HttpError(404, 'Session not found', 'SESSION_NOT_FOUND');
       }
-      if (runner.isRunning(req.params.id)) runner.abort(req.params.id);
+      stopSession(req.params.id, 'session deleted');
       await sessionsStore.remove(req.params.id);
       approvalBroker?.clearAllowlistForSession?.(req.params.id);
       if (eventBus) eventBus.publish('session.deleted', { sessionId: req.params.id });
@@ -171,7 +181,7 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
           skipped += 1;
           continue;
         }
-        if (runner.isRunning(id)) runner.abort(id);
+        stopSession(id, 'session deleted');
         await sessionsStore.remove(id);
         approvalBroker?.clearAllowlistForSession?.(id);
         if (eventBus) eventBus.publish('session.deleted', { sessionId: id });
@@ -397,7 +407,7 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
       if (!session) throw new HttpError(404, 'Session not found', 'SESSION_NOT_FOUND');
       const loop = session.loop;
       await sessionsStore.update(req.params.id, { loop: null });
-      if (runner.isRunning(req.params.id)) runner.abort(req.params.id);
+      stopSession(req.params.id, 'loop stopped');
       if (eventBus) eventBus.publish('session.loop.stopped', {
         sessionId: req.params.id,
         iterations: loop?.currentIteration ?? 0

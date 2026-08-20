@@ -8,14 +8,13 @@ import { logger } from '../../lib/logger.js';
 const MAX_DELEGATION_DEPTH = 3;
 
 /**
- * Creates delegation-related handlers. All cross-module calls (sendRunnerMessage)
+ * Creates delegation-related handlers. All cross-module calls (ctx.dispatch)
  * are resolved lazily via ctx to allow circular wiring.
  */
 export function createDelegation(ctx) {
   const {
     sessionsStore,
     configStore,
-    runner,
     eventBus,
     delegationTracker,
     pushStore,
@@ -102,20 +101,6 @@ export function createDelegation(ctx) {
     return ids.map((id) => `- ${id}`).join('\n');
   }
 
-  /** 현재 턴 종료 직후라 러너가 아직 running 일 수 있어 idle 을 기다렸다 보낸다. */
-  async function sendWhenRunnerIdle(sessionId, trigger, maxRetries = 20) {
-    for (let i = 0; i < maxRetries; i++) {
-      if (!(ctx.runner?.isRunning?.(sessionId) ?? false)) break;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-    try {
-      await sessionsStore.appendMessage(sessionId, { role: 'user', content: trigger });
-      ctx.sendRunnerMessage(sessionId, trigger);
-    } catch (err) {
-      logger.warn({ err: err.message, sessionId }, 'delegation: retry trigger send failed');
-    }
-  }
-
   /**
    * 전달되지 못한 위임을 플래너에게 되돌려준다. 되먹임이 없으면 플래너는 실패를
    * 모른 채 턴을 끝내고 위임한 작업이 통째로 사라진다.
@@ -149,7 +134,12 @@ export function createDelegation(ctx) {
       `[위임 실패 — 아래 작업은 아무에게도 전달되지 않았습니다]\n\n` +
       sections.join('\n\n---\n\n') +
       `\n\n적합한 처리 방법이 없으면 위임을 반복하지 말고 사용자에게 상황을 알리세요.`;
-    await sendWhenRunnerIdle(originSessionId, trigger);
+    try {
+      await sessionsStore.appendMessage(originSessionId, { role: 'user', content: trigger });
+      ctx.dispatch(originSessionId, { kind: 'undelivered', content: trigger });
+    } catch (err) {
+      logger.warn({ err: err.message, originSessionId }, 'delegation: retry trigger send failed');
+    }
   }
 
   /** Normalize agent ID (cf.router → cf_router, case-insensitive). */
@@ -254,7 +244,7 @@ export function createDelegation(ctx) {
         ? `${task}\n\n완료되면 <promise>DONE</promise>을 출력하세요. 도움이 필요하면 <escalate>이유</escalate>를 출력하세요.`
         : task;
       await sessionsStore.appendMessage(targetSession.id, { role: 'user', content: fullTask });
-      ctx.sendRunnerMessage(targetSession.id, fullTask);
+      ctx.dispatch(targetSession.id, { kind: 'task', content: fullTask });
 
       logger.info({
         id: entry.id,
@@ -280,20 +270,19 @@ export function createDelegation(ctx) {
   }
 
   /**
-   * Send a loop iteration prompt after waiting for the runner to become idle.
-   * Polls every 500ms up to maxRetries times, then sends regardless.
+   * Queue the next loop iteration. The loop guard is re-evaluated at dequeue
+   * time, not just here — otherwise an iteration queued behind a long turn would
+   * still fire after the user stopped or escalated the loop.
    */
-  async function sendWhenIdle(sessionId, iterLabel, rawPrompt, maxRetries = 10) {
-    for (let i = 0; i < maxRetries; i++) {
-      const busy = ctx.runner?.isRunning?.(sessionId) ?? false;
-      if (!busy) break;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-    try {
+  async function sendLoopIteration(sessionId, prompt) {
+    const loopStillActive = () => {
       const s = sessionsStore.get(sessionId);
-      if (!s?.loop?.enabled || s.loop.paused) return;
-      sessionsStore.appendMessage(sessionId, { role: 'user', content: iterLabel });
-      ctx.sendRunnerMessage(sessionId, rawPrompt);
+      return !!s?.loop?.enabled && !s.loop.paused;
+    };
+    if (!loopStillActive()) return;
+    try {
+      await sessionsStore.appendMessage(sessionId, { role: 'user', content: prompt });
+      ctx.dispatch(sessionId, { kind: 'loop', content: prompt, guard: loopStillActive });
     } catch (err) {
       eventBus.publish('chat.error', { sessionId, error: `Loop failed: ${err.message}` });
     }
@@ -372,7 +361,7 @@ export function createDelegation(ctx) {
                 `**문제**: ${reason}\n\n` +
                 `위임한 작업이 Ralph Loop 중 막혔습니다. 문제를 검토하고 사용자에게 상황을 설명한 뒤, 해결 방안 / 수정 지시 / 중단 중 선택지를 <choices> 로 제시해 주세요.`;
               await sessionsStore.appendMessage(originId, { role: 'user', content: trigger });
-              ctx.sendRunnerMessage(originId, trigger);
+              ctx.dispatch(originId, { kind: 'escalation', content: trigger });
             }
           } catch (err) {
             logger.warn({ err: err.message }, 'escalation → origin planner trigger failed');
@@ -397,10 +386,8 @@ export function createDelegation(ctx) {
       logger.info({ sessionId, iteration: nextIter, max: loop.maxIterations }, 'ralph loop: next iteration');
 
       // (2) 재전송 프롬프트: 진행상황 검토 규칙 항상 포함
-      // (4) setTimeout 대신 runner idle 체크 후 전송
       const rule = `[Loop ${nextIter}/${loop.maxIterations}] 이전까지 진행상황 검토 후 남은 작업만 수행. 완료 시 <promise>DONE</promise>, 막히면 <escalate>이유</escalate> 반드시 출력`;
-      const iterLabel = `${rule}\n\n${loop.prompt}`;
-      sendWhenIdle(sessionId, iterLabel, iterLabel);
+      sendLoopIteration(sessionId, `${rule}\n\n${loop.prompt}`);
     }
   }
 

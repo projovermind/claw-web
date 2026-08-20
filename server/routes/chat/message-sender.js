@@ -121,9 +121,13 @@ function buildMcpPermissionConfig({ sessionId, bridgeToken, port }) {
 }
 
 /**
- * Creates sendRunnerMessage. References ctx.handleDelegation,
- * ctx.handleLoopContinuation, ctx.flushQueue, ctx.dequeueNextAgent,
+ * Creates startRunner. References ctx.handleDelegation,
+ * ctx.handleLoopContinuation, ctx.dispatch, ctx.dequeueNextAgent,
  * which must be wired before the first invocation.
+ *
+ * startRunner is owned by the dispatch queue (dispatch.js) — nothing else may
+ * call it. It must stay synchronous up to runner.start() so the queue's
+ * "run now vs. queue" decision cannot be interleaved.
  */
 export function createMessageSender(ctx) {
   const {
@@ -147,14 +151,19 @@ export function createMessageSender(ctx) {
     bridgeToken
   } = ctx;
 
-  function sendRunnerMessage(sessionId, message, { claudeSessionId } = {}) {
+  /**
+   * @returns {{started: true} | {started: false, reason: string}} When started
+   * is true, onSettled is guaranteed to fire exactly once (runner exit or start
+   * failure). When false, onSettled is never called — the caller owns recovery.
+   */
+  function startRunner(sessionId, message, { claudeSessionId, onSettled } = {}) {
     const session = sessionsStore.get(sessionId);
-    if (!session) return;
+    if (!session) return { started: false, reason: 'session_missing' };
     const resolved = resolveAgent(session.agentId, {
       configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore, accountsStore,
       modelOverride: session.model || undefined
     });
-    if (!resolved) return;
+    if (!resolved) return { started: false, reason: `에이전트 ${session.agentId} 설정을 불러올 수 없습니다` };
     const { agent, envOverrides, backendType, backendConfig } = resolved;
 
     // ── Resume target 검증 ──
@@ -394,8 +403,6 @@ export function createMessageSender(ctx) {
       if (approvalBroker) approvalBroker.cancelForSession(sessionId, 'session ended');
     }
 
-    eventBus.publish('chat.started', { sessionId });
-
     try {
     runner.start({
       sessionId,
@@ -492,29 +499,8 @@ export function createMessageSender(ctx) {
             ctx.handleLoopContinuation(sessionId, responseText);
             ctx.handleWakeup(sessionId, responseText);
 
-            const queued = ctx.flushQueue(sessionId);
-            const reports = ctx.pendingReports.get(sessionId) ?? [];
-            if (reports.length) ctx.pendingReports.delete(sessionId);
-            if (queued || reports.length) {
-              const parts = [];
-              if (queued) parts.push(`[이전 답변 중에 추가된 요청 — 이전 맥락을 참고해서 답변하세요]\n\n${queued}`);
-              parts.push(...reports);
-              const combined = parts.join('\n\n---\n\n');
-              if (reports.length) {
-                ctx.reEntryCounters.set(sessionId, (ctx.reEntryCounters.get(sessionId) ?? 0) + 1);
-              }
-              logger.info(
-                { sessionId, queued: !!queued, reports: reports.length },
-                'chat: flushing queued messages / deferred delegation reports'
-              );
-              setTimeout(() => {
-                try {
-                  sendRunnerMessage(sessionId, combined);
-                } catch (err) {
-                  logger.warn({ err, sessionId }, 'chat: failed to flush queue');
-                }
-              }, 500);
-            }
+            // Queued user messages / deferred reports need no flush here — they
+            // already live in the dispatch queue and start when this turn settles.
 
             // Delegation report-back + auto re-entry
             if (delegationTracker) {
@@ -550,7 +536,6 @@ export function createMessageSender(ctx) {
                   }
 
                   try {
-                    const alreadyRunning = runner.isRunning(completed.originSessionId);
                     const reEntryCount = (ctx.reEntryCounters.get(completed.originSessionId) ?? 0) + 1;
                     const trigger =
                       `[위임 결과 보고]\n\n` +
@@ -563,33 +548,20 @@ export function createMessageSender(ctx) {
                       `다음 위임할 작업이 있으면 즉시 위임 JSON을 출력하세요. ` +
                       `사용자에게 확인받거나 choices 태그로 질문하지 말고 자동으로 계속 진행하세요. ` +
                       `모든 작업이 완료됐을 때만 최종 결과를 사용자에게 보고하세요.`;
-                    if (!alreadyRunning && reEntryCount <= ctx.MAX_REENTRY) {
-                      ctx.reEntryCounters.set(completed.originSessionId, reEntryCount);
-                      await sessionsStore.appendMessage(completed.originSessionId, {
-                        role: 'user',
-                        content: trigger
-                      });
-                      sendRunnerMessage(completed.originSessionId, trigger);
-                    } else if (reEntryCount > ctx.MAX_REENTRY) {
+                    if (reEntryCount > ctx.MAX_REENTRY) {
                       logger.warn({ originSessionId: completed.originSessionId, reEntryCount }, 'delegation re-entry limit exceeded — stopping auto-chain');
                       await sessionsStore.appendMessage(completed.originSessionId, {
                         role: 'assistant',
                         content: `⚠️ **위임 자동 진행 한계 도달** (${reEntryCount - 1}/${ctx.MAX_REENTRY}회) — 무한 루프 방지를 위해 자동 진행을 중단합니다. 다음 단계를 직접 지시해 주세요.`
                       });
                     } else {
-                      // 원 세션이 실행 중 — 보고를 버리지 말고 보류 큐에 쌓아 다음 턴 종료 시 드레인.
-                      // (병렬 위임에서 첫 보고 외 전부 유실되던 버그)
-                      const pending = ctx.pendingReports.get(completed.originSessionId) ?? [];
-                      pending.push(trigger);
-                      ctx.pendingReports.set(completed.originSessionId, pending);
+                      // 플래너가 실행 중이든 아니든 동일 경로 — 큐가 직렬화한다.
+                      ctx.reEntryCounters.set(completed.originSessionId, reEntryCount);
                       await sessionsStore.appendMessage(completed.originSessionId, {
                         role: 'user',
                         content: trigger
                       });
-                      logger.info(
-                        { originSessionId: completed.originSessionId, pending: pending.length },
-                        'delegation re-entry deferred (planner already running) — report queued'
-                      );
+                      ctx.dispatch(completed.originSessionId, { kind: 'report', content: trigger });
                     }
                   } catch (err) {
                     logger.warn({ err: err.message }, 'delegation re-entry failed');
@@ -625,24 +597,25 @@ export function createMessageSender(ctx) {
             }).catch(() => {});
             eventBus.publish('chat.error', { sessionId, error: `[auto-retry ${attempt}/${maxForLabel}] ${err.message}` });
             // context_length / silent_fallback / no_conversation: --resume 유지 시 같은 실패 반복 → fresh-start 로 전환.
-            //   summary prefix 는 sendRunnerMessage 내부(isFirstMsg 분기)에서 자동 주입되므로
+            //   summary prefix 는 startRunner 내부(isFirstMsg 분기)에서 자동 주입되므로
             //   여기서 추가 prefix 하면 요약이 두 번 들어감 → 호출은 원본 메시지 그대로.
             const needsFreshStart = label === 'context_length' || label === 'silent_fallback' || label === 'no_conversation';
             if (needsFreshStart) {
               sessionsStore.update(sessionId, { claudeSessionId: null, personaBakedInto: null }).catch(() => {});
             }
             // 그 외 에러는 claudeSessionId 보존 — 재시도에서 --resume 재사용해 컨텍스트 유지
+            // delay 는 백오프. 실제 전송 시점 직렬화는 dispatch 큐가 담당.
             setTimeout(() => {
               try {
                 const s = sessionsStore.get(sessionId);
                 if (!s) return;
                 const lastUser = [...(s.messages ?? [])].reverse().find((m) => m.role === 'user');
                 if (!lastUser?.content) return;
-                if (needsFreshStart) {
-                  sendRunnerMessage(sessionId, lastUser.content, { claudeSessionId: null });
-                } else {
-                  sendRunnerMessage(sessionId, lastUser.content, { claudeSessionId: s.claudeSessionId });
-                }
+                ctx.dispatch(sessionId, {
+                  kind: 'retry',
+                  content: lastUser.content,
+                  claudeSessionId: needsFreshStart ? null : s.claudeSessionId
+                });
               } catch (retryErr) {
                 logger.error({ retryErr, sessionId }, 'chat: auto-retry failed');
               }
@@ -667,6 +640,9 @@ export function createMessageSender(ctx) {
         },
         onExit({ code } = {}) {
           cleanupPermissionBridge();
+          // Runner already left runner.active by now — hand the session back to
+          // the dispatch queue before anything else so the next batch can start.
+          onSettled?.();
           eventBus.publish('chat.exit', { sessionId, code });
           // Silent exit 감지: Claude CLI 가 exit 0 으로 나갔는데 응답 text 가 비어있음.
           // 과거엔 자동 재시도(3회) 했으나 — 같은 조건이면 무한히 반복되며
@@ -693,9 +669,9 @@ export function createMessageSender(ctx) {
                   const msgs = s?.messages ?? [];
                   const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
                   if (!lastUser?.content) return;
-                  // fresh start (claudeSessionId=null) → sendRunnerMessage 내부 isFirstMsg 분기가
+                  // fresh start (claudeSessionId=null) → startRunner 내부 isFirstMsg 분기가
                   // 자동으로 conversation summary 를 prefix. 여기서 중복 prefix 하지 않는다.
-                  sendRunnerMessage(sessionId, lastUser.content, { claudeSessionId: null });
+                  ctx.dispatch(sessionId, { kind: 'retry', content: lastUser.content, claudeSessionId: null });
                 } catch (retryErr) {
                   logger.error({ retryErr, sessionId }, 'chat: silent-exit retry failed');
                 }
@@ -721,12 +697,17 @@ export function createMessageSender(ctx) {
       }
     });
     } catch (err) {
+      // Do not surface this to the user — the dispatch queue decides whether to
+      // retry (contention) or report (real failure). onSettled is deliberately
+      // not called: ownership stays with the caller since nothing was started.
       cleanupPermissionBridge();
-      eventBus.publish('chat.error', { sessionId, error: err.message });
-      sessionsStore.appendMessage(sessionId, { role: 'assistant', content: `⚠️ 실행 실패 — ${err.message}` }).catch(() => {});
-      eventBus.publish('chat.exit', { sessionId, code: -1 });
+      logger.warn({ err: err.message, sessionId }, 'chat: runner.start failed');
+      return { started: false, reason: err.message };
     }
+
+    eventBus.publish('chat.started', { sessionId });
+    return { started: true };
   }
 
-  return { sendRunnerMessage };
+  return { startRunner };
 }

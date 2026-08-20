@@ -6,6 +6,7 @@ import { createQueue } from './queue.js';
 import { createDelegation } from './delegation.js';
 import { createWakeup } from './wakeup.js';
 import { createMessageSender } from './message-sender.js';
+import { createDispatcher } from './dispatch.js';
 
 const sendSchema = z.object({
   sessionId: z.string().min(1),
@@ -41,10 +42,6 @@ export function createChatRouter({
   const reEntryCounters = new Map();
   const MAX_REENTRY = 8;
 
-  // 위임 보고가 도착했지만 원 세션이 아직 실행 중이라 즉시 전달 못 한 트리거들
-  // (originSessionId → string[]). 다음 턴 종료 시 한 번에 드레인.
-  const pendingReports = new Map();
-
   // ── Shared ctx — resolved lazily to enable circular wiring ──
   const ctx = {
     sessionsStore,
@@ -63,36 +60,36 @@ export function createChatRouter({
     getBridgeContext,
     retryCounters,
     reEntryCounters,
-    pendingReports,
     MAX_AUTO_RETRIES,
     MAX_REENTRY,
     approvalBroker,
     bridgeToken
   };
 
-  // Wire queue (needs ctx.executeDelegation — resolved later)
+  // Wire agent-delegation queue (needs ctx.executeDelegation — resolved later)
   const queue = createQueue(ctx);
   Object.assign(ctx, queue);
 
-  // Wire delegation (needs ctx.sendRunnerMessage, ctx.agentQueue — resolved later)
+  // Wire delegation (needs ctx.dispatch, ctx.agentQueue — resolved later)
   const delegation = createDelegation(ctx);
   Object.assign(ctx, delegation);
 
-  // Wire wakeup (needs ctx.sendRunnerMessage — resolved later)
+  // Wire wakeup (needs ctx.dispatch — resolved later)
   const wakeup = createWakeup(ctx);
   Object.assign(ctx, wakeup);
 
   // Wire message-sender (needs ctx.handleDelegation, ctx.handleLoopContinuation,
-  // ctx.flushQueue, ctx.dequeueNextAgent — all resolved now)
+  // ctx.dispatch, ctx.dequeueNextAgent — dispatch resolved just below)
   const sender = createMessageSender(ctx);
   Object.assign(ctx, sender);
 
-  // Local references for route handlers
-  const { sendRunnerMessage } = ctx;
-  const { enqueueMessage, messageQueue, getQueue, setQueue } = ctx;
+  // Wire the dispatcher last: it owns ctx.startRunner, which only exists now.
+  // (It reads ctx.startRunner lazily, so the cycle sender ↔ dispatcher is fine.)
+  const dispatcher = createDispatcher(ctx);
+  Object.assign(ctx, dispatcher);
 
-  // Trailing contiguous queued user messages (newest run's pending queue,
-  // mirrors the in-memory messageQueue 1:1 in order).
+  // Trailing contiguous queued user messages — the stored mirror of the
+  // dispatcher's pending `user` items, in the same order.
   function trailingQueuedIndices(messages) {
     const idx = [];
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -117,25 +114,6 @@ export function createChatRouter({
       // 유저가 개입했으면 예약된 자동 재개는 의미가 없다 — 취소.
       ctx.cancelWakeup(sessionId, 'user message');
 
-      // Running → queue for next turn
-      if (runner.isRunning(sessionId)) {
-        let augmentedMessage = message;
-        if (attachmentPaths && attachmentPaths.length > 0) {
-          const fileList = attachmentPaths.map((p) => `- ${p}`).join('\n');
-          augmentedMessage = `${message}\n\n[첨부 파일]\n${fileList}`;
-        }
-        enqueueMessage(sessionId, augmentedMessage);
-        await sessionsStore.appendMessage(sessionId, {
-          role: 'user',
-          content: augmentedMessage,
-          attachmentPaths: attachmentPaths ?? [],
-          queued: true
-        });
-        eventBus.publish('chat.queued', { sessionId, count: messageQueue.get(sessionId)?.length ?? 0 });
-        logger.info({ sessionId, queue: messageQueue.get(sessionId)?.length }, 'chat: queued during running');
-        return res.status(202).json({ sessionId, status: 'queued', queueLength: messageQueue.get(sessionId)?.length });
-      }
-
       // Auto-title on first message
       const isFirstMessage = !session.messages?.length;
       let augmentedMessage = message;
@@ -143,10 +121,14 @@ export function createChatRouter({
         const fileList = attachmentPaths.map((p) => `- ${p}`).join('\n');
         augmentedMessage = `${message}\n\n[첨부 파일]\n${fileList}\n\n위 경로의 파일들을 Read 도구로 확인해주세요.`;
       }
+      // Store the message before dispatching: an idle session starts the runner
+      // synchronously inside dispatch(), and the runner reads session.messages to
+      // decide first-turn injection / conversation-summary re-injection.
       await sessionsStore.appendMessage(sessionId, {
         role: 'user',
         content: augmentedMessage,
-        attachmentPaths: attachmentPaths ?? []
+        attachmentPaths: attachmentPaths ?? [],
+        ...(ctx.isSessionBusy(sessionId) ? { queued: true } : {})
       });
       if (isFirstMessage && (!session.title || session.title === 'New session')) {
         const title = message.slice(0, 40).replace(/\n/g, ' ').trim() || 'New session';
@@ -160,10 +142,15 @@ export function createChatRouter({
         });
       }
 
+      // 유저가 새로 개입했으니 위임 자동 재진입 카운터를 리셋.
       reEntryCounters.delete(sessionId);
-      pendingReports.delete(sessionId);
-      sendRunnerMessage(sessionId, augmentedMessage);
-      res.status(202).json({ sessionId, status: 'started' });
+
+      const { queued, queueLength } = ctx.dispatch(sessionId, { kind: 'user', content: augmentedMessage });
+      if (queued) {
+        eventBus.publish('chat.queued', { sessionId, count: queueLength });
+        logger.info({ sessionId, queue: queueLength }, 'chat: queued during running');
+      }
+      res.status(202).json({ sessionId, status: queued ? 'queued' : 'started', queueLength });
     } catch (err) {
       if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
       next(err);
@@ -173,6 +160,7 @@ export function createChatRouter({
   router.delete('/:sessionId', (req, res) => {
     const sid = req.params.sessionId;
     const aborted = runner.abort(sid);
+    ctx.abortDispatch(sid, 'user aborted');
     ctx.cancelWakeup(sid, 'session aborted');
     // Cancel any pending permission-prompt modal for this session so the UI clears.
     if (approvalBroker) approvalBroker.cancelForSession(sid, 'session aborted');
@@ -194,11 +182,9 @@ export function createChatRouter({
       const absIdx = qIdx[posInRun];
       await sessionsStore.setMessages(sessionId, messages.filter((_, i) => i !== absIdx));
 
-      const q = getQueue(sessionId).slice();
-      if (posInRun < q.length) q.splice(posInRun, 1);
-      setQueue(sessionId, q);
+      ctx.removeUserItem(sessionId, posInRun);
 
-      const count = getQueue(sessionId).length;
+      const count = ctx.countUserItems(sessionId);
       eventBus.publish('chat.queued', { sessionId, count });
       logger.info({ sessionId, ts, remaining: count }, 'chat: queued message deleted');
       res.json({ sessionId, queueLength: count });
@@ -228,11 +214,10 @@ export function createChatRouter({
         .filter((_, i) => !dropSet.has(i));
       await sessionsStore.setMessages(sessionId, newMessages);
 
-      // Mirror in-memory queue: collapse to a single combined entry.
-      const q = getQueue(sessionId);
-      setQueue(sessionId, q.length >= 2 ? [q.join('\n\n')] : q);
+      // Mirror the dispatch queue: collapse pending user items into one.
+      ctx.mergeUserItems(sessionId);
 
-      const count = getQueue(sessionId).length;
+      const count = ctx.countUserItems(sessionId);
       eventBus.publish('chat.queued', { sessionId, count });
       logger.info({ sessionId, merged: qIdx.length, remaining: count }, 'chat: queued messages merged');
       res.json({ sessionId, queueLength: count });
@@ -244,7 +229,7 @@ export function createChatRouter({
   /**
    * Resume interrupted session on server restart.
    * (1) If claudeSessionId + resume file exists → --resume loads it (컨텍스트 그대로).
-   * (2) 없으면 sendRunnerMessage 내부 isFirstMsg 경로가 자동으로
+   * (2) 없으면 startRunner 내부 isFirstMsg 경로가 자동으로
    *     buildConversationSummary 를 프리픽스로 붙여 맥락을 재주입.
    *     → 여기서 수동으로 컨텍스트 블록을 덧붙이면 이중 주입이 됨.
    */
@@ -272,10 +257,16 @@ export function createChatRouter({
         : '▶ **재시작 후 작업 이어가기** — 이전 세션 ID 가 없어 대화 컨텍스트를 재주입합니다.'
     }).catch(() => {});
 
-    // fresh-start (resume 파일 부재) 시 컨텍스트 주입은 sendRunnerMessage 에 위임.
-    sendRunnerMessage(sessionId, lastUser.content);
+    // fresh-start (resume 파일 부재) 시 컨텍스트 주입은 startRunner 에 위임.
+    ctx.dispatch(sessionId, { kind: 'resume', content: lastUser.content });
     return true;
   }
 
-  return { router, resumeInterruptedSession, clearAllWakeups: ctx.clearAllWakeups };
+  return {
+    router,
+    resumeInterruptedSession,
+    clearAllWakeups: ctx.clearAllWakeups,
+    clearAllDispatch: ctx.clearAllDispatch,
+    abortDispatch: ctx.abortDispatch
+  };
 }

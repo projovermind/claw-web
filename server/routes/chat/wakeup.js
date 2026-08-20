@@ -6,8 +6,6 @@ const WAKEUP_RE = /<wakeup\s+seconds\s*=\s*["']?(\d{1,5})["']?\s*>([\s\S]*?)<\/w
 const MAX_WAKEUPS = 20;
 const MIN_SECONDS = 10;
 const MAX_SECONDS = 3600;
-const IDLE_POLL_MS = 500;
-const IDLE_MAX_POLLS = 20;
 
 /**
  * Session auto-resume. When an assistant response contains a `<wakeup>` marker,
@@ -60,10 +58,6 @@ export function createWakeup(ctx) {
   }
 
   async function fire(sessionId, reason, count, epoch) {
-    for (let i = 0; i < IDLE_MAX_POLLS; i++) {
-      if (!(ctx.runner?.isRunning?.(sessionId) ?? false)) break;
-      await new Promise((resolve) => setTimeout(resolve, IDLE_POLL_MS));
-    }
     if ((epochs.get(sessionId) ?? 0) !== epoch) return;
     if (!sessionsStore.get(sessionId)) {
       chains.delete(sessionId);
@@ -72,7 +66,13 @@ export function createWakeup(ctx) {
     const trigger = `[자동 재개] ${reason}`;
     try {
       await sessionsStore.appendMessage(sessionId, { role: 'user', content: trigger });
-      ctx.sendRunnerMessage(sessionId, trigger);
+      // The epoch guard is re-checked at dequeue time: a wakeup that waited
+      // behind a running turn must not fire if the user intervened meanwhile.
+      ctx.dispatch(sessionId, {
+        kind: 'wakeup',
+        content: trigger,
+        guard: () => (epochs.get(sessionId) ?? 0) === epoch
+      });
       eventBus.publish('session.wakeup.fired', { sessionId, count, reason });
       logger.info({ sessionId, count, reason }, 'wakeup: fired');
     } catch (err) {

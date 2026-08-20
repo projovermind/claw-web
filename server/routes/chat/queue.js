@@ -1,36 +1,14 @@
 import { logger } from '../../lib/logger.js';
 
 /**
- * Creates the message queue and agent delegation queue.
+ * Agent-level delegation queue: holds tasks aimed at an agent that is already
+ * busy with another delegation. Distinct from the per-session dispatch queue
+ * (dispatch.js), which serializes turns within one session.
  * Cross-module calls (executeDelegation) are resolved lazily via ctx.
  */
 export function createQueue(ctx) {
-  // sessionId → queued user messages (sent when current response ends)
-  const messageQueue = new Map();
-
   // agentId → pending delegation entries (when agent is busy)
   const agentQueue = new Map();
-
-  function enqueueMessage(sessionId, message) {
-    if (!messageQueue.has(sessionId)) messageQueue.set(sessionId, []);
-    messageQueue.get(sessionId).push(message);
-  }
-
-  function getQueue(sessionId) {
-    return messageQueue.get(sessionId) ?? [];
-  }
-
-  function setQueue(sessionId, arr) {
-    if (!arr || arr.length === 0) messageQueue.delete(sessionId);
-    else messageQueue.set(sessionId, arr);
-  }
-
-  function flushQueue(sessionId) {
-    const q = messageQueue.get(sessionId);
-    if (!q || q.length === 0) return null;
-    messageQueue.delete(sessionId);
-    return q.length === 1 ? q[0] : q.map((m, i) => `[추가 ${i + 1}] ${m}`).join('\n\n');
-  }
 
   function dequeueNextAgent(agentId) {
     const queue = agentQueue.get(agentId);
@@ -43,5 +21,5 @@ export function createQueue(ctx) {
     }, 500);
   }
 
-  return { messageQueue, agentQueue, enqueueMessage, getQueue, setQueue, flushQueue, dequeueNextAgent };
+  return { agentQueue, dequeueNextAgent };
 }

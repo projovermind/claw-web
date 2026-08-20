@@ -489,7 +489,7 @@ export function startClaudeRun({
   // Claude CLI 는 턴의 마지막에 `result` 이벤트를 흘린 뒤 정상적으로 exit 해야 한다.
   // 그런데 MCP 서버 child 프로세스가 stdio 파이프를 붙들고 있거나 API 스트림 소켓이
   // 반쯤 닫힌 채 남으면, `result` 는 왔는데 부모 프로세스가 exit 하지 못하고 매달린다.
-  // 완료 신호(onResult/onExit→isRunning=false, flushQueue)는 전부 proc 'close' 에만
+  // 완료 신호(onResult/onExit→isRunning=false, 디스패치 큐 재개)는 전부 proc 'close' 에만
   // 걸려 있어서, 이 경우 IDLE_STALL_MS(20분) 스톨 타이머가 kill 할 때까지 턴이 안 끝난다.
   // → 유저 입장에선 "응답중" 이 20분 지속되고 그 사이 보낸 답이 대기큐에 갇힌다.
   // 대응: result 를 받으면 짧은 유예만 두고, 그 안에 스스로 안 죽으면 강제 종료해
