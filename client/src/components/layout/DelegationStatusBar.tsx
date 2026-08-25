@@ -4,14 +4,14 @@ import { api } from '../../lib/api';
 
 const REMOVE_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 30_000;   // 30초마다 세션 상태 확인
-const STUCK_THRESHOLD_MS = 3 * 60 * 1000; // updatedAt 무변화 3분 → stuck
+const STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 활동 신호 무변화 10분 → stuck
 
 function DelegationItem({ entry }: { entry: DelegationEntry }) {
   const fail = useDelegationStore((s) => s.fail);
   const isDone = entry.status === 'completed' || entry.status === 'failed';
 
-  // 마지막으로 확인된 updatedAt + 그 시각의 실제 Date.now()
-  const lastUpdatedAt = useRef<string | null>(null);
+  // 마지막으로 확인된 활동 신호 + 그 시각의 실제 Date.now()
+  const lastActivitySignal = useRef<string | null>(null);
   const lastChangedAt = useRef<number>(Date.now());
   const [isStuck, setIsStuck] = useState(false);
 
@@ -31,13 +31,14 @@ function DelegationItem({ entry }: { entry: DelegationEntry }) {
           return;
         }
 
-        // updatedAt이 바뀌면 활동 중 → 타이머 리셋
-        if (session.updatedAt !== lastUpdatedAt.current) {
-          lastUpdatedAt.current = session.updatedAt ?? null;
+        // 툴 실행만 하는 긴 턴은 updatedAt이 멈추므로 러너 하트비트를 우선 사용
+        const signal = session.lastActivityAt ?? session.updatedAt ?? null;
+        if (signal !== lastActivitySignal.current) {
+          lastActivitySignal.current = signal;
           lastChangedAt.current = Date.now();
           setIsStuck(false);
         } else {
-          // updatedAt 무변화 — 경과 시간 체크
+          // 활동 신호 무변화 — 경과 시간 체크
           const silentMs = Date.now() - lastChangedAt.current;
           setIsStuck(silentMs > STUCK_THRESHOLD_MS);
         }
@@ -58,6 +59,7 @@ function DelegationItem({ entry }: { entry: DelegationEntry }) {
   };
 
   const handleResume = async () => {
+    if (!confirm(`'${entry.targetAgentId}' 의 작업 중인 워커를 중단합니다.\n지금까지의 결과만 가지고 이어서 진행할까요?`)) return;
     try { await api.abortChat(entry.targetSessionId); } catch { /* 이미 종료 */ }
 
     let resumeMsg = `이전에 위임한 작업이 있습니다:\n\n> 작업: ${entry.task}\n\n이 결과를 바탕으로 다음 단계를 진행해주세요.`;

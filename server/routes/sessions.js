@@ -33,6 +33,11 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
    * dispatch queue still has pending, or the queue would immediately start the
    * next item on a session the user just deleted/stopped.
    */
+  function lastActivityIso(sessionId) {
+    const ms = runner.lastActivityAt?.(sessionId);
+    return ms ? new Date(ms).toISOString() : null;
+  }
+
   function stopSession(sessionId, reason) {
     if (runner.isRunning(sessionId)) runner.abort(sessionId);
     abortDispatch?.(sessionId, reason);
@@ -67,6 +72,7 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
         messageCount: msgs.length,
         recent24hCount,
         isRunning: runner.isRunning(s.id),
+        lastActivityAt: lastActivityIso(s.id),
       };
     });
     res.json({
@@ -105,6 +111,7 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
       totalInputTokens,
       totalOutputTokens,
       isRunning: runner.isRunning(s.id),
+      lastActivityAt: lastActivityIso(s.id),
     });
   });
 

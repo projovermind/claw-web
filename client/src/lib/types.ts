@@ -63,6 +63,8 @@ export interface Session {
   title: string;
   createdAt: string;
   updatedAt: string;
+  /** Runner heartbeat — advances on tool/stream activity, unlike updatedAt which only moves on message commit. */
+  lastActivityAt?: string | null;
   claudeSessionId: string | null;
   messages: ChatMessage[];
   /** True iff there are older messages on the server not yet loaded. */

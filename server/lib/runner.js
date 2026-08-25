@@ -15,10 +15,24 @@ import { logger } from './logger.js';
 
 export function createRunner({ processTracker, accountScheduler } = {}) {
   const active = new Map();
+  // sessionId → epoch ms of the last streamed chunk/tool event. Lets callers
+  // distinguish a session that is actually producing output from one that is
+  // running but stalled.
+  const lastActivity = new Map();
 
   function cleanup(sessionId) {
     active.delete(sessionId);
+    lastActivity.delete(sessionId);
     if (processTracker) processTracker.release(sessionId);
+  }
+
+  function withActivity(sessionId, callbacks = {}) {
+    const touch = () => lastActivity.set(sessionId, Date.now());
+    return {
+      ...callbacks,
+      onText: (text) => { touch(); callbacks.onText?.(text); },
+      onToolUse: (tool) => { touch(); callbacks.onToolUse?.(tool); },
+    };
   }
 
   return {
@@ -45,6 +59,7 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
       }
 
       // ── Claude CLI (claude-cli 또는 anthropic-compatible) ──
+      lastActivity.set(sessionId, Date.now());
       const handle = startClaudeRun({
         agent,
         message,
@@ -52,7 +67,7 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
         envOverrides,
         accountScheduler,
         callbacks: {
-          ...callbacks,
+          ...withActivity(sessionId, callbacks),
           onExit: (info) => {
             cleanup(sessionId);
             callbacks.onExit?.(info);
@@ -71,11 +86,12 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
      * Z.AI coding/paas 엔드포인트 + 로컬 도구 실행 루프
      */
     _startOpenAI({ sessionId, agent, message, claudeSessionId, envOverrides, backendConfig, callbacks }) {
-      const { onText, onToolUse, onResult, onError, onExit } = callbacks;
+      const { onText, onToolUse, onResult, onError, onExit } = withActivity(sessionId, callbacks);
 
       let aborted = false;
       const handle = { abort() { aborted = true; } };
       active.set(sessionId, handle);
+      lastActivity.set(sessionId, Date.now());
 
       // 시스템 프롬프트 조합 (claude-cli-runner와 동일한 로직)
       const parts = [];
@@ -161,7 +177,7 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
               claudeSessionId,
               envOverrides: envOverrides || {},
               callbacks: {
-                ...callbacks,
+                ...withActivity(sessionId, callbacks),
                 onExit: (info) => {
                   cleanup(sessionId);
                   callbacks.onExit?.(info);
@@ -169,6 +185,7 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
               }
             });
             active.set(sessionId, fbHandle);
+            lastActivity.set(sessionId, Date.now());
             if (processTracker && fbHandle.process?.pid) {
               processTracker.track(sessionId, fbHandle.process.pid);
             }
@@ -193,6 +210,7 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
       if (h) {
         h.abort();
         active.delete(sessionId);
+        lastActivity.delete(sessionId);
         if (processTracker) processTracker.release(sessionId);
         return true;
       }
@@ -200,6 +218,7 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
     },
 
     isRunning: (sessionId) => active.has(sessionId),
-    activeIds: () => [...active.keys()]
+    activeIds: () => [...active.keys()],
+    lastActivityAt: (sessionId) => lastActivity.get(sessionId) ?? null
   };
 }
