@@ -15,6 +15,8 @@ export function createQueue(ctx) {
     if (!queue || queue.length === 0) return;
     const next = queue.shift();
     if (queue.length === 0) agentQueue.delete(agentId);
+    // 재시작 복구가 이미 꺼내간 작업을 다시 보고하지 않도록 즉시 반영.
+    ctx.delegationTracker?.setPendingQueue?.(agentQueue);
     logger.info({ agentId, remaining: agentQueue.get(agentId)?.length ?? 0 }, 'delegation: dequeuing next task');
     setTimeout(() => {
       ctx.executeDelegation(next.originSessionId, next.targetAgentId, next.task, next.rawText);

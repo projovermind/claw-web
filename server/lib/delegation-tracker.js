@@ -43,6 +43,10 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
   let idCounter = 0;
   let writeTimer = null;
 
+  let pendingQueueRef = null;  // live agentId → [task, ...] map owned by the chat router
+  let restoredPending = [];    // queued-but-never-started tasks recovered from the last run
+  let orphanedOnRestore = [];  // entries that were mid-flight when the process died
+
   function indexByOrigin(entry) {
     if (!byOrigin.has(entry.originSessionId)) byOrigin.set(entry.originSessionId, []);
     byOrigin.get(entry.originSessionId).push(entry);
@@ -64,15 +68,30 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
     else activeByAgent.set(agentId, next);
   }
 
+  /**
+   * Tasks sitting in the router's per-agent wait queue were never handed to a
+   * worker, so nothing else on disk remembers them. Without this they vanish on
+   * restart and the planner waits forever for a delegation that never ran.
+   */
+  function serializePending() {
+    if (!pendingQueueRef) return [];
+    return [...pendingQueueRef.values()].flat().map((item) => ({
+      originSessionId: item.originSessionId,
+      targetAgentId: item.targetAgentId,
+      task: item.task
+    }));
+  }
+
   function persistNow() {
     if (!filePath) return;
     try {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
       const payload = {
-        version: 1,
+        version: 2,
         savedAt: new Date().toISOString(),
         idCounter,
         active: [...active.values()],
+        pending: serializePending(),
         history: history.slice(-MAX_HISTORY)
       };
       const tmp = `${filePath}.tmp`;
@@ -119,13 +138,15 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
       retire(entry);
       indexByOrigin(entry);
     }
-    if (orphans.length) {
+    orphanedOnRestore = orphans;
+    restoredPending = (payload?.pending ?? []).filter((p) => p?.originSessionId && p?.task);
+    if (orphans.length || restoredPending.length) {
       logger.warn(
-        { count: orphans.length, ids: orphans.map((e) => e.id) },
-        'delegation: reclaimed orphaned delegations from previous run'
+        { running: orphans.length, queued: restoredPending.length, ids: orphans.map((e) => e.id) },
+        'delegation: reclaimed interrupted delegations from previous run'
       );
+      persistNow();
     }
-    if (orphans.length) persistNow();
   }
 
   restore();
@@ -247,6 +268,43 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
      */
     getByOrigin(originSessionId) {
       return byOrigin.get(originSessionId) ?? [];
+    },
+
+    /**
+     * Register the router's live wait queue so it gets persisted alongside the
+     * active delegations. Calling it again after the queue mutates re-arms the
+     * debounced write.
+     */
+    setPendingQueue(queueMap) {
+      pendingQueueRef = queueMap ?? null;
+      schedulePersist();
+    },
+
+    /** Tasks that were still waiting for a busy agent when the process died. */
+    getPendingQueue() {
+      return restoredPending;
+    },
+
+    /**
+     * Everything the previous run lost: delegations that were mid-flight plus
+     * those that never got their turn. The chat router reports these back to the
+     * originating planners so a restart does not silently swallow work.
+     */
+    listOrphaned() {
+      return [
+        ...orphanedOnRestore.map((e) => ({
+          originSessionId: e.originSessionId,
+          targetAgentId: e.targetAgentId,
+          task: e.task,
+          state: 'running'
+        })),
+        ...restoredPending.map((p) => ({
+          originSessionId: p.originSessionId,
+          targetAgentId: p.targetAgentId,
+          task: p.task,
+          state: 'queued'
+        }))
+      ];
     },
 
     /** For debugging */

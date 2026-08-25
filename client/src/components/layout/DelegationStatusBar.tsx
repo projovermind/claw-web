@@ -52,27 +52,10 @@ function DelegationItem({ entry }: { entry: DelegationEntry }) {
     return () => clearInterval(t);
   }, [isDone, entry.targetSessionId]);
 
-  const handleAbort = async () => {
-    if (!confirm(`'${entry.targetAgentId}' 위임을 중단할까요?`)) return;
+  // 보고는 서버 abortChat 이 플래너에게 자동 전송한다
+  const handleStop = async () => {
+    if (!confirm(`'${entry.targetAgentId}' 워커를 중단하고 지금까지의 결과를 플래너에게 보고할까요?`)) return;
     try { await api.abortChat(entry.targetSessionId); } catch { /* 이미 종료 */ }
-    fail(entry.id);
-  };
-
-  const handleResume = async () => {
-    if (!confirm(`'${entry.targetAgentId}' 의 작업 중인 워커를 중단합니다.\n지금까지의 결과만 가지고 이어서 진행할까요?`)) return;
-    try { await api.abortChat(entry.targetSessionId); } catch { /* 이미 종료 */ }
-
-    let resumeMsg = `이전에 위임한 작업이 있습니다:\n\n> 작업: ${entry.task}\n\n이 결과를 바탕으로 다음 단계를 진행해주세요.`;
-    try {
-      const session = await api.session(entry.targetSessionId, 50);
-      const lastAssistant = [...session.messages].reverse().find((m) => m.role === 'assistant');
-      if (lastAssistant?.content) {
-        const snippet = lastAssistant.content.slice(0, 1500);
-        resumeMsg = `이전에 ${entry.targetAgentId}에게 다음 작업을 위임했습니다:\n\n> 작업: ${entry.task}\n\n결과 요약:\n\`\`\`\n${snippet}\n\`\`\`\n\n이 결과를 바탕으로 다음 단계를 진행해주세요.`;
-      }
-    } catch { /* 세션 조회 실패 시 fallback 사용 */ }
-
-    await api.sendMessage(entry.originSessionId, resumeMsg, []);
     fail(entry.id);
   };
 
@@ -119,20 +102,12 @@ function DelegationItem({ entry }: { entry: DelegationEntry }) {
           {entry.status === 'failed' ? '실패' : '완료'}
         </span>
       ) : isStuck ? (
-        <div className="pointer-events-auto flex items-center gap-1">
-          <button
-            onClick={handleResume}
-            className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-800/60 hover:bg-sky-700/60 text-sky-200 whitespace-nowrap"
-          >
-            이어서 하기
-          </button>
-          <button
-            onClick={handleAbort}
-            className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-700/60 hover:bg-amber-600/60 text-amber-200 whitespace-nowrap"
-          >
-            중단
-          </button>
-        </div>
+        <button
+          onClick={handleStop}
+          className="pointer-events-auto px-2 py-0.5 rounded text-[10px] font-bold bg-amber-700/60 hover:bg-amber-600/60 text-amber-200 whitespace-nowrap"
+        >
+          중단
+        </button>
       ) : (
         <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-blue-900/60 text-blue-300">
           진행 중

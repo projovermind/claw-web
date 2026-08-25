@@ -18,8 +18,8 @@ export function createDelegation(ctx) {
     eventBus,
     delegationTracker,
     pushStore,
-    reEntryCounters,
-    MAX_REENTRY
+    failureReEntryCounters,
+    MAX_FAILURE_REENTRY
   } = ctx;
 
   /** Parse text for JSON blocks containing a "delegate" key. */
@@ -106,12 +106,12 @@ export function createDelegation(ctx) {
    * 모른 채 턴을 끝내고 위임한 작업이 통째로 사라진다.
    */
   async function reportUndeliveredTasks(originSessionId, badIds, depthBlocked) {
-    const count = (reEntryCounters.get(originSessionId) ?? 0) + 1;
-    if (count > MAX_REENTRY) {
+    const count = (failureReEntryCounters.get(originSessionId) ?? 0) + 1;
+    if (count > MAX_FAILURE_REENTRY) {
       logger.warn({ originSessionId, count }, 'delegation: retry limit exceeded — not re-entering');
       return;
     }
-    reEntryCounters.set(originSessionId, count);
+    failureReEntryCounters.set(originSessionId, count);
 
     const sections = [];
     if (badIds.length) {
@@ -188,6 +188,7 @@ export function createDelegation(ctx) {
         if (!agentQueue.has(targetAgentId)) agentQueue.set(targetAgentId, []);
         const queue = agentQueue.get(targetAgentId);
         queue.push({ originSessionId, targetAgentId, task, rawText });
+        delegationTracker.setPendingQueue?.(agentQueue);
         const pos = queue.length;
         logger.info({ targetAgentId, queueLength: pos }, 'delegation: queued (agent busy)');
         await sessionsStore.appendMessage(originSessionId, {
@@ -261,6 +262,40 @@ export function createDelegation(ctx) {
         role: 'assistant',
         content: `❌ 위임 실패 — ${err.message}`
       });
+    }
+  }
+
+  /**
+   * 위임 대상 세션이 결과를 내지 못한 채 멈췄을 때(사용자 중단 / 세션 삭제 /
+   * 빈 응답으로 자동 재시도 포기) 트래커를 정리한다. 이걸 안 하면 대상 에이전트가
+   * 영원히 busy 로 남아 이후 위임이 전부 대기열에 쌓이고, 플래너는 오지 않을
+   * 보고를 기다리며 턴을 끝낸다.
+   */
+  async function abandonDelegation(targetSessionId, reason) {
+    if (!delegationTracker) return null;
+    try {
+      if (!delegationTracker.getByTarget(targetSessionId)) return null;
+      const failed = delegationTracker.fail(targetSessionId, reason);
+      if (!failed) return null;
+      ctx.dequeueNextAgent(failed.targetAgentId);
+
+      const trigger =
+        `[위임 중단]\n\n` +
+        `**대상**: ${failed.targetAgentId}\n` +
+        `**작업**: ${failed.task}\n` +
+        `**사유**: ${reason}\n\n` +
+        `위임한 작업이 결과 없이 중단됐습니다. 이 작업은 완료되지 않았습니다. ` +
+        `직접 처리할지, 다른 에이전트에게 다시 위임할지, 사용자에게 상황을 알릴지 판단해 계속 진행하세요.`;
+      await sessionsStore.appendMessage(failed.originSessionId, { role: 'user', content: trigger });
+      ctx.dispatch(failed.originSessionId, { kind: 'report', content: trigger });
+      logger.info(
+        { id: failed.id, targetSessionId, targetAgentId: failed.targetAgentId, reason },
+        'delegation: abandoned — tracker released, planner resumed'
+      );
+      return failed;
+    } catch (err) {
+      logger.warn({ err: err.message, targetSessionId, reason }, 'delegation: abandon cleanup failed');
+      return null;
     }
   }
 
@@ -396,6 +431,7 @@ export function createDelegation(ctx) {
     handleDelegation,
     resolveAgentId,
     executeDelegation,
+    abandonDelegation,
     handleLoopContinuation
   };
 }

@@ -505,7 +505,21 @@ export function createMessageSender(ctx) {
             // Delegation report-back + auto re-entry
             if (delegationTracker) {
               const del = delegationTracker.getByTarget(sessionId);
-              if (del) {
+              const wasKilled = result.exitCode === 143 || result.exitCode === 137;
+              if (del && wasKilled) {
+                // 러너는 SIGTERM(143)/SIGKILL(137) 을 onResult 로 넘긴다. 여기서 걸러내지
+                // 않으면 유휴 타임아웃이나 강제 종료로 죽은 워커가 플래너에게 '위임 완료'
+                // 로 보고되어, 플래너가 실패를 성공으로 알고 다음 단계로 넘어간다.
+                const fullText = responseText ?? '';
+                const partial = fullText.replace('(응답이 중단되었습니다)', '').trim();
+                let reason = '워커가 결과 없이 강제 종료됨(중단 또는 타임아웃)';
+                if (partial) {
+                  const reportPath = delegationTracker.saveFullReport(sessionId, fullText);
+                  reason += ` — 부분 출력 있음 — 원문 참고${reportPath ? `: ${reportPath}` : ''}`;
+                }
+                logger.warn({ sessionId, exitCode: result.exitCode, hasPartial: !!partial }, 'delegation: worker killed before reporting — abandoning instead of completing');
+                await ctx.abandonDelegation(sessionId, reason);
+              } else if (del) {
                 const fullText = responseText ?? '';
                 const reportPath = delegationTracker.saveFullReport(sessionId, fullText);
                 const extracted = extractDelegationSummary(fullText);
@@ -692,6 +706,7 @@ export function createMessageSender(ctx) {
                 '**다음 조치 중 선택:** 같은 메시지를 다시 보내거나, 질문을 짧게 요약해 새 메시지로 시도하세요.\n' +
                 '(자동 재시도는 중단됐습니다 — 무한 루프 방지)'
             }).catch(() => {});
+            ctx.abandonDelegation(sessionId, '워커가 빈 응답으로 종료했고 자동 재시도도 실패했습니다');
           }
         }
       }

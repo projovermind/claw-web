@@ -38,9 +38,14 @@ export function createChatRouter({
   const retryCounters = new Map();
   const MAX_AUTO_RETRIES = 3;
 
-  // Delegation re-entry counters (originSessionId → number)
+  // Delegation re-entry counters (originSessionId → number). Success reports and
+  // failure retries are counted separately: a long plan legitimately hands back
+  // dozens of completed delegations, while a failure that keeps recurring is a
+  // loop and must stop early.
   const reEntryCounters = new Map();
-  const MAX_REENTRY = 8;
+  const MAX_REENTRY = 30;
+  const failureReEntryCounters = new Map();
+  const MAX_FAILURE_REENTRY = 3;
 
   // ── Shared ctx — resolved lazily to enable circular wiring ──
   const ctx = {
@@ -60,8 +65,10 @@ export function createChatRouter({
     getBridgeContext,
     retryCounters,
     reEntryCounters,
+    failureReEntryCounters,
     MAX_AUTO_RETRIES,
     MAX_REENTRY,
+    MAX_FAILURE_REENTRY,
     approvalBroker,
     bridgeToken
   };
@@ -69,6 +76,7 @@ export function createChatRouter({
   // Wire agent-delegation queue (needs ctx.executeDelegation — resolved later)
   const queue = createQueue(ctx);
   Object.assign(ctx, queue);
+  delegationTracker?.setPendingQueue?.(queue.agentQueue);
 
   // Wire delegation (needs ctx.dispatch, ctx.agentQueue — resolved later)
   const delegation = createDelegation(ctx);
@@ -87,6 +95,44 @@ export function createChatRouter({
   // (It reads ctx.startRunner lazily, so the cycle sender ↔ dispatcher is fine.)
   const dispatcher = createDispatcher(ctx);
   Object.assign(ctx, dispatcher);
+
+  /**
+   * 지난 실행에서 사라진 위임을 원 세션에 되돌려준다. 이 보고가 없으면 플래너는
+   * 영영 오지 않을 결과를 기다리다 턴을 끝내고, 위임한 작업이 통째로 유실된다.
+   */
+  async function reportRestartInterruptions() {
+    const lost = delegationTracker?.listOrphaned?.() ?? [];
+    if (!lost.length) return;
+
+    const byOrigin = new Map();
+    for (const item of lost) {
+      if (!item.originSessionId) continue;
+      if (!byOrigin.has(item.originSessionId)) byOrigin.set(item.originSessionId, []);
+      byOrigin.get(item.originSessionId).push(item);
+    }
+
+    for (const [originSessionId, items] of byOrigin) {
+      if (!sessionsStore.get(originSessionId)) continue;
+      const lines = items
+        .map((i) => `- \`${i.targetAgentId}\` (${i.state === 'queued' ? '대기 중이던 작업' : '실행 중이던 작업'}): ${i.task}`)
+        .join('\n');
+      const trigger =
+        `[위임 중단 — 서버 재시작]\n\n` +
+        `아래 위임은 서버가 재시작되면서 결과 없이 사라졌습니다. 완료되지 않았습니다.\n\n${lines}\n\n` +
+        `각 작업을 다시 위임할지, 직접 처리할지, 사용자에게 상황을 알릴지 판단해 계속 진행하세요.`;
+      try {
+        await sessionsStore.appendMessage(originSessionId, { role: 'user', content: trigger });
+        ctx.dispatch(originSessionId, { kind: 'report', content: trigger });
+        logger.info({ originSessionId, count: items.length }, 'delegation: restart interruption reported');
+      } catch (err) {
+        logger.warn({ err: err.message, originSessionId }, 'delegation: restart report failed');
+      }
+    }
+  }
+
+  // 배선 직후엔 서버가 아직 부팅 중이고 중단 세션 재개(index.js, 1.5초)와 겹친다.
+  // 한 박자 미뤄 두 흐름이 같은 디스패치 큐에서 순서대로 처리되게 한다.
+  setTimeout(() => { reportRestartInterruptions().catch(() => {}); }, 2000).unref?.();
 
   // Trailing contiguous queued user messages — the stored mirror of the
   // dispatcher's pending `user` items, in the same order.
@@ -144,6 +190,7 @@ export function createChatRouter({
 
       // 유저가 새로 개입했으니 위임 자동 재진입 카운터를 리셋.
       reEntryCounters.delete(sessionId);
+      failureReEntryCounters.delete(sessionId);
 
       const { queued, queueLength } = ctx.dispatch(sessionId, { kind: 'user', content: augmentedMessage });
       if (queued) {
@@ -160,6 +207,7 @@ export function createChatRouter({
   router.delete('/:sessionId', (req, res) => {
     const sid = req.params.sessionId;
     const aborted = runner.abort(sid);
+    ctx.abandonDelegation(sid, '사용자가 작업을 중단했습니다');
     ctx.abortDispatch(sid, 'user aborted');
     ctx.cancelWakeup(sid, 'session aborted');
     // Cancel any pending permission-prompt modal for this session so the UI clears.
@@ -267,6 +315,7 @@ export function createChatRouter({
     resumeInterruptedSession,
     clearAllWakeups: ctx.clearAllWakeups,
     clearAllDispatch: ctx.clearAllDispatch,
-    abortDispatch: ctx.abortDispatch
+    abortDispatch: ctx.abortDispatch,
+    abandonDelegation: ctx.abandonDelegation
   };
 }
