@@ -313,6 +313,10 @@ export function createDispatcher(ctx) {
    * immediately. `queueLength` counts pending user messages (UI badge).
    */
   function dispatch(sessionId, item) {
+    // 다른 무언가가 세션을 깨웠다면 예약된 자동 재개는 확인할 것이 없는 빈 턴이 된다.
+    // 위임 보고가 그 대표 사례 — 워커 결과는 이벤트로 도착하므로 폴링 턴은 순수 낭비다.
+    if (item.kind !== 'wakeup') ctx.cancelWakeup?.(sessionId, `superseded by ${item.kind}`);
+
     const deferred = isSessionBusy(sessionId);
     const entry = { ...item, deferred };
     const q = queues.get(sessionId) ?? [];
