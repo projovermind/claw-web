@@ -535,12 +535,18 @@ function PaneControls({
     return { short: agent.model, bid };
   }, [agent, backends]);
 
-  // 세션 모델 셀렉터 옵션: 에이전트 백엔드의 models 별칭 목록. 백엔드 미지정/모델
-  // 딕셔너리 없음 → 기본 opus/sonnet/haiku 폴백. 빈 값('')은 "에이전트 기본 따름".
+  // 세션 모델 셀렉터 옵션: 에이전트 백엔드의 models 별칭 목록.
+  // agent.backendId 가 비어 있으면 전역 activeBackend 로 폴백한다 — 서버 resolveAgent
+  // 가 별칭을 해석할 때 보는 백엔드와 같아야 설정 화면의 단축명 목록과 어긋나지 않는다.
+  // (실제로 모든 에이전트가 backendId 없이 전역 백엔드를 쓰고 있어, 이 폴백이 없으면
+  //  아래 하드코딩 목록이 항상 노출된다.)
+  // 백엔드 자체가 없거나 models 딕셔너리가 비었을 때만 하드코딩 폴백.
+  // 빈 값('')은 "에이전트 기본 따름".
   const modelOptions = useMemo(() => {
     const bid = (agent as { backendId?: string } | undefined)?.backendId;
     const allBackends = backends?.backends ?? {};
-    const b = bid ? allBackends[bid] : null;
+    const active = backends?.activeBackend;
+    const b = (bid ? allBackends[bid] : null) ?? (active ? allBackends[active] : null) ?? null;
     const entries = b ? Object.entries(b.models ?? {}) : [];
     if (entries.length === 0) {
       return [
