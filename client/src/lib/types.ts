@@ -134,6 +134,22 @@ export interface Project {
   dashboard?: ProjectDashboard;
 }
 
+/** 이 claw-web 이 아는 다른 기계. 원격 조종이 아니라 "그 기계의 claw-web 으로 건너가는" 북마크. */
+export interface Device {
+  id: string;
+  name: string;
+  url: string;
+  note?: string;
+  order?: number;
+}
+
+export interface DevicePing {
+  online: boolean;
+  latencyMs: number;
+  error?: string;
+  health?: HealthStatus;
+}
+
 export interface Skill {
   id: string;
   name: string;

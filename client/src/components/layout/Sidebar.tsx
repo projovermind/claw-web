@@ -24,6 +24,7 @@ import { api, setAuthToken } from '../../lib/api';
 import { useChatStore } from '../../store/chat-store';
 import { isSessionRunning } from '../../lib/visibility';
 import { DEFAULT_APPEARANCE } from '../../hooks/useAppearance';
+import DeviceSwitcher from './DeviceSwitcher';
 
 export default function Sidebar() {
   const t = useT();
@@ -205,6 +206,7 @@ export default function Sidebar() {
             })}
           </div>
         ))}
+        <DeviceSwitcher collapsed={isCollapsed} />
       </nav>
       {(!isCollapsed || authEnabled) && (
         <div className={`${isCollapsed ? 'p-1' : 'p-2'} border-t border-zinc-800`}>

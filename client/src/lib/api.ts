@@ -3,6 +3,8 @@ import type {
   HealthStatus,
   WebSettings,
   Project,
+  Device,
+  DevicePing,
   Session,
   SessionMeta,
   ChatMessage,
@@ -86,6 +88,11 @@ export const api = {
   createProject: (data: Project) => post<Project>('/projects', data),
   patchProject: (id: string, data: Partial<Project>) => patch<Project>(`/projects/${id}`, data),
   deleteProject: (id: string) => del<void>(`/projects/${id}`),
+  devices: () => get<{ devices: Device[] }>('/devices').then((r) => r.devices),
+  createDevice: (data: Device) => post<Device>('/devices', data),
+  patchDevice: (id: string, data: Partial<Device>) => patch<Device>(`/devices/${id}`, data),
+  deleteDevice: (id: string) => del<void>(`/devices/${id}`),
+  pingDevice: (id: string) => get<DevicePing>(`/devices/${id}/ping`),
   readProjectMd: (id: string, filename = 'CLAUDE.md') =>
     get<{ filename: string; exists: boolean; size: number; mtimeMs: number; content: string; filePath: string }>(
       filename === 'CLAUDE.md' ? `/projects/${id}/md` : `/projects/${id}/md/${filename}`

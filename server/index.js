@@ -10,6 +10,7 @@ import { loadWebConfig } from './lib/web-config.js';
 import { createConfigStore } from './lib/config-store.js';
 import { createMetadataStore } from './lib/metadata-store.js';
 import { createProjectsStore } from './lib/projects-store.js';
+import { createDevicesStore } from './lib/devices-store.js';
 import { createSessionsStore } from './lib/sessions-store.js';
 import { createBackendsStore } from './lib/backends-store.js';
 import { createSecretsStore } from './lib/secrets-store.js';
@@ -27,6 +28,7 @@ import { createAgentsRouter } from './routes/agents.js';
 import { createSettingsRouter } from './routes/settings.js';
 import { createProjectsRouter } from './routes/projects.js';
 import { createProjectMdRouter } from './routes/project-md.js';
+import { createDevicesRouter } from './routes/devices.js';
 import { createSessionsRouter } from './routes/sessions.js';
 import { createChatRouter } from './routes/chat.js';
 import { createBackendsRouter } from './routes/backends.js';
@@ -409,6 +411,7 @@ const ACCOUNTS_PATH = path.join(PRIVATE_DIR, 'accounts.json');
 
 const METADATA_PATH = path.join(USER_DIR, 'web-metadata.json');
 const PROJECTS_PATH = path.join(USER_DIR, 'projects.json');
+const DEVICES_PATH = path.join(USER_DIR, 'devices.json');
 const BACKENDS_PATH = path.join(USER_DIR, 'backends.json');
 const SKILLS_PATH = path.join(USER_DIR, 'skills.json');
 const UPLOADS_DIR = path.join(USER_DIR, 'uploads');
@@ -501,6 +504,7 @@ async function main() {
   const configStore = await createConfigStore(webConfig.configPath);
   const metadataStore = await createMetadataStore(METADATA_PATH);
   const projectsStore = await createProjectsStore(PROJECTS_PATH);
+  const devicesStore = await createDevicesStore(DEVICES_PATH);
   const sessionsStore = await createSessionsStore(SESSIONS_PATH);
   const secretsStore = await createSecretsStore({ filePath: SECRETS_PATH });
   const backendsStore = await createBackendsStore(BACKENDS_PATH, { secretsStore });
@@ -602,6 +606,7 @@ async function main() {
   );
   // CLAUDE.md / AGENTS.md editor mounted on same prefix
   app.use('/api/projects', createProjectMdRouter({ projectsStore, webConfig, eventBus }));
+  app.use('/api/devices', createDevicesRouter({ devicesStore, eventBus }));
   // Phase 5: bridge router is created up-front so chat can inject IDE context
   const bridgeRouter = createBridgeRouter({ webConfig });
   const { router: chatRouter, resumeInterruptedSession, clearAllWakeups, clearAllDispatch, abortDispatch, abandonDelegation } = createChatRouter({
@@ -877,6 +882,7 @@ async function main() {
           configStore.close(),
           metadataStore.close(),
           projectsStore.close(),
+          devicesStore.close(),
           sessionsStore.close(),
           backendsStore.close(),
           skillsStore.close(),
