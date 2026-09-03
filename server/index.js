@@ -532,12 +532,15 @@ async function main() {
         if (Array.isArray(arr)) preserveIds = arr;
       } catch { /* ignore */ }
     }
-    const { killed, preserved } = await processTracker.reapOrphans({ preserveSessionIds: preserveIds });
+    const { killed, preserved, skipped } = await processTracker.reapOrphans({ preserveSessionIds: preserveIds });
     if (killed > 0) {
       logger.warn({ killed }, 'runner: reaped orphaned Claude CLI processes from previous run');
     }
     if (preserved > 0) {
       logger.info({ preserved }, 'runner: preserved live Claude CLI children for soft-restart resume');
+    }
+    if (skipped > 0) {
+      logger.info({ skipped }, 'runner: skipped children owned by another claw-web instance (or recycled pids)');
     }
   } catch (err) {
     logger.warn({ err }, 'runner: reapOrphans failed (non-fatal)');

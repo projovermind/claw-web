@@ -7,9 +7,10 @@ import { spawn } from 'node:child_process';
 import { createProcessTracker } from '../server/lib/process-tracker.js';
 
 describe('process-tracker', () => {
-  let tmpDir, filePath;
+  let tmpDir, filePath, strays;
 
   beforeEach(() => {
+    strays = [];
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     tmpDir = path.join(os.tmpdir(), `tracker-${id}`);
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -17,6 +18,13 @@ describe('process-tracker', () => {
   });
 
   afterEach(async () => {
+    for (const pid of strays) {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    }
     try {
       await fsp.rm(tmpDir, { recursive: true, force: true });
     } catch {
@@ -80,6 +88,98 @@ describe('process-tracker', () => {
 
     // State should be cleared
     expect(t2._getState().sessions).toEqual({});
+  });
+
+  it('records serverPid on track', async () => {
+    const t = createProcessTracker({ filePath });
+    await t.track('sess1', 12345);
+    expect(t._getState().sessions.sess1.serverPid).toBe(process.pid);
+  });
+
+  it('타 인스턴스 소유 pid 는 보존 (다른 serverPid 가 살아있으면 kill 하지 않음)', async () => {
+    // 워커 역할 프로세스 + 그 워커를 소유한 '다른 claw-web 인스턴스' 역할 프로세스
+    const worker = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+    const otherServer = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+    worker.unref();
+    otherServer.unref();
+    strays.push(worker.pid, otherServer.pid);
+
+    // 다른 인스턴스가 기록한 것처럼 파일을 직접 작성
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        sessions: {
+          'other-instance-sess': {
+            pid: worker.pid,
+            serverPid: otherServer.pid,
+            startedAt: new Date().toISOString()
+          }
+        }
+      })
+    );
+
+    const t = createProcessTracker({ filePath });
+    const { killed, skipped } = await t.reapOrphans();
+
+    expect(killed).toBe(0);
+    expect(skipped).toBe(1);
+    // 워커는 여전히 살아 있어야 한다
+    await new Promise((r) => setTimeout(r, 100));
+    expect(() => process.kill(worker.pid, 0)).not.toThrow();
+    // 엔트리도 남의 것이므로 파일에서 지우지 않는다
+    expect(t._getState().sessions['other-instance-sess'].pid).toBe(worker.pid);
+  });
+
+  it('소유 인스턴스가 죽었으면 고아로 보고 kill 한다', async () => {
+    const worker = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+    worker.unref();
+    strays.push(worker.pid);
+
+    // serverPid 는 존재하지 않는 pid (죽은 이전 인스턴스)
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        sessions: {
+          'dead-instance-sess': {
+            pid: worker.pid,
+            serverPid: 999999,
+            startedAt: new Date().toISOString()
+          }
+        }
+      })
+    );
+
+    const t = createProcessTracker({ filePath });
+    const { killed } = await t.reapOrphans();
+    expect(killed).toBe(1);
+    expect(t._getState().sessions).toEqual({});
+  });
+
+  it('pid 재사용 의심(startedAt 보다 늦게 시작한 프로세스) 은 kill 하지 않음', async () => {
+    const worker = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+    worker.unref();
+    strays.push(worker.pid);
+
+    // 이 프로세스는 방금 떴는데 startedAt 은 1시간 전 → 같은 pid 를 물려받은 남의 프로세스
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        sessions: {
+          'recycled-sess': {
+            pid: worker.pid,
+            serverPid: process.pid,
+            startedAt: new Date(Date.now() - 3600_000).toISOString()
+          }
+        }
+      })
+    );
+
+    const t = createProcessTracker({ filePath });
+    const { killed, skipped } = await t.reapOrphans();
+    expect(killed).toBe(0);
+    expect(skipped).toBe(1);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(() => process.kill(worker.pid, 0)).not.toThrow();
   });
 
   it('track is idempotent on same sessionId (overwrites)', async () => {

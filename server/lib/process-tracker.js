@@ -1,7 +1,40 @@
 import fs from 'node:fs/promises';
 import fssync from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { logger } from './logger.js';
+
+/** SIGTERM 0 은 EPERM(권한 없음) 도 '살아있음' 으로 취급해야 정확하다. */
+function isProcessAlive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code === 'EPERM';
+  }
+}
+
+/**
+ * pid 의 실제 프로세스 시작 시각(ms). 조회 실패 시 null.
+ * `ps -o lstart=` 는 초 단위라 최대 1초 오차가 생긴다 — 비교 시 여유를 둔다.
+ */
+function getProcessStartMs(pid) {
+  try {
+    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim();
+    if (!out) return null;
+    const ms = new Date(out).getTime();
+    return Number.isFinite(ms) ? ms : null;
+  } catch {
+    return null;
+  }
+}
+
+/** ps 초 단위 절삭 + 기록 지연을 흡수할 여유. 이보다 늦게 시작한 pid 는 재사용으로 본다. */
+const PID_REUSE_TOLERANCE_MS = 5000;
 
 /**
  * Tracks spawned Claude CLI child process PIDs to a JSON file on disk.
@@ -13,7 +46,7 @@ import { logger } from './logger.js';
  * the user doesn't end up with duplicate agents on retry.
  *
  * Shape of the on-disk file:
- *   { "sessions": { "<sessionId>": { "pid": 12345, "startedAt": "2026-04-15T..." } } }
+ *   { "sessions": { "<sessionId>": { "pid": 12345, "serverPid": 999, "startedAt": "2026-04-15T..." } } }
  *
  * On graceful shutdown the file is cleaned up via release(). On crash it's
  * read on next boot and every live PID is SIGTERM'd.
@@ -57,7 +90,13 @@ export function createProcessTracker({ filePath }) {
      * callers don't need to await it (write happens in parallel with chat start).
      */
     track(sessionId, pid) {
-      state.sessions[sessionId] = { pid, startedAt: new Date().toISOString() };
+      // serverPid: 이 항목을 소유한 claw-web 인스턴스. 다른 인스턴스가 부팅하며
+      // reapOrphans 를 돌려도 남의 워커를 죽이지 않게 하는 소유권 표식.
+      state.sessions[sessionId] = {
+        pid,
+        serverPid: process.pid,
+        startedAt: new Date().toISOString()
+      };
       return flush();
     },
 
@@ -72,7 +111,12 @@ export function createProcessTracker({ filePath }) {
 
     /**
      * On boot: for every tracked PID still alive, send SIGTERM then clear
-     * the file. Returns the count of orphans killed.
+     * the file. Returns { killed, preserved, skipped }.
+     *
+     * 죽이지 않는 경우:
+     *   - preserveSessionIds 에 포함된 세션 (soft-restart 이어가기)
+     *   - serverPid 가 아직 살아있고 우리 pid 와 다름 → 다른 claw-web 인스턴스 소유
+     *   - pid 의 실제 시작 시각이 startedAt 보다 나중 → pid 재사용
      *
      * @param {Object} [opts]
      * @param {Set<string>|Array<string>} [opts.preserveSessionIds] - 이어가기 예정 세션 ID 들은 kill 하지 않음.
@@ -85,6 +129,10 @@ export function createProcessTracker({ filePath }) {
       const entries = Object.entries(state.sessions);
       let killed = 0;
       let preserved = 0;
+      let skipped = 0;
+      // 죽이지 않고 파일에 그대로 남겨둘 세션들 (preserve + 타 인스턴스 소유)
+      const keep = new Set();
+
       for (const [sessionId, info] of entries) {
         if (!info?.pid) continue;
         try {
@@ -93,9 +141,31 @@ export function createProcessTracker({ filePath }) {
           // Alive
           if (preserve.has(sessionId)) {
             preserved += 1;
+            keep.add(sessionId);
             logger.info(
               { sessionId, pid: info.pid, startedAt: info.startedAt },
               'process-tracker: preserving live Claude CLI (pending resume will reuse)'
+            );
+            continue;
+          }
+          // (a) 다른 claw-web 인스턴스가 살아서 소유 중인 워커 — 건드리지 않는다.
+          if (info.serverPid && info.serverPid !== process.pid && isProcessAlive(info.serverPid)) {
+            skipped += 1;
+            keep.add(sessionId);
+            logger.info(
+              { sessionId, pid: info.pid, serverPid: info.serverPid, selfPid: process.pid },
+              'process-tracker: skipping worker owned by another live claw-web instance'
+            );
+            continue;
+          }
+          // (b) pid 재사용 — 실제 프로세스가 기록 시각보다 나중에 시작됐으면 남의 프로세스다.
+          const startMs = getProcessStartMs(info.pid);
+          const trackedMs = info.startedAt ? new Date(info.startedAt).getTime() : NaN;
+          if (startMs !== null && Number.isFinite(trackedMs) && startMs > trackedMs + PID_REUSE_TOLERANCE_MS) {
+            skipped += 1;
+            logger.info(
+              { sessionId, pid: info.pid, startedAt: info.startedAt, actualStart: new Date(startMs).toISOString() },
+              'process-tracker: skipping recycled pid (process started after we tracked it)'
             );
             continue;
           }
@@ -116,14 +186,13 @@ export function createProcessTracker({ filePath }) {
           // Not alive — already gone, nothing to do
         }
       }
-      // preserve 된 엔트리만 살리고 나머지는 제거
       const next = { sessions: {} };
       for (const [sid, info] of Object.entries(state.sessions)) {
-        if (preserve.has(sid)) next.sessions[sid] = info;
+        if (keep.has(sid)) next.sessions[sid] = info;
       }
       state = next;
       await flush();
-      return { killed, preserved };
+      return { killed, preserved, skipped };
     },
 
     /** For tests + observability */
