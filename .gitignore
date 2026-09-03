@@ -55,5 +55,6 @@ data/.layout-migration-done
 # Local agents/channels config (do not commit — contains private setup)
 /config.json
 /config.json.bak-*
+/config.json.bak_*
 data/user/agents-config.json.bak-*
 data/user/agents-config.json.moved-*
