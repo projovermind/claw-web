@@ -8,7 +8,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOGS_DIR="$REPO_ROOT/logs"
+LOGS_DIR="$REPO_ROOT/data/user/logs"  # index.js·admin/restart.js 와 동일 위치
 SOFT_RESTART_FLAG="$LOGS_DIR/.soft-restart"
 SOURCE="${1:-manual}"
 

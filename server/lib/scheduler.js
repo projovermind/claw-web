@@ -70,7 +70,8 @@ export function createScheduler({ filePath, eventBus }) {
       matchField(hour, date.getHours(), 23) &&
       matchField(dom, date.getDate(), 31) &&
       matchField(month, date.getMonth() + 1, 12) &&
-      matchField(dow, date.getDay(), 7)
+      // cron 은 일요일을 0 과 7 둘 다로 표기한다. getDay() 는 0 만 주므로 7→0 정규화.
+      matchField(dow.replace(/\b7\b/g, '0'), date.getDay(), 6)
     );
   }
 

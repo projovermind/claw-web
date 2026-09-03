@@ -73,7 +73,9 @@ export function registerUpdateRoutes(router, { eventBus } = {}) {
       await fs.writeFile(dlPath, buf);
 
       const { spawn } = await import('node:child_process');
-      spawn('open', [dlPath], { detached: true, stdio: 'ignore' }).unref();
+      const opener = spawn('open', [dlPath], { detached: true, stdio: 'ignore' });
+      opener.on('error', (err) => logger.warn({ err: err.message }, 'admin: installer open failed'));
+      opener.unref();
 
       logger.info({ dlPath, size: buf.length }, 'admin: Installer.app launched');
       res.json({

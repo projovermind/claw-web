@@ -92,6 +92,19 @@ export function createAgentsRouter({ configStore, metadataStore, projectsStore, 
 
       const { configPatch, metaPatch } = splitPatch(parsed);
 
+      // Auto-sync workingDir when projectId changes and projectsStore is available.
+      // 스냅샷보다 먼저 해야 한다 — 나중에 주입하면 바뀔 workingDir 의 이전 값이
+      // undo 기록에 안 담겨 되돌려도 엉뚱한 디렉터리에 남는다.
+      if (metaPatch.projectId !== undefined && projectsStore) {
+        if (metaPatch.projectId) {
+          const proj = projectsStore.getById(metaPatch.projectId);
+          if (proj?.path) {
+            configPatch.workingDir = proj.path;
+          }
+        }
+        // projectId=null (unassigned) → keep existing workingDir (no-op)
+      }
+
       // Undo 스냅샷: 변경될 필드의 이전 값만 저장
       const currentConfig = configStore.getAgent(id);
       const currentMeta = metadataStore?.getAgent(id) ?? {};
@@ -105,17 +118,6 @@ export function createAgentsRouter({ configStore, metadataStore, projectsStore, 
       }
       if (Object.keys(configBefore).length > 0 || Object.keys(metaBefore).length > 0) {
         pushUndo({ agentId: id, configBefore, metaBefore, configPatch, metaPatch });
-      }
-
-      // Auto-sync workingDir when projectId changes and projectsStore is available
-      if (metaPatch.projectId !== undefined && projectsStore) {
-        if (metaPatch.projectId) {
-          const proj = projectsStore.getById(metaPatch.projectId);
-          if (proj?.path) {
-            configPatch.workingDir = proj.path;
-          }
-        }
-        // projectId=null (unassigned) → keep existing workingDir (no-op)
       }
 
       if (Object.keys(configPatch).length) {

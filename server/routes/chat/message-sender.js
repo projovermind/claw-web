@@ -495,9 +495,16 @@ export function createMessageSender(ctx) {
               pushStore.sendPushToAll(`${agentName} 완료`, '응답이 완료되었습니다.', { url: `/chat?agent=${encodeURIComponent(session.agentId)}&session=${encodeURIComponent(sessionId)}` }).catch(() => {});
             }
             const responseText = result.text ?? accumText;
-            ctx.handleDelegation(sessionId, responseText);
-            ctx.handleLoopContinuation(sessionId, responseText);
-            ctx.handleWakeup(sessionId, responseText);
+            // 셋 다 async 다. 여기서 catch 를 안 붙이면 내부의 store 쓰기 실패가
+            // unhandledRejection 으로 새어 emergencyShutdown(서버 전체 종료)을 부른다.
+            const postTurn = (label, p) => {
+              Promise.resolve(p).catch((e) =>
+                logger.warn({ err: e?.message, sessionId, handler: label }, 'chat: post-turn handler failed')
+              );
+            };
+            postTurn('delegation', ctx.handleDelegation(sessionId, responseText));
+            postTurn('loop', ctx.handleLoopContinuation(sessionId, responseText));
+            postTurn('wakeup', ctx.handleWakeup(sessionId, responseText));
 
             // Queued user messages / deferred reports need no flush here — they
             // already live in the dispatch queue and start when this turn settles.

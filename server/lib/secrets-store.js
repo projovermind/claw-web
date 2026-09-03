@@ -65,7 +65,9 @@ export async function createSecretsStore({ filePath }) {
   // Serialize writes
   let writeChain = Promise.resolve();
   function flush() {
-    writeChain = writeChain.then(async () => {
+    // 한 번 reject 된 체인에 .then 을 이어붙이면 이후 모든 쓰기가 콜백조차 실행되지
+    // 않고 옛 에러만 되돌려준다 → 재시작 전까지 영구히 저장 불가.
+    writeChain = writeChain.catch(() => {}).then(async () => {
       const tmp = filePath + '.tmp';
       await fs.writeFile(tmp, JSON.stringify(state, null, 2), { mode: 0o600 });
       await fs.rename(tmp, filePath);

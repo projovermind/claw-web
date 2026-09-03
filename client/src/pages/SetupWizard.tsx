@@ -3,6 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Sparkles, Folder, Check, X, Loader2 } from 'lucide-react';
 import { useT } from '../lib/i18n';
+import { getAuthToken } from '../lib/api';
+
+/**
+ * 토큰 키는 lib/api 의 TOKEN_KEY('hivemind:auth-token') 하나뿐.
+ * 예전엔 'claw:auth-token' 을 읽어서 auth 켜진 서버에서 scan/apply 가 항상 401 이었다.
+ */
+function authHeader(): Record<string, string> {
+  const token = getAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 interface ScannedProject {
   path: string;
@@ -55,7 +65,7 @@ export default function SetupWizard() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('claw:auth-token') ?? ''}`
+          ...authHeader()
         },
         body: JSON.stringify({ roots: rootPath ? [rootPath] : [] })
       });
@@ -94,7 +104,7 @@ export default function SetupWizard() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('claw:auth-token') ?? ''}`
+          ...authHeader()
         },
         body: JSON.stringify({ projects })
       });

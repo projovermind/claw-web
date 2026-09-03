@@ -11,6 +11,7 @@ import type {
   BackendsState,
   BackendPublic,
   Skill,
+  UsageCost,
   ActivityEntry
 } from './types';
 
@@ -39,6 +40,16 @@ export function setAuthToken(token: string | null): void {
  */
 export const authEvents = new EventTarget();
 
+/** HTTP 상태코드를 보존하는 에러 — 409 등 분기가 필요한 호출부에서 사용. */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getAuthToken();
   const headers: Record<string, string> = {
@@ -57,7 +68,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       body = null;
     }
-    throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+    throw new ApiError(body?.error ?? `${res.status} ${res.statusText}`, res.status);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -241,8 +252,12 @@ export const api = {
   skill: (id: string) => get<Skill>(`/skills/${id}`),
   createSkill: (data: { name: string; description?: string; content?: string }) =>
     post<Skill>('/skills', data),
+  /** GitHub 의 SKILL.md URL 을 그대로 넣어 스킬로 수입. 같은 이름이 있으면 409. */
+  importSkillUrl: (data: { url: string; triggers?: string[]; alwaysOn?: boolean }) =>
+    post<Skill>('/skills/import-url', data),
   patchSkill: (id: string, data: Partial<Omit<Skill, 'id'>>) => patch<Skill>(`/skills/${id}`, data),
   deleteSkill: (id: string) => del<void>(`/skills/${id}`),
+  refreshSystemSkills: () => post<{ count: number }>('/skills/system/refresh', {}),
   assignSkillToAgents: (skillId: string, agentIds: string[]) =>
     post<{ skillId: string; assigned: number; agentIds: string[] }>(
       `/skills/${skillId}/assign`,
@@ -291,6 +306,8 @@ export const api = {
     get<{
       window5h: { inputTokens: number; outputTokens: number; total: number };
       window7d: { inputTokens: number; outputTokens: number; total: number };
+      /** 비용 추적 도입 전 서버는 이 필드를 보내지 않음 */
+      cost?: UsageCost;
     }>('/stats/usage'),
   tunnelUrl: () => get<{ url: string | null; file: string }>(`/tunnel/url`),
 

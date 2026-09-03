@@ -586,6 +586,8 @@ export function startClaudeRun({
       }
       resultSessionId = event.session_id || null;
       if (!resultModel) resultModel = event.model || null;
+      // CLI 가 실제 과금액을 실어 보내는 유일한 지점. 없으면 0 (구독 계정 등).
+      const costUsd = typeof event.total_cost_usd === 'number' ? event.total_cost_usd : 0;
       if (event.usage) {
         // CLI `result.usage` 는 도구 루프의 모든 내부 호출 합산 — 과금/누적 통계용.
         // 컨텍스트 윈도우 부하는 별도로 `contextTokens` (마지막 call 의 prompt 크기)
@@ -597,7 +599,10 @@ export function startClaudeRun({
           cacheReadTokens: event.usage.cache_read_input_tokens ?? 0,
           totalTokens: (event.usage.input_tokens ?? 0) + (event.usage.output_tokens ?? 0),
           contextTokens: lastCallUsage,
+          costUsd,
         };
+      } else if (costUsd > 0) {
+        resultUsage = { ...(resultUsage ?? {}), costUsd };
       }
       // 턴의 최종 이벤트. 프로세스가 스스로 종료 안 하면 유예 후 강제 종료해 즉시 마감.
       scheduleExitGrace();
@@ -654,13 +659,21 @@ export function startClaudeRun({
     resetIdleTimer();
   });
 
-  proc.on('close', (code) => {
+  proc.on('close', (code, signal) => {
     clearTimeout(idleTimer);
     clearTimeout(exitGraceTimer);
+    // 이 타이머를 안 지우면 close 이후 60초 뒤에 깨어나 죽은 proc 을 상대로
+    // 20분짜리 stall 타이머를 새로 걸어둔다 (도구를 쓴 턴마다 하나씩 누적).
+    clearTimeout(postToolThinkingTimer);
+    // 시그널로 죽은 자식은 close 에서 code=null, signal='SIGTERM' 으로 온다.
+    // 셸 관례(128+signo)로 정규화해야 하위 소비자(message-sender 의 wasKilled 판정,
+    // silent-exit 재시도 가드)가 "중단"과 "빈 응답"을 구분할 수 있다.
+    const signalCode = signal === 'SIGTERM' ? 143 : signal === 'SIGKILL' ? 137 : null;
+    const exitCode = signalCode ?? code;
     // init 단계에서 silent-fallback 을 감지해 abort 한 경우: 응답 없음 → fresh-start 재시도 에러로 즉시 종료.
     if (silentFallbackDetected) {
       onError?.(new Error('silent_fallback: --resume dropped by CLI, fresh-start retry required'));
-      onExit?.({ code });
+      onExit?.({ code: exitCode });
       return;
     }
     // 그 외 close 시점 검증 (init 을 못 받고 끝난 경우 등의 방어): 요청 ID 와 실제 ID 가 다르면 로그만 남김.
@@ -676,16 +689,17 @@ export function startClaudeRun({
     if (retryableErrorText) {
       logger.warn({ agent: agent.id }, 'runner: retryable API error in result event — routing to onError for auto-retry');
       onError?.(new Error(retryableErrorText));
-      onExit?.({ code });
+      onExit?.({ code: exitCode });
       return;
     }
     const final = resultText || (assistantTexts.length ? assistantTexts.join('\n\n') : null);
-    if (code === 0 || final) {
-      onResult?.({ text: final, claudeSessionId: resultSessionId, model: resultModel, usage: resultUsage, exitCode: code });
-    } else if (code === 143 || code === 137) {
+    if (exitCode === 143 || exitCode === 137) {
       // SIGTERM(143) / SIGKILL(137) = 유저가 중단하거나 타임아웃 kill
-      // 에러가 아닌 정상 중단으로 처리
-      onResult?.({ text: final ?? '(응답이 중단되었습니다)', claudeSessionId: resultSessionId, model: resultModel, usage: resultUsage, exitCode: code });
+      // 에러가 아닌 정상 중단으로 처리. 부분 출력이 있어도 '완료'로 새면 안 되므로
+      // exit 0 판정보다 먼저 확인한다.
+      onResult?.({ text: final ?? '(응답이 중단되었습니다)', claudeSessionId: resultSessionId, model: resultModel, usage: resultUsage, exitCode });
+    } else if (code === 0 || final) {
+      onResult?.({ text: final, claudeSessionId: resultSessionId, model: resultModel, usage: resultUsage, exitCode: code });
     } else {
       const rawStderr = stderrChunks.join('').trim();
       // 음수 종료코드 = libuv 시스템에러 (예: -2 = ENOENT). spawn 자체는 됐지만
@@ -703,7 +717,7 @@ export function startClaudeRun({
       }
       onError?.(new Error(errMsg));
     }
-    onExit?.({ code });
+    onExit?.({ code: exitCode });
   });
 
   proc.on('error', (err) => {

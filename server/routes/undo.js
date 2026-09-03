@@ -13,7 +13,9 @@ export function createUndoRouter({ configStore, metadataStore, sessionsStore, ev
   // POST /api/undo — 마지막 변경 복원
   router.post('/', async (req, res, next) => {
     try {
-      const entry = popUndo();
+      // pop 을 먼저 하면 아래 검증에서 404 로 빠질 때 되돌릴 기록이 영영 사라지고,
+      // 다음 undo 가 무관한 옛 항목을 되돌린다. 성공한 뒤에만 스택에서 뺀다.
+      const entry = peekUndo();
       if (!entry) {
         return next(new HttpError(404, 'Nothing to undo', 'UNDO_EMPTY'));
       }
@@ -48,6 +50,9 @@ export function createUndoRouter({ configStore, metadataStore, sessionsStore, ev
           eventBus.publish('agent.updated', { agentId, undo: true, undoId: entry.id });
         }
       }
+
+      // 여기까지 왔으면 복원이 실제로 적용됐다 — 이제 스택에서 제거.
+      popUndo();
 
       const restoredConfig = configStore.getAgent(agentId);
       const restoredMeta = metadataStore?.getAgent(agentId) ?? {};

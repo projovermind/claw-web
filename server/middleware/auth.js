@@ -17,11 +17,13 @@ const LOCK_MS = 15 * 60_000;
 const failures = new Map(); // ip → { count, lockedUntil }
 
 function clientIp(req) {
-  const xff = req.headers['x-forwarded-for'];
+  // ws upgrade 요청은 headers 가 없는 형태로 들어올 수 있어 방어
+  const headers = req?.headers ?? {};
+  const xff = headers['x-forwarded-for'];
   return (
-    req.headers['cf-connecting-ip'] ||
+    headers['cf-connecting-ip'] ||
     (typeof xff === 'string' ? xff.split(',')[0].trim() : null) ||
-    req.socket?.remoteAddress ||
+    req?.socket?.remoteAddress ||
     'unknown'
   );
 }

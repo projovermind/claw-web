@@ -6,6 +6,7 @@ import os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { logger } from '../lib/logger.js';
+import { HttpError } from '../middleware/error-handler.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -54,10 +55,22 @@ function slugify(skill) {
 export function createExportImportRouter({ skillsStore, configStore }) {
   const router = express.Router();
 
+  /**
+   * 요청이 준 dir 은 DEFAULT_DIR 안이어야 한다. 검증 없이 쓰면 /git/commit 이
+   * 사용자의 실제 레포에서 `git add .` + commit 을 돌려 미완성 변경을 커밋해 버린다.
+   */
+  function resolveExportDir(raw) {
+    const dir = path.resolve(raw ?? DEFAULT_DIR);
+    if (dir !== DEFAULT_DIR && !dir.startsWith(DEFAULT_DIR + path.sep)) {
+      throw new HttpError(403, `dir must be inside ${DEFAULT_DIR}`, 'DIR_NOT_ALLOWED');
+    }
+    return dir;
+  }
+
   // ── Skills export ──────────────────────────────────────────────────────────
   router.post('/skills/export', async (req, res, next) => {
     try {
-      const dir = path.resolve(req.body?.dir ?? DEFAULT_DIR);
+      const dir = resolveExportDir(req.body?.dir);
       const skillsDir = path.join(dir, 'skills');
       await fs.mkdir(skillsDir, { recursive: true });
 
@@ -92,7 +105,7 @@ export function createExportImportRouter({ skillsStore, configStore }) {
   // ── Skills import ──────────────────────────────────────────────────────────
   router.post('/skills/import', async (req, res, next) => {
     try {
-      const dir = path.resolve(req.body?.dir ?? DEFAULT_DIR);
+      const dir = resolveExportDir(req.body?.dir);
       const skillsDir = path.join(dir, 'skills');
 
       let entries;
@@ -137,7 +150,7 @@ export function createExportImportRouter({ skillsStore, configStore }) {
   // ── Agents export ──────────────────────────────────────────────────────────
   router.post('/agents/export', async (req, res, next) => {
     try {
-      const dir = path.resolve(req.body?.dir ?? DEFAULT_DIR);
+      const dir = resolveExportDir(req.body?.dir);
       const agentsDir = path.join(dir, 'agents');
       await fs.mkdir(agentsDir, { recursive: true });
 
@@ -160,7 +173,7 @@ export function createExportImportRouter({ skillsStore, configStore }) {
   // ── Agents import ──────────────────────────────────────────────────────────
   router.post('/agents/import', async (req, res, next) => {
     try {
-      const dir = path.resolve(req.body?.dir ?? DEFAULT_DIR);
+      const dir = resolveExportDir(req.body?.dir);
       const agentsDir = path.join(dir, 'agents');
 
       let entries;
@@ -202,7 +215,7 @@ export function createExportImportRouter({ skillsStore, configStore }) {
   // ── Git commit ─────────────────────────────────────────────────────────────
   router.post('/git/commit', async (req, res, next) => {
     try {
-      const dir = path.resolve(req.body?.dir ?? DEFAULT_DIR);
+      const dir = resolveExportDir(req.body?.dir);
       const message = req.body?.message ?? `export snapshot ${new Date().toISOString()}`;
 
       // Ensure dir exists

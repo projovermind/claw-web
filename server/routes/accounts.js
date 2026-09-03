@@ -7,6 +7,7 @@ import fssync from 'node:fs';
 import path from 'node:path';
 import { HttpError } from '../middleware/error-handler.js';
 import { resolveConfigDir, ensureConfigDir } from '../lib/config-dir.js';
+import { logger } from '../lib/logger.js';
 
 // node-pty 는 native binding — 일부 환경(CI, 일부 도커)에서 실패 가능 →
 //  optional import 로 처리, 없으면 헤드리스 로그인은 ttyRequired:true 로 응답.
@@ -125,7 +126,13 @@ export function createAccountsRouter({ accountsStore, eventBus, backendsStore })
 
       // Resolve final configDir
       const configDir = data.configDir || path.join(home, '.claude-claw', `account-${account.id}`);
-      await fs.mkdir(configDir, { recursive: true });
+      try {
+        await fs.mkdir(configDir, { recursive: true });
+      } catch (err) {
+        // mkdir 이 실패하면 클라이언트는 500 을 받는데 계정 행은 남아 목록에 유령이 생긴다.
+        await accountsStore.remove(account.id).catch(() => {});
+        throw err;
+      }
 
       if (!data.configDir) {
         await accountsStore.update(account.id, { configDir });
@@ -228,7 +235,10 @@ export function createAccountsRouter({ accountsStore, eventBus, backendsStore })
 
       // 성공 → cred 도 보유 → disabled / needs-relogin 자동 활성화
       const fresh = accountsStore.getById(acc.id);
-      if (fresh && fresh.cred?.has && (fresh.status === 'disabled' || fresh.status === 'needs-relogin')) {
+      const autoActivated = !!(
+        fresh?.cred?.has && (fresh.status === 'disabled' || fresh.status === 'needs-relogin')
+      );
+      if (autoActivated) {
         await accountsStore.update(acc.id, { status: 'active' }).catch(() => {});
         eventBus?.publish('accounts.updated', {});
       }
@@ -242,7 +252,7 @@ export function createAccountsRouter({ accountsStore, eventBus, backendsStore })
         ok: true,
         configDir: acc.configDir,
         output: (stdout || stderr || '').trim(),
-        autoActivated: fresh?.status === 'disabled' || fresh?.status === 'needs-relogin',
+        autoActivated,
         managedTokenReplaced: replaceResult.removed,
       });
     } catch (err) {
@@ -370,7 +380,8 @@ export function createAccountsRouter({ accountsStore, eventBus, backendsStore })
 
   // ── Headless OAuth login (Phase 3) ──
   // 세션 메모리에 진행 중인 login 프로세스를 보관. 한 계정당 동시 1개.
-  const loginSessions = new Map(); // accountId -> { proc, output, status, urls }
+  const loginSessions = new Map(); // accountId -> { proc, output, status, urls, reaper }
+  const LOGIN_SESSION_TTL_MS = 10 * 60_000;
 
   function extractUrls(text) {
     const matches = text.match(/https?:\/\/[^\s)>'"]+/g);
@@ -409,6 +420,7 @@ export function createAccountsRouter({ accountsStore, eventBus, backendsStore })
       if (existing?.proc) {
         try { existing.proc.kill?.(); } catch { /* ignore */ }
       }
+      if (existing?.reaper) clearTimeout(existing.reaper);
 
       const env = { ...process.env, CLAUDE_CONFIG_DIR: configDir, TERM: 'xterm-256color' };
       const proc = ptyMod.spawn(CLAUDE_BIN, ['login'], {
@@ -426,6 +438,14 @@ export function createAccountsRouter({ accountsStore, eventBus, backendsStore })
         urls: [],
         startedAt: Date.now(),
       };
+      // 클라이언트가 DELETE 를 안 보내고 탭만 닫으면 `claude login` PTY 가 영원히 남는다.
+      // 10분 뒤 스스로 정리.
+      session.reaper = setTimeout(() => {
+        if (loginSessions.get(acc.id) !== session) return;
+        try { session.proc.kill?.(); } catch { /* ignore */ }
+        loginSessions.delete(acc.id);
+        logger.warn({ accountId: acc.id }, 'accounts: headless login session reaped after 10m');
+      }, LOGIN_SESSION_TTL_MS);
       loginSessions.set(acc.id, session);
 
       proc.onData((data) => {
@@ -439,6 +459,7 @@ export function createAccountsRouter({ accountsStore, eventBus, backendsStore })
         if (newUrls.length) session.urls.push(...newUrls);
       });
       proc.onExit(({ exitCode }) => {
+        if (session.reaper) { clearTimeout(session.reaper); session.reaper = null; }
         session.status = exitCode === 0 ? 'success' : 'failed';
         session.exitCode = exitCode;
         if (exitCode === 0) {
@@ -503,6 +524,7 @@ export function createAccountsRouter({ accountsStore, eventBus, backendsStore })
       // node-pty .kill() 은 인자 없이 호출 (signal 옵션은 PTY 환경에 따라 무시됨)
       try { session.proc.kill(); } catch { /* ignore */ }
     }
+    if (session?.reaper) clearTimeout(session.reaper);
     loginSessions.delete(req.params.id);
     res.json({ ok: true });
   });

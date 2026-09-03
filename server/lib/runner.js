@@ -176,6 +176,9 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
               message,
               claudeSessionId,
               envOverrides: envOverrides || {},
+              // 빠뜨리면 fallback 실행이 기본 ~/.claude 계정으로 새고
+              // 사용량 기록/쿨다운 회전도 안 걸린다.
+              accountScheduler,
               callbacks: {
                 ...withActivity(sessionId, callbacks),
                 onExit: (info) => {

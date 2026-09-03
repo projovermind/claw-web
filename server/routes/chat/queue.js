@@ -19,7 +19,12 @@ export function createQueue(ctx) {
     ctx.delegationTracker?.setPendingQueue?.(agentQueue);
     logger.info({ agentId, remaining: agentQueue.get(agentId)?.length ?? 0 }, 'delegation: dequeuing next task');
     setTimeout(() => {
-      ctx.executeDelegation(next.originSessionId, next.targetAgentId, next.task, next.rawText);
+      // executeDelegation 은 async — 타이머 콜백에서 reject 되면 unhandledRejection 이다.
+      Promise.resolve(
+        ctx.executeDelegation(next.originSessionId, next.targetAgentId, next.task, next.rawText)
+      ).catch((err) =>
+        logger.warn({ err: err?.message, agentId }, 'delegation: dequeued execution failed')
+      );
     }, 500);
   }
 

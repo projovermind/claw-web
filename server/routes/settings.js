@@ -39,7 +39,9 @@ export function createSettingsRouter({ webConfig, webConfigPath, eventBus }) {
   const router = Router();
 
   router.get('/', (req, res) => {
-    const { auth, ...safe } = webConfig;
+    // 이 라우트는 인증 미들웨어에서 면제되어 있다 (middleware/auth.js) — VAPID 개인키가
+    // 그대로 나가면 누구나 푸시 알림을 위조할 수 있으므로 반드시 제거한다.
+    const { auth, vapidPrivateKey: _vapidPrivateKey, ...safe } = webConfig;
     res.json({
       ...safe,
       auth: { enabled: auth.enabled, token: auth.token ? '***' : null }

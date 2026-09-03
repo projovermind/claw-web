@@ -43,7 +43,10 @@ export function createProjectMdRouter({ projectsStore, webConfig, eventBus }) {
     const projectPath = path.resolve(project.path);
     // allowedRoots check
     const allowedRoots = (webConfig.allowedRoots ?? []).map((r) => path.resolve(r));
-    const inAllowedRoot = allowedRoots.some((root) => projectPath.startsWith(root));
+    // 구분자 없이 startsWith 하면 "/a/work" 루트가 "/a/work-secrets" 를 통과시킨다.
+    const inAllowedRoot = allowedRoots.some(
+      (root) => projectPath === root || projectPath.startsWith(root + path.sep)
+    );
     if (!inAllowedRoot) {
       throw new HttpError(
         403,

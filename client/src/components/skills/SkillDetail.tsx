@@ -1,8 +1,19 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Pencil, Trash2, Sparkles, Package, Lock, Users, UserPlus, UserMinus, Zap, Tag } from 'lucide-react';
+import { Pencil, Trash2, Sparkles, Package, Lock, Users, UserPlus, UserMinus, Zap, Tag, ExternalLink } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { Skill, Agent } from '../../lib/types';
 import { useT } from '../../lib/i18n';
+
+/**
+ * import-url 로 수입한 스킬은 content 첫머리에 `<!-- source: URL -->` 주석을 갖는다.
+ * 그 URL 만 뽑아 출처 링크로 노출 (http/https 만 허용 — javascript: 등 차단).
+ */
+function extractSourceUrl(content: string): string | null {
+  const m = content.match(/<!--\s*source:\s*(\S+?)\s*-->/);
+  const raw = m?.[1];
+  if (!raw) return null;
+  return /^https?:\/\//i.test(raw) ? raw : null;
+}
 
 export function SkillDetail({
   selected,
@@ -25,6 +36,7 @@ export function SkillDetail({
   });
 
   const totalApplied = appliedAgents.direct.length + appliedAgents.inherited.length;
+  const sourceUrl = extractSourceUrl(selected.content ?? '');
 
   return (
     <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-5 space-y-4">
@@ -51,6 +63,18 @@ export function SkillDetail({
             <div className="text-xs text-zinc-600 font-mono mt-1.5 truncate" title={selected.source}>
               📁 {selected.source}
             </div>
+          )}
+          {sourceUrl && (
+            <a
+              href={sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={sourceUrl}
+              className="inline-flex items-center gap-1 text-xs text-sky-400 hover:text-sky-300 mt-1.5 max-w-full"
+            >
+              <ExternalLink size={11} className="shrink-0" />
+              <span className="truncate">{sourceUrl}</span>
+            </a>
           )}
           {/* alwaysOn / triggers badges */}
           {(selected.alwaysOn || (selected.triggers && selected.triggers.length > 0)) && (

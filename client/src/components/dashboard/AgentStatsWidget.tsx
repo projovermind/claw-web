@@ -137,7 +137,7 @@ export default function AgentStatsWidget() {
                     <div className="bg-zinc-900/30 px-3 py-1.5">
                       <table className="w-full text-[11px]">
                         <tbody>
-                          {g.agents
+                          {[...g.agents]
                             .sort((a, b) => (b.totalInputTokens + b.totalOutputTokens) - (a.totalInputTokens + a.totalOutputTokens))
                             .map(a => {
                               const total = a.totalInputTokens + a.totalOutputTokens;

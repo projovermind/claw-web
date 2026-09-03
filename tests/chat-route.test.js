@@ -56,9 +56,11 @@ describe('chat route', () => {
 
     app = express();
     app.use(express.json());
-    app.use('/api/chat', createChatRouter({
+    // createChatRouter 는 { router, ... } 를 반환한다 (resume/wakeup 핸들 포함)
+    const { router: chatRouter } = createChatRouter({
       sessionsStore, configStore, metadataStore: metaStore, runner, eventBus
-    }));
+    });
+    app.use('/api/chat', chatRouter);
     app.use(errorHandler);
   });
 

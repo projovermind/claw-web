@@ -9,6 +9,7 @@ import { useT } from '../lib/i18n';
 import type { SessionMeta, Agent, Project } from '../lib/types';
 import ActivityFeed from '../components/dashboard/ActivityFeed';
 import AgentStatsWidget from '../components/dashboard/AgentStatsWidget';
+import CostWidget from '../components/dashboard/CostWidget';
 
 export default function DashboardPage() {
   const t = useT();
@@ -257,9 +258,10 @@ export default function DashboardPage() {
         <ActivityFeed limit={40} />
       </div>
 
-      {/* Agent Stats Widget */}
-      <div>
+      {/* Agent Stats + 비용 위젯 */}
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_340px] gap-5 items-start">
         <AgentStatsWidget />
+        <CostWidget />
       </div>
     </div>
   );

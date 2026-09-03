@@ -47,13 +47,14 @@ describe('process-tracker', () => {
     await t1.track('sess2', 999999);
     // Reap should not throw; dead pids are simply cleared
     const t2 = createProcessTracker({ filePath });
-    const killed = await t2.reapOrphans();
+    const { killed, preserved } = await t2.reapOrphans();
     // Neither PID should have been killable (the one we track as dead above is not ours)
     // But the state should be cleared regardless.
     expect(t2._getState().sessions).toEqual({});
     // killed can be 0 or more depending on what OS thinks of those pids, but the
     // important invariant is that state is cleared.
     expect(typeof killed).toBe('number');
+    expect(preserved).toBe(0);
   });
 
   it('reapOrphans SIGTERMs a live orphan (integration)', async () => {
@@ -71,7 +72,7 @@ describe('process-tracker', () => {
 
     // New tracker instance reads the file and reaps
     const t2 = createProcessTracker({ filePath });
-    const killed = await t2.reapOrphans();
+    const { killed } = await t2.reapOrphans();
     expect(killed).toBeGreaterThanOrEqual(1);
 
     // Give it a moment to die

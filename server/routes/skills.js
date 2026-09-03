@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
 import { estimateSkillTokens, skillMode } from '../lib/skills-store.js';
+import { fetchSkillFromUrl } from '../lib/skill-import.js';
 
 const createSchema = z.object({
   name: z.string().min(1).max(80),
@@ -19,6 +20,12 @@ const updateSchema = z.object({
   alwaysOn: z.boolean().optional(),
   triggers: z.array(z.string().min(1).max(80)).max(32).optional(),
   priority: z.number().int().min(0).max(1000).optional()
+}).strict();
+
+const importUrlSchema = z.object({
+  url: z.string().url().max(2000),
+  triggers: z.array(z.string().min(1).max(80)).max(32).optional(),
+  alwaysOn: z.boolean().optional()
 }).strict();
 
 const assignSchema = z.object({
@@ -71,6 +78,31 @@ export function createSkillsRouter({
     try {
       const data = createSchema.parse(req.body);
       const created = await skillsStore.create(data);
+      if (eventBus) eventBus.publish('skill.created', { skill: created });
+      res.status(201).json(created);
+    } catch (err) {
+      if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
+      next(err);
+    }
+  });
+
+  // POST /import-url — GitHub SKILL.md 를 URL 로 바로 수입
+  router.post('/import-url', async (req, res, next) => {
+    try {
+      const { url, triggers, alwaysOn } = importUrlSchema.parse(req.body);
+      const parsed = await fetchSkillFromUrl(url);
+      const taken = [...skillsStore.getAll(), ...(systemSkillsStore?.getAll() ?? [])]
+        .some((s) => s.name === parsed.name);
+      if (taken) {
+        throw new HttpError(409, 'Skill with this name already exists', 'SKILL_NAME_TAKEN');
+      }
+      const created = await skillsStore.create({
+        name: parsed.name,
+        description: parsed.description,
+        content: parsed.content,
+        triggers: triggers ?? [],
+        alwaysOn: alwaysOn ?? false
+      });
       if (eventBus) eventBus.publish('skill.created', { skill: created });
       res.status(201).json(created);
     } catch (err) {

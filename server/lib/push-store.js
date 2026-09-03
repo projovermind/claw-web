@@ -50,7 +50,10 @@ export function createPushStore({ webConfig, webConfigPath }) {
 
   async function saveSubs() {
     try {
-      await fs.writeFile(subsPath, JSON.stringify(subscriptions, null, 2));
+      // in-place 쓰기 중 프로세스가 죽으면 파일이 잘려 loadSubs 가 전체 구독을 버린다.
+      const tmp = subsPath + '.tmp';
+      await fs.writeFile(tmp, JSON.stringify(subscriptions, null, 2));
+      await fs.rename(tmp, subsPath);
     } catch (err) {
       logger.warn({ err }, 'push-store: failed to save subscriptions');
     }

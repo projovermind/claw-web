@@ -54,6 +54,9 @@ export default function Sidebar() {
     setAuthToken(null);
     window.location.reload();
   };
+  // 버전 배지 — 구버전 서버는 /api/health 에 version 이 없으므로 그때는 숨김
+  const healthQ = useQuery({ queryKey: ['health'], queryFn: api.health, staleTime: 60_000 });
+  const version = healthQ.data?.version ?? null;
   const currentSessionId = useChatStore((s) => s.currentSessionId);
   const { data: sessionsData } = useQuery({
     queryKey: ['sessions-all'],
@@ -208,7 +211,7 @@ export default function Sidebar() {
         ))}
         <DeviceSwitcher collapsed={isCollapsed} />
       </nav>
-      {(!isCollapsed || authEnabled) && (
+      {(!isCollapsed || authEnabled || version) && (
         <div className={`${isCollapsed ? 'p-1' : 'p-2'} border-t border-zinc-800`}>
           {!isCollapsed && (
             <>
@@ -245,6 +248,17 @@ export default function Sidebar() {
               <LogOut size={16} className="shrink-0" />
               {!isCollapsed && <span className="flex-1 min-w-0 text-left truncate whitespace-nowrap">로그아웃</span>}
             </button>
+          )}
+          {version && (
+            <Link
+              to="/settings?tab=access#update-check"
+              onClick={() => setMobileOpen(false)}
+              title={isCollapsed ? `v${version} — 업데이트 확인` : '업데이트 확인'}
+              className={`mt-1 flex items-center ${isCollapsed ? 'justify-center px-0' : 'justify-between px-2'} h-6 rounded text-[11px] font-mono text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900 transition-colors`}
+            >
+              <span className="truncate whitespace-nowrap">v{version}</span>
+              {!isCollapsed && <span className="text-[10px] text-zinc-700">업데이트</span>}
+            </Link>
           )}
         </div>
       )}

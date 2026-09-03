@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Plus,
@@ -7,8 +7,10 @@ import {
   Sparkles,
   Package,
   RefreshCw,
+  Github,
 } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
+import { useToastStore } from '../store/toast-store';
 import { useT } from '../lib/i18n';
 import type { Skill, Agent } from '../lib/types';
 import { SkillDetail } from '../components/skills/SkillDetail';
@@ -34,6 +36,8 @@ export default function SkillsPage() {
   const [search, setSearch] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [assignModal, setAssignModal] = useState<{ skill: Skill; mode: 'assign' | 'unassign' } | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const toast = useToastStore((s) => s.add);
 
   const create = useProgressMutation<
     Skill,
@@ -48,6 +52,29 @@ export default function SkillsPage() {
       setDraft(emptyDraft());
       setDraftTriggerInput('');
       setSelectedId(s.id);
+    }
+  });
+
+  // GitHub SKILL.md URL → 서버가 raw 로 변환·파싱해서 스킬 생성 (POST /api/skills/import-url)
+  const importUrl = useProgressMutation<
+    Skill,
+    Error,
+    { url: string; triggers?: string[]; alwaysOn?: boolean }
+  >({
+    title: 'GitHub 에서 가져오는 중...',
+    successMessage: '가져오기 완료',
+    invalidateKeys: [['skills']],
+    mutationFn: (d) => api.importSkillUrl(d),
+    onSuccess: async (s) => {
+      setImportOpen(false);
+      setSelectedId(s.id);
+    },
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 409) {
+        toast('error', '같은 이름의 스킬이 있습니다');
+      } else {
+        toast('error', err.message);
+      }
     }
   });
   const [draftTriggerInput, setDraftTriggerInput] = useState('');
@@ -91,12 +118,13 @@ export default function SkillsPage() {
   const customFiltered = useMemo(() => filterFn(custom), [custom, search]);
   const systemFiltered = useMemo(() => filterFn(system), [system, search]);
 
-  const refreshSystem = useProgressMutation<unknown, Error, void>({
+  // 예전엔 raw fetch 라 Authorization 이 빠졌고 res.ok 도 안 봐서,
+  // auth 켜진 서버에서 401 이 나도 "새로고침 완료" 토스트가 떴다.
+  const refreshSystem = useProgressMutation<{ count: number }, Error, void>({
     title: '시스템 스킬 새로고침 중...',
     successMessage: '새로고침 완료',
     invalidateKeys: [['skills']],
-    mutationFn: () =>
-      fetch('/api/skills/system/refresh', { method: 'POST' }).then((r) => r.json())
+    mutationFn: () => api.refreshSystemSkills()
   });
 
   const selected = (data ?? []).find((s) => s.id === selectedId) ?? null;
@@ -211,6 +239,14 @@ export default function SkillsPage() {
             >
               <Plus size={14} /> {t('skills.createEmpty')}
             </button>
+
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              className="w-full rounded border border-zinc-700 bg-zinc-900 hover:bg-zinc-800 px-3 py-2 text-sm text-zinc-300 flex items-center justify-center gap-1.5"
+            >
+              <Github size={14} /> GitHub 에서 가져오기
+            </button>
           </div>
 
           <div className="rounded-lg border border-zinc-800 bg-zinc-950/60">
@@ -298,6 +334,14 @@ export default function SkillsPage() {
           )}
         </div>
       </div>
+
+      {importOpen && (
+        <ImportSkillModal
+          busy={importUrl.isPending}
+          onClose={() => setImportOpen(false)}
+          onSubmit={(v) => importUrl.mutate(v)}
+        />
+      )}
 
       {editing && (
         <EditSkillModal
@@ -393,6 +437,111 @@ function SkillListButton({
         <TokenBadge skill={skill} />
       </div>
     </button>
+  );
+}
+
+function ImportSkillModal({
+  busy,
+  onClose,
+  onSubmit
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onSubmit: (v: { url: string; triggers?: string[]; alwaysOn?: boolean }) => void;
+}) {
+  const [url, setUrl] = useState('');
+  const [alwaysOn, setAlwaysOn] = useState(false);
+  const [triggerText, setTriggerText] = useState('');
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const trimmed = url.trim();
+  const valid = /^https?:\/\//.test(trimmed);
+
+  const submit = () => {
+    if (!valid || busy) return;
+    const triggers = triggerText.split(',').map((s) => s.trim()).filter(Boolean);
+    onSubmit({ url: trimmed, alwaysOn, triggers: triggers.length ? triggers : undefined });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-lg flex flex-col"
+      >
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <Github size={16} className="text-zinc-400" /> GitHub 에서 가져오기
+          </h3>
+          <button onClick={onClose} className="p-1 rounded hover:bg-zinc-800 text-zinc-400" aria-label="닫기">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="p-5 space-y-3">
+          <label className="block">
+            <span className="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1">SKILL.md URL</span>
+            <input
+              autoFocus
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
+              placeholder="https://github.com/owner/repo/blob/main/skills/x/SKILL.md"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
+              style={{ fontSize: '13px' }}
+            />
+            <span className="block text-[11px] text-zinc-600 mt-1">
+              blob URL 을 그대로 붙여넣으면 raw 로 변환해 가져옵니다. name/description 은 frontmatter 에서 읽습니다.
+            </span>
+          </label>
+
+          <div className="flex items-center justify-between rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2">
+            <div>
+              <div className="text-xs font-medium text-zinc-300">Always On</div>
+              <div className="text-[10px] text-zinc-500 mt-0.5">매 메시지마다 전체 내용 주입</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAlwaysOn((v) => !v)}
+              aria-pressed={alwaysOn}
+              aria-label="Always On"
+              className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${alwaysOn ? 'bg-emerald-600' : 'bg-zinc-700'}`}
+            >
+              <span
+                className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${alwaysOn ? 'translate-x-4' : 'translate-x-0.5'}`}
+              />
+            </button>
+          </div>
+
+          <label className="block">
+            <span className="block text-[11px] uppercase tracking-wider text-zinc-500 mb-1">Triggers (선택)</span>
+            <input
+              value={triggerText}
+              onChange={(e) => setTriggerText(e.target.value)}
+              placeholder="키워드, 콤마로 구분"
+              className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
+            />
+          </label>
+        </div>
+        <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-zinc-800">
+          <button onClick={onClose} className="px-4 py-2 rounded bg-zinc-800 hover:bg-zinc-700 text-sm">
+            취소
+          </button>
+          <button
+            disabled={!valid || busy}
+            onClick={submit}
+            className="px-4 py-2 rounded bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-sm"
+          >
+            {busy ? '가져오는 중...' : '가져오기'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

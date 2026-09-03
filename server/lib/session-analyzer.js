@@ -108,11 +108,14 @@ function runClaudeAnalysis(prompt, workingDir) {
       resolve(null);
     });
 
-    // 60초 타임아웃
-    setTimeout(() => {
+    // 60초 타임아웃 — 정상 종료해도 안 지우면 chat.done 마다 60초짜리 타이머가
+    // proc/closure 를 붙잡은 채 쌓인다.
+    const watchdog = setTimeout(() => {
       try { proc.kill(); } catch { /* ignore */ }
       resolve(null);
     }, 60000);
+    proc.on('close', () => clearTimeout(watchdog));
+    proc.on('error', () => clearTimeout(watchdog));
   });
 }
 

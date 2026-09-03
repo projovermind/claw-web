@@ -94,9 +94,11 @@ export async function createSessionsStore(legacyFilePath) {
     const prev = perSessionChain.get(id) ?? Promise.resolve();
     const next = prev.catch(() => {}).then(fn);
     perSessionChain.set(id, next);
+    // .finally() 는 새 promise 를 만든다 — next 가 reject 하면 이 파생 promise 는
+    // 아무도 안 잡아 unhandledRejection → emergencyShutdown 으로 이어진다.
     next.finally(() => {
       if (perSessionChain.get(id) === next) perSessionChain.delete(id);
-    });
+    }).catch(() => {});
     return next;
   }
 
@@ -243,7 +245,9 @@ export async function createSessionsStore(legacyFilePath) {
     async unarchiveSessions(sessions) {
       if (!sessions || sessions.length === 0) return;
       await Promise.all(sessions.map((s) => withSessionLock(s.id, async () => {
-        const restored = { ...s, _archived: false };
+        // 호출자가 넘긴 스냅샷은 archive 시점의 것이다. 그 사이 append 된 메시지가
+        // 있으면 그대로 덮어써 유실되므로 현재 캐시 값을 우선한다.
+        const restored = { ...(cache.get(s.id) ?? s), _archived: false };
         await atomicWriteJson(sessionFilePath(storeDir, s.id), restored);
         cache.set(s.id, restored);
       })));

@@ -684,6 +684,23 @@ async function main() {
   const fsWatchWs = attachFsWatchWs(server, { webConfig });
   const execWs = attachExecWs(server, { webConfig });
 
+  // 위 네 핸들러는 경로가 안 맞으면 조용히 return 한다. 리스너가 하나라도 붙어 있으면
+  // Node 의 기본 `socket.destroy()` 가 동작하지 않아 매칭 안 된 upgrade 요청이 fd 를
+  // 붙잡은 채 영원히 열려 있게 된다 (인증 이전 단계라 누구나 fd 를 고갈시킬 수 있음).
+  // 각 attach 의 매칭 조건을 그대로 복제한다 — 여기서 넓게 잡으면 이미 handleUpgrade 로
+  // 넘어간 정상 소켓을 끊어버린다.
+  const isHandledUpgrade = (req) => {
+    const url = req.url || '';
+    const pathOnly = url.split('?')[0];
+    return pathOnly === '/ws' || pathOnly === '/ws/fs-watch' || pathOnly === '/ws/exec'
+      || url.startsWith('/ws/pty');
+  };
+  server.on('upgrade', (req, socket) => {
+    if (socket.destroyed || isHandledUpgrade(req)) return;
+    socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+  });
+
   // ── 포트 점유 진단 (kill 하지 않고 로그만) ──
   // 자가 청소는 launchd unload→load 오버랩 시점에 방금 launchd 가 띄운
   // 자매 프로세스까지 kill 해 crash-loop 를 오히려 악화시키는 부작용이 있어
@@ -733,7 +750,10 @@ async function main() {
   // 단 Settings 에서 **소프트 재시작** 을 사용자가 명시적으로 눌렀을 때는
   // `.soft-restart` 플래그가 찍혀 있어 이번 한 번만 autoResume=true 로 강제.
   // 이게 없으면 소프트 재시작 = 강제 재시작과 동일해 "(응답 중단)" 만 찍힘.
-  const logsDir = path.join(path.dirname(WEB_CONFIG_PATH), 'logs');
+  // logs 는 USER_DIR 아래에 산다 (admin/restart.js 와 위 earlyLogsDir 이 쓰는 곳).
+  // 이전에는 WEB_CONFIG_PATH(=PRIVATE_DIR) 기준이라 soft-restart 플래그/pending-resume 을
+  // 쓰는 쪽과 읽는 쪽이 서로 다른 디렉터리를 보고 있었다 → auto-resume 이 영구히 죽어 있었음.
+  const logsDir = path.join(USER_DIR, 'logs');
   const resumeFile = path.join(logsDir, 'pending-resume.json');
   const softRestartFlag = path.join(logsDir, '.soft-restart');
 

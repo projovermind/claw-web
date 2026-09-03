@@ -806,7 +806,7 @@ function UpdateCheckCard() {
   });
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
+    <div id="update-check" className="scroll-mt-4 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
       <div className="flex items-center gap-2">
         <Download size={14} className="text-cyan-400" />
         <div className="text-sm font-semibold text-zinc-300">업데이트 확인</div>
@@ -944,6 +944,14 @@ export function AccessTab() {
     invalidateKeys: [['settings']],
     mutationFn: (body) => api.patchSettings(body),
   });
+
+  // 사이드바 버전 배지(/settings?tab=access#update-check) 에서 넘어온 경우 해당 카드로 스크롤
+  useEffect(() => {
+    if (!data) return;
+    if (window.location.hash !== '#update-check') return;
+    const el = document.getElementById('update-check');
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [data]);
 
   if (!data) return <div className="text-zinc-500">{t('access.loading')}</div>;
 

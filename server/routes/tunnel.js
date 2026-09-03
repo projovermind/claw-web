@@ -4,6 +4,7 @@ import fssync from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
+import { logger as baseLogger } from '../lib/logger.js';
 
 // Module-level process tracker
 let tunnelProc = null;
@@ -102,6 +103,16 @@ function spawnTunnel(type, domain = null) {
 
   tunnelState = { running: true, type, url: null, pid: null };
   const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  // cloudflared/ngrok 미설치 시 ENOENT 'error' 가 리스너 없이 throw 되어
+  // uncaughtException → 서버 전체 종료로 번진다.
+  proc.on('error', (err) => {
+    baseLogger.warn({ err: err.message, cmd }, 'tunnel: spawn failed');
+    if (tunnelProc === proc) {
+      tunnelProc = null;
+      tunnelState = { running: false, type: null, url: null, pid: null };
+      clearPidFile();
+    }
+  });
   tunnelProc = proc;
   tunnelState.pid = proc.pid;
   writePidFile(proc.pid, type);
@@ -122,6 +133,9 @@ function spawnTunnel(type, domain = null) {
   proc.stderr.on('data', parseUrl);
 
   proc.on('exit', () => {
+    // stop→start 를 빠르게 하면 옛 자식의 exit 이 뒤늦게 도착해 새로 띄운 터널의
+    // 상태/pid 파일을 지운다. 지금 살아있는 자식이 나일 때만 초기화한다.
+    if (tunnelProc !== proc) return;
     tunnelProc = null;
     tunnelState = { running: false, type: null, url: null, pid: null };
     clearTunnelUrlFile().catch(() => {});

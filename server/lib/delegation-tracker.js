@@ -58,6 +58,14 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
     while (history.length > MAX_HISTORY) {
       const dropped = history.shift();
       if (finished.get(dropped.targetSessionId) === dropped) finished.delete(dropped.targetSessionId);
+      // byOrigin 도 같이 비우지 않으면 history/finished 만 300개로 잘리고 여기는
+      // 무한히 자라 완료된 위임의 task 본문이 프로세스 수명 내내 남는다.
+      const bucket = byOrigin.get(dropped.originSessionId);
+      if (bucket) {
+        const at = bucket.indexOf(dropped);
+        if (at !== -1) bucket.splice(at, 1);
+        if (bucket.length === 0) byOrigin.delete(dropped.originSessionId);
+      }
     }
   }
 

@@ -74,6 +74,7 @@ export function attachFsWatchWs(server, { webConfig }) {
     const q = parsed.query || {};
     let watcher = null;
     let currentRoot = null;
+    let socketClosed = false;
 
     const send = (obj) => {
       if (ws.readyState !== 1) return;
@@ -97,6 +98,9 @@ export function attachFsWatchWs(server, { webConfig }) {
         return;
       }
       await stopWatcher();
+      // stopWatcher 의 await 사이에 소켓이 닫히면 close 핸들러는 watcher=null 만 보고
+      // 지나간다. 그 뒤 여기서 만든 watcher 는 아무도 닫지 못해 fd 가 샌다.
+      if (socketClosed) return;
       currentRoot = absRoot;
       try {
         watcher = chokidar.watch(absRoot, {
@@ -146,6 +150,7 @@ export function attachFsWatchWs(server, { webConfig }) {
     });
 
     ws.on('close', () => {
+      socketClosed = true;
       stopWatcher();
       logger.info({ root: currentRoot }, 'fs-watch: ws closed');
     });

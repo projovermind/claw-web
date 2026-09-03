@@ -40,6 +40,20 @@ function findCarlJson(workingDir) {
  * @param {string} workingDir
  * @param {Array<{domain: string, rule: string, confidence: number, recall: string[]}>} carlRules
  */
+// carl.json 경로별 쓰기 직렬화. 같은 프로젝트의 두 세션이 동시에 chat.done 을 내면
+// 둘 다 같은 파일을 읽어 각자 append 후 rename 해서 먼저 쓴 쪽 룰이 사라진다.
+const writeChains = new Map();
+
+function serialize(key, fn) {
+  const prev = writeChains.get(key) ?? Promise.resolve();
+  const next = prev.catch(() => {}).then(fn);
+  writeChains.set(key, next);
+  next.catch(() => {}).finally(() => {
+    if (writeChains.get(key) === next) writeChains.delete(key);
+  });
+  return next;
+}
+
 export async function learnCarlRules(workingDir, carlRules) {
   if (!carlRules || carlRules.length === 0) return;
 
@@ -47,13 +61,16 @@ export async function learnCarlRules(workingDir, carlRules) {
   const eligible = carlRules.filter((r) => (r.confidence ?? 0) >= MIN_CONFIDENCE);
   if (eligible.length === 0) return;
 
-  try {
-    const carlPath = findCarlJson(workingDir);
-    if (!carlPath) {
-      logger.debug({ workingDir }, 'carl-auto-learner: carl.json not found, skipping');
-      return;
-    }
+  const carlPathForLock = findCarlJson(workingDir);
+  if (!carlPathForLock) {
+    logger.debug({ workingDir }, 'carl-auto-learner: carl.json not found, skipping');
+    return;
+  }
+  return serialize(carlPathForLock, () => applyCarlRules(carlPathForLock, workingDir, eligible));
+}
 
+async function applyCarlRules(carlPath, workingDir, eligible) {
+  try {
     const raw = await fs.readFile(carlPath, 'utf8');
     const carl = JSON.parse(raw);
 

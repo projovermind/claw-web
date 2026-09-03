@@ -82,6 +82,14 @@ export function registerTunnelCfRoutes(router) {
     proc.stdout.on('data', handle);
     proc.stderr.on('data', handle);
 
+    // cloudflared 미설치 시 spawn 이 ENOENT 'error' 를 내는데, 리스너가 없으면
+    // uncaughtException → emergencyShutdown 으로 서버가 통째로 재시작한다.
+    proc.on('error', (err) => {
+      setupState.phase = 'auth-failed';
+      setupState.error = `cloudflared 실행 실패: ${err.message}`;
+      logger.warn({ err: err.message, bin }, 'admin: cf login spawn failed');
+    });
+
     proc.on('exit', (code) => {
       if (fssync.existsSync(CERT_PATH)) {
         setupState.phase = 'authed';

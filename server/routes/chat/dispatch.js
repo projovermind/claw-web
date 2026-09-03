@@ -72,7 +72,11 @@ export function createDispatcher(ctx) {
   const { runner, sessionsStore, eventBus } = ctx;
 
   const queues = new Map(); // sessionId → item[]
-  const running = new Set(); // sessionId
+  // sessionId → turn token. Set 이 아니라 Map 인 이유: abort 직후 새 턴이 시작되면
+  // 앞 턴의 뒤늦은 onSettled 가 새 턴의 running 플래그를 지워 같은 세션에 자식
+  // 프로세스 두 개가 붙는다. 토큰이 일치할 때만 지운다.
+  const running = new Map();
+  let turnSeq = 0;
   const timers = new Map(); // sessionId → Timeout (pending pump)
   const heartbeats = new Map(); // sessionId → Timeout
   const pumping = new Set(); // re-entrancy guard
@@ -232,14 +236,18 @@ export function createDispatcher(ctx) {
     if (!batch) return;
 
     // ── critical section: no await between here and runner.start() ──
-    running.add(sessionId);
+    const turnToken = ++turnSeq;
+    running.set(sessionId, turnToken);
     clearHeartbeat(sessionId);
 
     let settled = false;
+    const releaseTurn = () => {
+      if (running.get(sessionId) === turnToken) running.delete(sessionId);
+    };
     const onSettled = () => {
       if (!settled) {
         settled = true;
-        running.delete(sessionId);
+        releaseTurn();
       }
       clearTimer(sessionId);
       requestPump(sessionId, IDLE_COALESCE_MS);
@@ -258,7 +266,7 @@ export function createDispatcher(ctx) {
     // ── end critical section ──
 
     settled = true;
-    running.delete(sessionId);
+    releaseTurn();
 
     const reason = result?.reason ?? 'unknown';
     if (reason === 'session_missing') {

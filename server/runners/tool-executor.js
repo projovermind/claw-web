@@ -6,7 +6,40 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 
-const RG_BIN = '/usr/local/lib/node_modules/@anthropic-ai/claude-code/vendor/ripgrep/arm64-darwin/rg';
+/**
+ * ripgrep 실행 파일 탐색 — PATH 의 `rg` 를 먼저 쓰고, 없으면 claude-code 가
+ * 동봉한 vendor 바이너리를 플랫폼별로 찾는다. 결과는 프로세스 수명 동안 캐시.
+ */
+let cachedRgPath = null;
+
+function resolveRgPath() {
+  if (cachedRgPath) return cachedRgPath;
+  try {
+    const found = execSync('command -v rg', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    if (found) return (cachedRgPath = found);
+  } catch {
+    // PATH 에 없음 — vendor 탐색으로 폴백
+  }
+
+  const arch = process.arch === 'x64' ? 'x64' : process.arch === 'arm64' ? 'arm64' : process.arch;
+  const platform = process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux';
+  const vendorDirs = [`${arch}-${platform}`, `${arch}-linux-musl`];
+
+  const roots = [
+    '/usr/local/lib/node_modules/@anthropic-ai/claude-code',
+    '/opt/homebrew/lib/node_modules/@anthropic-ai/claude-code',
+    path.join(process.env.HOME || '', '.local/share/claude/node_modules/@anthropic-ai/claude-code'),
+    path.join(process.env.HOME || '', '.npm-global/lib/node_modules/@anthropic-ai/claude-code')
+  ];
+
+  for (const root of roots) {
+    for (const dir of vendorDirs) {
+      const candidate = path.join(root, 'vendor/ripgrep', dir, process.platform === 'win32' ? 'rg.exe' : 'rg');
+      if (fs.existsSync(candidate)) return (cachedRgPath = candidate);
+    }
+  }
+  return (cachedRgPath = 'rg');
+}
 
 // ─────────────────────────────────────────
 //  OpenAI Function Calling 도구 정의
@@ -331,7 +364,7 @@ function execBash(args, workingDir) {
 }
 
 function execGrep(args, workingDir) {
-  const rgPath = fs.existsSync(RG_BIN) ? RG_BIN : 'rg';
+  const rgPath = resolveRgPath();
   const searchPath = args.path ? resolvePath(args.path, workingDir) : workingDir;
 
   let rgArgs = [args.pattern, searchPath, '--no-heading', '-n'];

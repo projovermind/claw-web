@@ -26,10 +26,19 @@ export async function createMetadataStore(filePath) {
 
   cache = await read();
 
+  /**
+   * 쓰기 직전 재읽기는 실패를 삼키면 안 된다 — 읽기 실패 시 EMPTY 를 깔고 쓰면
+   * 다른 에이전트의 메타데이터가 통째로 날아간다. 여기서는 throw 시켜 쓰기를 중단.
+   */
+  async function readStrict() {
+    const raw = await fs.readFile(filePath, 'utf8');
+    return { ...EMPTY(), ...JSON.parse(raw) };
+  }
+
   async function writeWithLock(mutator) {
     const release = await lockfile.lock(filePath, { retries: { retries: 10, minTimeout: 100 } });
     try {
-      const current = await read();
+      const current = await readStrict();
       const next = mutator(current);
       const tmp = filePath + '.tmp';
       await fs.writeFile(tmp, JSON.stringify(next, null, 2));

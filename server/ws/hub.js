@@ -48,6 +48,13 @@ export function attachWsHub(server, { eventBus, webConfig }) {
       }
     });
 
+    // 'error' 리스너가 없으면 ECONNRESET 이 EventEmitter throw 로 번져
+    // uncaughtException → emergencyShutdown 으로 서버 전체가 죽는다.
+    ws.on('error', (err) => {
+      logger.warn({ err: err.message }, 'ws: client socket error');
+      clients.delete(ws);
+    });
+
     ws.on('close', () => {
       clients.delete(ws);
       logger.info({ total: clients.size }, 'ws: client disconnected');

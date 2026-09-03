@@ -174,6 +174,17 @@ export interface HealthStatus {
   botConfigured?: boolean;
   webUptime: number;
   ts: string;
+  /** package.json 버전 — 구버전 서버에는 없으므로 optional */
+  version?: string;
+}
+
+/** GET /api/stats/usage 의 cost 블록 (비용 추적 도입 전 서버에는 없음) */
+export interface UsageCost {
+  window7d: number;
+  window30d: number;
+  byAgent: Record<string, number>;
+  byDay: Record<string, number>;
+  byAccount: Record<string, number>;
 }
 
 export interface WebSettings {
