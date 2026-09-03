@@ -1,5 +1,9 @@
 import { Router } from 'express';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs/promises';
+import fssync from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { HttpError } from '../middleware/error-handler.js';
 import { projectCreateSchema, projectUpdateSchema } from '../schemas/project.js';
 import { appendDeployLog, recentDeployLog } from '../lib/deploy-log-store.js';
@@ -16,8 +20,97 @@ function headCommit(workingDir) {
   }
 }
 
+/**
+ * Claude Code 의 프로젝트별 자동 메모리 디렉터리.
+ * ~/.claude/projects/<workingDir 의 '/' 를 '-' 로 치환>/memory
+ */
+export function claudeMemoryDir(workingDir) {
+  if (!workingDir) return null;
+  const slug = workingDir.replace(/\//g, '-');
+  return path.join(os.homedir(), '.claude', 'projects', slug, 'memory');
+}
+
+const MEMORY_FILE_RE = /^[A-Za-z0-9_.-]+\.md$/;
+
+/**
+ * 메모리 파일명 검증 + 경로 이탈 차단.
+ * 정규식만으로는 '..md' 같은 값이 통과하므로 resolve 결과가 dir 안인지도 확인한다.
+ */
+export function resolveMemoryFile(dir, name) {
+  if (typeof name !== 'string' || !MEMORY_FILE_RE.test(name)) return null;
+  if (name === '..' || name.includes('..')) return null;
+  const full = path.resolve(dir, name);
+  if (full !== path.join(dir, name)) return null;
+  if (!full.startsWith(dir + path.sep)) return null;
+  return full;
+}
+
 export function createProjectsRouter({ projectsStore, configStore, metadataStore, eventBus }) {
   const router = Router();
+
+  /** @returns {string} memory dir — throws 404 when the project has no working dir. */
+  function memoryDirFor(projectId) {
+    const project = projectsStore.getById(projectId);
+    if (!project) throw new HttpError(404, 'Project not found', 'PROJECT_NOT_FOUND');
+    const dir = claudeMemoryDir(project.path);
+    if (!dir) throw new HttpError(404, 'Project has no working dir', 'NO_WORKING_DIR');
+    return dir;
+  }
+
+  // ── Claude 자동 메모리 ──
+  router.get('/:id/claude-memory', async (req, res, next) => {
+    try {
+      const dir = memoryDirFor(req.params.id);
+      if (!fssync.existsSync(dir)) return res.json({ dir, files: [], index: null });
+
+      const names = (await fs.readdir(dir)).filter((n) => MEMORY_FILE_RE.test(n));
+      const files = [];
+      for (const name of names) {
+        try {
+          const st = await fs.stat(path.join(dir, name));
+          if (!st.isFile()) continue;
+          files.push({ name, size: st.size, mtime: st.mtime.toISOString() });
+        } catch { /* raced away */ }
+      }
+      files.sort((a, b) => a.name.localeCompare(b.name));
+
+      let index = null;
+      try { index = await fs.readFile(path.join(dir, 'MEMORY.md'), 'utf8'); } catch { index = null; }
+
+      res.json({ dir, files, index });
+    } catch (err) { next(err); }
+  });
+
+  router.get('/:id/claude-memory/:file', async (req, res, next) => {
+    try {
+      const dir = memoryDirFor(req.params.id);
+      const full = resolveMemoryFile(dir, req.params.file);
+      if (!full) throw new HttpError(400, 'Invalid memory file name', 'INVALID_FILE');
+      let content;
+      try {
+        content = await fs.readFile(full, 'utf8');
+      } catch {
+        throw new HttpError(404, 'Memory file not found', 'FILE_NOT_FOUND');
+      }
+      res.json({ name: req.params.file, content });
+    } catch (err) { next(err); }
+  });
+
+  router.put('/:id/claude-memory/:file', async (req, res, next) => {
+    try {
+      const dir = memoryDirFor(req.params.id);
+      const full = resolveMemoryFile(dir, req.params.file);
+      if (!full) throw new HttpError(400, 'Invalid memory file name', 'INVALID_FILE');
+      const content = req.body?.content;
+      if (typeof content !== 'string') {
+        throw new HttpError(400, 'content (string) is required', 'MISSING_CONTENT');
+      }
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(full, content);
+      // content 를 되돌려 주면 클라이언트가 저장 후 재조회 없이 상태를 맞출 수 있다.
+      res.json({ name: req.params.file, content, size: Buffer.byteLength(content) });
+    } catch (err) { next(err); }
+  });
 
   router.get('/', (req, res) => {
     res.json({ projects: projectsStore.getAll() });

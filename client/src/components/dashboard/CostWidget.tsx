@@ -12,6 +12,44 @@ function formatUsd(n: number): string {
   return `$${Math.round(n).toLocaleString()}`;
 }
 
+/** 1.2M / 340K / 512 — 토큰 수를 축약. */
+function formatTokens(n: number): string {
+  if (!isFinite(n) || n <= 0) return '0';
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(Math.round(n));
+}
+
+/** 예산 대비 소진율 막대. budget 이 0/미설정이면 토큰 수만 보여준다. */
+function TokenGauge({ label, used, budget }: { label: string; used: number; budget: number }) {
+  const pct = budget > 0 ? Math.min((used / budget) * 100, 100) : 0;
+  const over = budget > 0 && used >= budget;
+  const near = budget > 0 && !over && pct >= 80;
+  const barColor = over ? 'bg-red-500/80' : near ? 'bg-amber-500/80' : 'bg-sky-500/70';
+
+  return (
+    <div className="rounded border border-zinc-800 bg-zinc-900/50 px-3 py-2">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[10px] uppercase tracking-wider text-zinc-500">{label}</span>
+        {budget > 0 && (
+          <span className={`text-[10px] font-mono ${over ? 'text-red-400' : near ? 'text-amber-400' : 'text-zinc-500'}`}>
+            {Math.round((used / budget) * 100)}%
+          </span>
+        )}
+      </div>
+      <div className="text-base font-semibold text-zinc-200 font-mono">
+        {formatTokens(used)}
+        {budget > 0 && <span className="text-[11px] text-zinc-600"> / {formatTokens(budget)}</span>}
+      </div>
+      {budget > 0 && (
+        <div className="mt-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+          <div className={`h-full ${barColor}`} style={{ width: `${pct}%` }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** 최근 14일치 날짜 키(YYYY-MM-DD) — 로컬 시간대 기준, 오래된 날짜부터. */
 function last14Days(): string[] {
   const out: string[] = [];
@@ -49,10 +87,16 @@ export default function CostWidget() {
     return last14Days().map((key) => ({ key, usd: byDay[key] ?? 0 }));
   }, [cost]);
 
-  // 서버가 아직 cost 를 안 보내거나(구버전) 전부 0 이면 안내만 표시
-  const hasData =
+  const tokens5h = usage?.window5h?.total ?? 0;
+  const tokens7d = usage?.window7d?.total ?? 0;
+  const budget = usage?.budget;
+
+  // 서버가 아직 cost 를 안 보내거나(구버전) 전부 0 이면 안내만 표시.
+  // 비용이 비어도 토큰 사용량이 있으면 게이지는 보여준다.
+  const hasCost =
     !!cost &&
     (cost.window7d > 0 || cost.window30d > 0 || days.some((d) => d.usd > 0) || topAgents.length > 0);
+  const hasData = hasCost || tokens5h > 0 || tokens7d > 0;
 
   const maxDay = Math.max(...days.map((d) => d.usd), 0);
   const maxAgent = Math.max(...topAgents.map((a) => a.usd), 0);
@@ -67,20 +111,31 @@ export default function CostWidget() {
 
       {!hasData ? (
         <div className="text-sm text-zinc-600 italic text-center py-8 px-4">
-          비용 데이터 수집 전
+          사용량 데이터 수집 전
         </div>
       ) : (
         <div className="p-4 space-y-4">
+          {/* 토큰 사용량 — 예산이 있으면 소진율 막대 */}
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-1.5">토큰</div>
+            <div className="grid grid-cols-2 gap-3">
+              <TokenGauge label="5시간" used={tokens5h} budget={budget?.tokens5h ?? 0} />
+              <TokenGauge label="7일" used={tokens7d} budget={budget?.tokens7d ?? 0} />
+            </div>
+          </div>
+
+          {hasCost && (
+          <>
           {/* 7일 / 30일 합계 */}
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded border border-zinc-800 bg-zinc-900/50 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500">7일</div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">비용 7일</div>
               <div className="text-lg font-semibold text-emerald-300 font-mono">
                 {formatUsd(cost!.window7d ?? 0)}
               </div>
             </div>
             <div className="rounded border border-zinc-800 bg-zinc-900/50 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500">30일</div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500">비용 30일</div>
               <div className="text-lg font-semibold text-zinc-200 font-mono">
                 {formatUsd(cost!.window30d ?? 0)}
               </div>
@@ -143,6 +198,8 @@ export default function CostWidget() {
               </div>
             )}
           </div>
+          </>
+          )}
         </div>
       )}
     </div>

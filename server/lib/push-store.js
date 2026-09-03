@@ -97,7 +97,7 @@ export function createPushStore({ webConfig, webConfigPath }) {
   }
 
   // ── Send push ────────────────────────────────────────────────
-  async function sendPushToAll(title, body, { skipIdleCheck = false, skipRunnerCheck = false, url } = {}) {
+  async function sendPushToAll(title, body, { skipIdleCheck = false, skipRunnerCheck = false, url, actions } = {}) {
     if (webConfig.push?.enabled === false) return { skipped: 'disabled' };
     if (!skipRunnerCheck && isRunnerActive()) {
       logger.debug('push-store: runner active — skipping push');
@@ -109,7 +109,13 @@ export function createPushStore({ webConfig, webConfigPath }) {
     }
     if (subscriptions.length === 0) return { skipped: 'no_subscriptions' };
 
-    const payload = JSON.stringify({ title, body, url: url ?? '/' });
+    // actions 는 서비스워커가 알림 버튼으로 렌더링한다 (승인/거부 등).
+    const payload = JSON.stringify({
+      title,
+      body,
+      url: url ?? '/',
+      ...(Array.isArray(actions) && actions.length > 0 ? { actions } : {})
+    });
     const expired = [];
     const results = [];
 

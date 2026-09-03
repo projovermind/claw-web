@@ -12,6 +12,9 @@ import { buildPinnedFilesContext, buildGitDiffContext, buildBridgeContext, build
 import { findClaudeSessionFile } from '../../runners/claude-cli-runner.js';
 import { classifyError, resolveAgent, buildConversationSummary } from './utils.js';
 import { buildRoster, listProjectAgentIds } from '../../lib/agent-roster.js';
+import { writeHookSettingsFile, removeHookSettingsFile } from '../../lib/hook-settings.js';
+import { sessionContextUsage } from '../../lib/context-window.js';
+import { compactSession, shouldAutoCompact } from '../../lib/compact.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // server/routes/chat/ → ../../mcp/permission-bridge.js
@@ -149,8 +152,43 @@ export function createMessageSender(ctx) {
     retryCounters,
     MAX_AUTO_RETRIES,
     approvalBroker,
-    bridgeToken
+    bridgeToken,
+    hooksStore,
+    logsDir
   } = ctx;
+
+  /**
+   * 턴이 끝난 뒤 컨텍스트 사용률이 chat.autoCompactPct 이상이면 세션을 자동 compact.
+   * 실패해도 턴 자체는 이미 끝났으므로 조용히 로그만 남긴다.
+   */
+  async function maybeAutoCompact(sessionId) {
+    const pct = webConfig?.chat?.autoCompactPct ?? 0;
+    if (!pct) return;
+    const session = sessionsStore.get(sessionId);
+    if (!session) return;
+    const agent = configStore.getAgent?.(session.agentId) ?? null;
+    const usage = sessionContextUsage(session, {
+      model: session.model || agent?.model || null,
+      backendId: agent?.backendId ?? agent?.accountId ?? null,
+      backends: backendsStore?.getRaw?.()?.backends ?? null
+    });
+    if (!shouldAutoCompact(pct, usage)) return;
+
+    const result = await compactSession({ session, sessionsStore, eventBus });
+    eventBus.publish('chat.auto-compacted', {
+      sessionId,
+      newSessionId: result.newSessionId,
+      thresholdPct: pct,
+      usedPct: Math.round(usage.pct),
+      usedTokens: usage.used,
+      maxTokens: usage.max,
+      savings: result.savings
+    });
+    logger.info(
+      { sessionId, newSessionId: result.newSessionId, usedPct: Math.round(usage.pct), thresholdPct: pct },
+      'chat: context threshold reached — auto-compacted session'
+    );
+  }
 
   /**
    * @returns {{started: true} | {started: false, reason: string}} When started
@@ -395,10 +433,31 @@ export function createMessageSender(ctx) {
         agent.permissionPromptTool = 'mcp__claw__approval_prompt';
       }
     }
+    // ── Hook injection (optional) ──
+    // 저장된 훅 중 이 에이전트에 유효한 것만 Claude settings 형식으로 조립해
+    // 임시 파일로 넘긴다. 유효 훅 0개면 경로가 null → --settings 자체가 생략됨.
+    let hookSettingsPath = null;
+    if (hooksStore && logsDir) {
+      hookSettingsPath = writeHookSettingsFile({
+        hooks: hooksStore.list(),
+        agentId: session.agentId,
+        sessionId,
+        logsDir
+      });
+      if (hookSettingsPath) {
+        agent.hookSettingsPath = hookSettingsPath;
+        logger.info({ sessionId, agentId: session.agentId, path: hookSettingsPath }, 'chat: injecting hooks via --settings');
+      }
+    }
+
     function cleanupPermissionBridge() {
       if (mcpPermission) {
         try { mcpPermission.cleanup(); } catch { /* ignore */ }
         mcpPermission = null;
+      }
+      if (hookSettingsPath) {
+        removeHookSettingsFile(hookSettingsPath);
+        hookSettingsPath = null;
       }
       if (approvalBroker) approvalBroker.cancelForSession(sessionId, 'session ended');
     }
@@ -502,6 +561,7 @@ export function createMessageSender(ctx) {
                 logger.warn({ err: e?.message, sessionId, handler: label }, 'chat: post-turn handler failed')
               );
             };
+            postTurn('auto-compact', maybeAutoCompact(sessionId));
             postTurn('delegation', ctx.handleDelegation(sessionId, responseText));
             postTurn('loop', ctx.handleLoopContinuation(sessionId, responseText));
             postTurn('wakeup', ctx.handleWakeup(sessionId, responseText));

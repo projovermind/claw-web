@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
+import { compactSession } from '../lib/compact.js';
 
 const createSchema = z.object({
   agentId: z.string().min(1),
@@ -268,113 +269,18 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
 
   // ── Compact: compress conversation context ──
   // POST /api/sessions/:id/compact
-  // Creates a summary of the current session's messages, saves to a file,
-  // then creates a new session with the summary as the first message.
-  // This dramatically reduces token usage when context gets large.
+  // Summarizes the session's messages into a brand-new session seeded with that
+  // summary. Shared with the chat route's automatic compaction (lib/compact.js).
   router.post('/:id/compact', async (req, res, next) => {
     try {
       const session = sessionsStore.get(req.params.id);
       if (!session) throw new HttpError(404, 'Session not found', 'SESSION_NOT_FOUND');
-      if (!session.messages || session.messages.length === 0) {
-        throw new HttpError(400, 'No messages to compact', 'EMPTY_SESSION');
-      }
-
-      // Build a compact summary from messages
-      const msgs = session.messages;
-      const lines = [];
-      lines.push(`# 세션 요약 (${session.title})`);
-      lines.push(`원본 세션: ${session.id}`);
-      lines.push(`에이전트: ${session.agentId}`);
-      lines.push(`메시지 수: ${msgs.length}`);
-      lines.push(`기간: ${msgs[0]?.ts ?? '?'} ~ ${msgs[msgs.length - 1]?.ts ?? '?'}`);
-      lines.push('');
-      lines.push('## 대화 요약');
-      lines.push('');
-
-      // Include last N messages in full (most relevant recent context)
-      // 10 messages ≈ 5 user-assistant turns kept verbatim.
-      const RECENT = 10;
-      const older = msgs.slice(0, -RECENT);
-      const recent = msgs.slice(-RECENT);
-
-      // Older messages → compressed summary (just role + first 200 chars)
-      if (older.length > 0) {
-        lines.push(`### 이전 대화 (${older.length}개 메시지, 압축됨)`);
-        for (const m of older) {
-          const role = m.role === 'user' ? '👤' : '🤖';
-          const content = (m.content ?? '').replace(/\n/g, ' ').slice(0, 200);
-          lines.push(`- ${role} ${content}${(m.content ?? '').length > 200 ? '...' : ''}`);
-        }
-        lines.push('');
-      }
-
-      // Recent messages → kept in full
-      lines.push(`### 최근 대화 (${recent.length}개 메시지, 전문)`);
-      lines.push('');
-      for (const m of recent) {
-        const role = m.role === 'user' ? '👤 User' : '🤖 Assistant';
-        lines.push(`#### ${role}`);
-        lines.push(m.content ?? '');
-        lines.push('');
-      }
-
-      // Key decisions / tool calls summary
-      const toolCalls = msgs.flatMap((m) => m.toolCalls ?? []);
-      if (toolCalls.length > 0) {
-        lines.push('### 사용된 도구');
-        const toolCounts = {};
-        for (const tc of toolCalls) {
-          toolCounts[tc.name] = (toolCounts[tc.name] || 0) + 1;
-        }
-        for (const [name, count] of Object.entries(toolCounts)) {
-          lines.push(`- ${name}: ${count}회`);
-        }
-        lines.push('');
-      }
-
-      const summary = lines.join('\n');
-
-      // Estimate token savings
-      const originalChars = msgs.reduce((s, m) => s + (m.content ?? '').length, 0);
-      const compactChars = summary.length;
-      const savings = Math.round((1 - compactChars / Math.max(originalChars, 1)) * 100);
-
-      // Create new session with the summary as first message
-      const newSession = await sessionsStore.create({
-        agentId: session.agentId,
-        title: `${session.title} (compact)`
-      });
-
-      // Persist the summary as the first assistant message in the new session
-      await sessionsStore.appendMessage(newSession.id, {
-        role: 'user',
-        content: `[이전 세션에서 이어짐]\n\n${summary}\n\n위는 이전 대화의 요약입니다. 이 맥락을 바탕으로 이어서 작업해주세요.`
-      });
-
-      // Copy the Claude session ID so the new session can --resume
-      if (session.claudeSessionId) {
-        // Don't copy — start fresh. The summary IS the context.
-        // This is the whole point: avoid loading the full conversation.
-      }
-
-      if (eventBus) {
-        eventBus.publish('session.compacted', {
-          originalSessionId: session.id,
-          newSessionId: newSession.id,
-          originalMessages: msgs.length,
-          compactChars,
-          savings
-        });
-      }
-
-      res.json({
-        newSessionId: newSession.id,
-        originalMessages: msgs.length,
-        compactChars,
-        originalChars,
-        savings: `${savings}%`
-      });
+      const result = await compactSession({ session, sessionsStore, eventBus });
+      res.json({ ...result, savings: `${result.savings}%` });
     } catch (err) {
+      if (err.code === 'EMPTY_SESSION') {
+        return next(new HttpError(400, 'No messages to compact', 'EMPTY_SESSION'));
+      }
       next(err);
     }
   });

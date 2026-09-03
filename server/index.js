@@ -628,6 +628,8 @@ async function main() {
     webConfig,
     approvalBroker,
     bridgeToken,
+    hooksStore,
+    logsDir: path.join(USER_DIR, 'logs'),
     getBridgeContext: (workspace) => bridgeRouter.getContextForWorkspace?.(workspace) ?? null
   });
   app.use('/api/chat', chatRouter);
@@ -642,7 +644,8 @@ async function main() {
     bridgeToken,
     sessionsStore,
     configStore,
-    metadataStore
+    metadataStore,
+    pushStore
   }));
   app.use('/api/backends', createBackendsRouter({ backendsStore, eventBus, webConfig }));
   app.use('/api/accounts', createAccountsRouter({ accountsStore, eventBus, backendsStore }));
@@ -658,7 +661,7 @@ async function main() {
   app.use('/api/domain', createDomainRouter({ secretsStore }));
   app.use('/api/settings', createSettingsRouter({ webConfig, webConfigPath: WEB_CONFIG_PATH, eventBus }));
   app.use('/api/push', createPushRouter({ pushStore }));
-  app.use('/api/stats', createStatsRouter({ sessionsStore, configStore }));
+  app.use('/api/stats', createStatsRouter({ sessionsStore, configStore, webConfig }));
   app.use('/api/tasks', createTasksRouter({ eventBus }));
   app.use('/api/hooks', createHooksRouter({ hooksStore, eventBus }));
   app.use('/api/mcp', createMcpRouter({ projectsStore }));

@@ -1,4 +1,4 @@
-// v1.16.7
+// v1.17.28
 // ngrok 무료 플랜 abuse interstitial 우회 — 같은 origin 의 top-level
 // navigation 요청에 `ngrok-skip-browser-warning` 헤더를 주입한다.
 // (ngrok 은 헤더가 있으면 경고 페이지를 건너뜀. 쿼리 파라미터/UA 트릭은 무효.)
@@ -31,12 +31,15 @@ self.addEventListener('push', (event) => {
       data = { title: 'Claw Web', body: event.data.text() };
     }
   }
+  // actions: [{action, title}] — 권한 승인 푸시가 '승인'/'거부' 버튼을 실어 보낸다.
+  const actions = Array.isArray(data.actions) ? data.actions.slice(0, 2) : undefined;
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
       icon: '/icon-192.png',
       badge: '/icon-192.png',
       tag: data.tag || 'claw-notification',
+      actions,
       data: data.url ? { url: data.url } : undefined
     })
   );
@@ -44,7 +47,11 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const url = event.notification.data?.url || '/';
+  const baseUrl = event.notification.data?.url || '/';
+  // 액션 버튼 클릭이면 결정을 쿼리로 전달 — 페이지가 토큰을 갖고 POST 한다.
+  const url = event.action
+    ? baseUrl + (baseUrl.includes('?') ? '&' : '?') + 'decision=' + encodeURIComponent(event.action)
+    : baseUrl;
   event.waitUntil((async () => {
     const target = new URL(url, self.location.origin).href;
 

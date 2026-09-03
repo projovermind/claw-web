@@ -37,6 +37,28 @@ describe('PATCH /api/agents/:id', () => {
     try { fs.unlinkSync(metaFile); } catch {}
   });
 
+  it('rejects env with a forbidden key (400) and persists valid env to config.json', async () => {
+    for (const key of ['PATH', 'HOME', 'NODE_OPTIONS', 'CLAUDE_CONFIG_DIR']) {
+      const res = await request(app).patch('/api/agents/hivemind').send({ env: { [key]: 'x' } });
+      expect(res.status, key).toBe(400);
+    }
+    const bad = await request(app).patch('/api/agents/hivemind').send({ env: { lower: 'x' } });
+    expect(bad.status).toBe(400);
+
+    const ok = await request(app).patch('/api/agents/hivemind').send({ env: { MY_VAR: 'v' } });
+    expect(ok.status).toBe(200);
+    expect(JSON.parse(fs.readFileSync(cfgFile, 'utf8')).agents.hivemind.env).toEqual({ MY_VAR: 'v' });
+  });
+
+  it('accepts permissionMode auto', async () => {
+    const res = await request(app).patch('/api/agents/hivemind').send({ permissionMode: 'auto' });
+    expect(res.status).toBe(200);
+    expect(JSON.parse(fs.readFileSync(cfgFile, 'utf8')).agents.hivemind.permissionMode).toBe('auto');
+
+    const bad = await request(app).patch('/api/agents/hivemind').send({ permissionMode: 'nope' });
+    expect(bad.status).toBe(400);
+  });
+
   it('updates config field (model) in config.json', async () => {
     const res = await request(app).patch('/api/agents/hivemind').send({ model: 'opus' });
     expect(res.status).toBe(200);

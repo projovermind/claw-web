@@ -41,12 +41,42 @@ export default function ChatPage() {
 
   const { startTask, completeTask, failTask } = useProgressToastStore();
 
+  // 푸시 알림 액션 버튼(승인/거부) 은 같은 reqId 로 두 번 도착할 수 있다 —
+  // 이미 처리한 요청은 건너뛴다.
+  const handledApprovalsRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
     const agentParam = searchParams.get('agent');
     const sessionParam = searchParams.get('session');
+    const approvalParam = searchParams.get('approval');
+    const decisionParam = searchParams.get('decision');
     if (agentParam) setCurrentAgent(agentParam);
     if (sessionParam) setCurrentSession(sessionParam);
-    if (agentParam || sessionParam) setSearchParams({}, { replace: true });
+
+    // 알림 액션으로 들어온 권한 결정 — 기존 approval 엔드포인트로 그대로 처리.
+    if (sessionParam && approvalParam && (decisionParam === 'approve' || decisionParam === 'deny')) {
+      const key = `${sessionParam}:${approvalParam}:${decisionParam}`;
+      if (!handledApprovalsRef.current.has(key)) {
+        handledApprovalsRef.current.add(key);
+        const toastId = `approval-${approvalParam}`;
+        const label = decisionParam === 'approve' ? '승인' : '거부';
+        startTask({ id: toastId, title: `권한 요청 ${label} 중...` });
+        api
+          .approveTool(sessionParam, approvalParam, {
+            behavior: decisionParam === 'approve' ? 'allow' : 'deny',
+            scope: 'once'
+          })
+          .then(() => {
+            completeTask(toastId, `권한 요청을 ${label}했습니다`);
+            qc.invalidateQueries({ queryKey: ['session', sessionParam] });
+          })
+          .catch((e: Error) => failTask(toastId, e.message));
+      }
+    }
+
+    if (agentParam || sessionParam || approvalParam || decisionParam) {
+      setSearchParams({}, { replace: true });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 

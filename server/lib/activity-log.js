@@ -44,6 +44,7 @@ export function createActivityLog({ filePath, eventBus }) {
     'session.deleted',
     'chat.started',
     'chat.done',
+    'chat.auto-compacted',
     'chat.error',
     'chat.aborted',
     'upload.created',

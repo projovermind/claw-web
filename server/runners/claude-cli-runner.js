@@ -137,6 +137,14 @@ export function startClaudeRun({
     if (v !== undefined && v !== null) cleanEnv[k] = String(v);
   }
 
+  // 에이전트별 env — 스키마에서 PATH/HOME/NODE_OPTIONS/CLAUDE_CONFIG_DIR 은 이미
+  // 차단되어 있다. 백엔드 env 보다 우선(에이전트가 더 구체적인 설정).
+  if (agent.env && typeof agent.env === 'object') {
+    for (const [k, v] of Object.entries(agent.env)) {
+      if (v !== undefined && v !== null) cleanEnv[k] = String(v);
+    }
+  }
+
   // 멀티 계정: 스케줄러 우선 → 없으면 agent.configDir 직접 지정 fallback
   let pickedAccountId = null;
   if (accountScheduler) {
@@ -203,7 +211,14 @@ export function startClaudeRun({
   // ── CLI 인자 구성 (봇 bot.js 라인 2353-2412 동일) ──
   const args = ['-p', '--verbose', '--output-format', 'stream-json'];
 
-  if (agent.planMode) args.push('--permission-mode', 'plan');
+  // --permission-mode: planMode 토글이 최우선, 그다음 agent.permissionMode.
+  // --dangerously-skip-permissions 와 동시 지정하면 CLI 가 거부하므로 상호 배타.
+  const permissionMode = agent.planMode
+    ? 'plan'
+    : (agent.permissionMode && agent.permissionMode !== 'default' ? agent.permissionMode : null);
+  if (permissionMode && !agent.dangerouslySkipPermissions) {
+    args.push('--permission-mode', permissionMode);
+  }
   // Z.AI 등 외부 프록시는 effort/thinking 미지원 → ANTHROPIC_BASE_URL 있으면 스킵
   if (agent.thinkingEffort && agent.thinkingEffort !== 'auto' && !cleanEnv.ANTHROPIC_BASE_URL) {
     // Claude.ai 구독자(Max 플랜)는 "max" 값을 거부. 'high' 로 자동 강등.
@@ -275,6 +290,10 @@ export function startClaudeRun({
   }
 
   args.push('--model', model);
+
+  // 훅 주입: 호출자(message-sender)가 조립해 둔 임시 settings 파일.
+  // 유효 훅이 0개면 경로 자체가 없으므로 플래그가 생략된다.
+  if (agent.hookSettingsPath) args.push('--settings', agent.hookSettingsPath);
 
   // 스킬을 시스템 프롬프트로 주입
   // skill-injector 가 trigger 미매치 스킬은 content='' 로 비워 둠.

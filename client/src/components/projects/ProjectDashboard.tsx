@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { Project, Agent, GoalCard, CustomWidget, ProjectDashboard as DashboardData } from '../../lib/types';
@@ -7,8 +8,11 @@ import { GoalBoard } from './GoalBoard';
 import { AgentTimeline } from './AgentTimeline';
 import { AgentTokenStats } from './AgentTokenStats';
 import { CustomWidgets } from './CustomWidgets';
+import { ClaudeMemoryPanel } from './ClaudeMemoryPanel';
 
 const EMPTY_DASHBOARD: DashboardData = { notes: '', goals: [], widgets: [] };
+
+type Tab = 'dashboard' | 'claude-memory';
 
 export function ProjectDashboard({
   project,
@@ -18,6 +22,7 @@ export function ProjectDashboard({
   agents: Agent[];
 }) {
   const qc = useQueryClient();
+  const [tab, setTab] = useState<Tab>('dashboard');
   const dashboard = project.dashboard ?? EMPTY_DASHBOARD;
 
   const save = useMutation({
@@ -39,6 +44,30 @@ export function ProjectDashboard({
         </div>
       </div>
 
+      {/* 탭 */}
+      <div className="flex gap-1 border-b border-zinc-800">
+        {([
+          ['dashboard', '대시보드'],
+          ['claude-memory', 'Claude 메모리']
+        ] as [Tab, string][]).map(([value, label]) => (
+          <button
+            key={value}
+            onClick={() => setTab(value)}
+            className={`px-3 py-1.5 text-xs -mb-px border-b-2 ${
+              tab === value
+                ? 'border-emerald-500 text-zinc-100'
+                : 'border-transparent text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'claude-memory' ? (
+        <ClaudeMemoryPanel projectId={project.id} />
+      ) : (
+      <div className="space-y-4">
       {/* 프로젝트 메모리 (에이전트 운영 컨텍스트) */}
       <ProjectMemory
         memory={dashboard.memory ?? ''}
@@ -68,6 +97,8 @@ export function ProjectDashboard({
         widgets={dashboard.widgets}
         onUpdate={(widgets: CustomWidget[]) => save.mutate({ widgets })}
       />
+      </div>
+      )}
     </div>
   );
 }

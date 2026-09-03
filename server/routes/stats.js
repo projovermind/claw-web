@@ -19,7 +19,7 @@ function roundAll(obj) {
   return out;
 }
 
-export function createStatsRouter({ sessionsStore, configStore }) {
+export function createStatsRouter({ sessionsStore, configStore, webConfig }) {
   const router = Router();
 
   // GET /api/stats/agents — per-agent usage statistics
@@ -115,6 +115,11 @@ export function createStatsRouter({ sessionsStore, configStore }) {
     res.json({
       window5h: { inputTokens: input5h, outputTokens: output5h, total: input5h + output5h },
       window7d: { inputTokens: input7d, outputTokens: output7d, total: input7d + output7d },
+      // 0 = 미설정 (UI 는 게이지 대신 숫자만 표시)
+      budget: {
+        tokens5h: webConfig?.usage?.budget5h ?? 0,
+        tokens7d: webConfig?.usage?.budget7d ?? 0
+      },
       cost: {
         window7d: round6(cost7d),
         window30d: round6(cost30d),

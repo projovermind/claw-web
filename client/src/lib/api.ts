@@ -12,7 +12,11 @@ import type {
   BackendPublic,
   Skill,
   UsageCost,
-  ActivityEntry
+  ActivityEntry,
+  HookConfig,
+  McpPreset,
+  ClaudeMemoryList,
+  UsageBudget
 } from './types';
 
 const BASE = '/api';
@@ -210,6 +214,8 @@ export const api = {
       scheme?: 'off' | 'vscode' | 'cursor';
       pathMap?: Record<string, string>;
     };
+    chat?: { autoCompactPct?: number };
+    usage?: { budget5h?: number; budget7d?: number };
   }) =>
     patch === undefined ? Promise.reject(new Error('patch is required')) : req<WebSettings>('/settings', { method: 'PATCH', body: JSON.stringify(patch) }),
   backends: () => get<BackendsState>('/backends'),
@@ -308,6 +314,8 @@ export const api = {
       window7d: { inputTokens: number; outputTokens: number; total: number };
       /** 비용 추적 도입 전 서버는 이 필드를 보내지 않음 */
       cost?: UsageCost;
+      /** 예산 도입 전 서버는 이 필드를 보내지 않음 */
+      budget?: UsageBudget;
     }>('/stats/usage'),
   tunnelUrl: () => get<{ url: string | null; file: string }>(`/tunnel/url`),
 
@@ -333,12 +341,11 @@ export const api = {
   killTask: (id: string) => del<{ killed: boolean; id: string }>(`/tasks/${id}`),
 
   // Hooks
-  listHooks: () =>
-    get<{ hooks: { id: string; event: string; matcher: string; action: string; command: string; enabled: boolean }[] }>('/hooks').then((r) => r.hooks),
-  createHook: (data: { event: string; matcher: string; action: string; command: string; enabled?: boolean }) =>
-    post<{ id: string; event: string; matcher: string; action: string; command: string; enabled: boolean }>('/hooks', data),
-  patchHook: (id: string, data: Record<string, unknown>) =>
-    patch<{ id: string; event: string; matcher: string; action: string; command: string; enabled: boolean }>(`/hooks/${id}`, data),
+  listHooks: () => get<{ hooks: HookConfig[] }>('/hooks').then((r) => r.hooks),
+  createHook: (data: Omit<HookConfig, 'id' | 'enabled'> & { enabled?: boolean }) =>
+    post<HookConfig>('/hooks', data),
+  patchHook: (id: string, data: Partial<Omit<HookConfig, 'id'>>) =>
+    patch<HookConfig>(`/hooks/${id}`, data),
   deleteHook: (id: string) => del<void>(`/hooks/${id}`),
 
   // MCP Servers
@@ -346,6 +353,27 @@ export const api = {
     get<{ mcpServers: Record<string, unknown>; path: string }>('/mcp/servers'),
   putMcpServers: (mcpServers: Record<string, unknown>) =>
     req<{ mcpServers: Record<string, unknown>; path: string }>('/mcp/servers', { method: 'PUT', body: JSON.stringify({ mcpServers }) }),
+  /** 계약: 프리셋 배열을 그대로 반환. 래핑된 `{presets}` 응답도 받아들인다. */
+  mcpPresets: (): Promise<McpPreset[]> =>
+    get<McpPreset[] | { presets: McpPreset[] }>('/mcp/presets').then((r) =>
+      Array.isArray(r) ? r : r?.presets ?? []
+    ),
+  /** 같은 키가 이미 있으면 409 (ApiError.status 로 분기). */
+  applyMcpPreset: (id: string) =>
+    post<{ mcpServers: Record<string, unknown> }>(`/mcp/presets/${id}/apply`, {}),
+
+  // Claude 자동 메모리 (~/.claude/projects/<slug>/memory)
+  claudeMemory: (projectId: string) =>
+    get<ClaudeMemoryList>(`/projects/${projectId}/claude-memory`),
+  claudeMemoryFile: (projectId: string, file: string) =>
+    get<{ name?: string; content: string }>(
+      `/projects/${projectId}/claude-memory/${encodeURIComponent(file)}`
+    ),
+  putClaudeMemoryFile: (projectId: string, file: string, content: string) =>
+    req<{ name?: string; content: string }>(
+      `/projects/${projectId}/claude-memory/${encodeURIComponent(file)}`,
+      { method: 'PUT', body: JSON.stringify({ content }) }
+    ),
 
   // Git Worktrees
   createWorktree: (projectId: string, branch: string) =>

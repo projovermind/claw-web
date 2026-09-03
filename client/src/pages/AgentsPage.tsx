@@ -5,7 +5,7 @@ import { api } from '../lib/api';
 import type { Agent } from '../lib/types';
 import AgentHierarchy from '../components/dashboard/AgentHierarchy';
 import { useT } from '../lib/i18n';
-import { AgentModal, emptyAgentForm } from '../components/agents/AgentModal';
+import { AgentModal, emptyAgentForm, envRowsToRecord } from '../components/agents/AgentModal';
 import type { AgentFormState } from '../components/agents/AgentModal';
 import { BulkModelChangeModal } from '../components/agents/BulkModelChangeModal';
 import { useProgressMutation } from '../lib/useProgressMutation';
@@ -40,6 +40,9 @@ export default function AgentsPage() {
       if (form.pinnedFiles.length > 0) patch.pinnedFiles = form.pinnedFiles;
       if (form.gitDiffAutoAttach) patch.gitDiffAutoAttach = true;
       if (form.bridgeAutoAttach) patch.bridgeAutoAttach = true;
+      if (form.permissionMode !== 'default') patch.permissionMode = form.permissionMode;
+      const env = envRowsToRecord(form.env);
+      if (Object.keys(env).length > 0) patch.env = env;
       if (Object.keys(patch).length > 0) {
         await api.patchAgent(form.id, patch);
       }
@@ -72,7 +75,9 @@ export default function AgentsPage() {
           disallowedTools: form.disallowedTools,
           pinnedFiles: form.pinnedFiles,
           gitDiffAutoAttach: form.gitDiffAutoAttach,
-          bridgeAutoAttach: form.bridgeAutoAttach
+          bridgeAutoAttach: form.bridgeAutoAttach,
+          permissionMode: form.permissionMode,
+          env: envRowsToRecord(form.env)
         },
         { ifMatchUpdatedAt }
       ),

@@ -32,6 +32,18 @@ const featurePatchSchema = z.object({
       scheme: z.enum(['off', 'vscode', 'cursor']).optional(),
       pathMap: z.record(z.string()).optional()
     })
+    .optional(),
+  chat: z
+    .object({
+      // 0 = 자동 compact 끄기
+      autoCompactPct: z.number().int().min(0).max(100).optional()
+    })
+    .optional(),
+  usage: z
+    .object({
+      budget5h: z.number().int().min(0).optional(),
+      budget7d: z.number().int().min(0).optional()
+    })
     .optional()
 }).strict();
 
@@ -66,6 +78,12 @@ export function createSettingsRouter({ webConfig, webConfigPath, eventBus }) {
       }
       if (patch.editor) {
         webConfig.editor = { ...(webConfig.editor ?? {}), ...patch.editor };
+      }
+      if (patch.chat) {
+        webConfig.chat = { ...(webConfig.chat ?? {}), ...patch.chat };
+      }
+      if (patch.usage) {
+        webConfig.usage = { ...(webConfig.usage ?? {}), ...patch.usage };
       }
       await fs.writeFile(webConfigPath, JSON.stringify(webConfig, null, 2));
       if (eventBus) eventBus.publish('settings.updated', {});

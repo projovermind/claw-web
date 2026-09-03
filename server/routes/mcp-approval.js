@@ -18,8 +18,15 @@ import { logger } from '../lib/logger.js';
  *      resolves the pending promise. If remember=true, appends toolName to the
  *      agent's allowedTools list.
  */
-export function createMcpApprovalRouter({ approvalBroker, eventBus, bridgeToken, sessionsStore, configStore, metadataStore }) {
+export function createMcpApprovalRouter({ approvalBroker, eventBus, bridgeToken, sessionsStore, configStore, metadataStore, pushStore }) {
   const router = Router();
+
+  /** 도구 입력을 알림 본문에 넣을 한 줄로 압축 (80자). */
+  function summarizeInput(input) {
+    if (input == null) return '';
+    const raw = typeof input === 'string' ? input : JSON.stringify(input);
+    return raw.replace(/\s+/g, ' ').slice(0, 80);
+  }
 
   // ── Internal endpoint (no user auth; bridge-token + loopback only) ──
   router.post('/internal/approval/request', async (req, res, next) => {
@@ -59,6 +66,26 @@ export function createMcpApprovalRouter({ approvalBroker, eventBus, bridgeToken,
         input: input ?? {},
         toolUseId: toolUseId ?? null
       });
+
+      // 승인 모달은 화면을 보고 있어야만 뜬다 → 데스크톱/러너 상태와 무관하게 항상 푸시.
+      // actions 로 알림에서 바로 승인/거부할 수 있게 한다.
+      if (pushStore) {
+        const agentId = sessionsStore?.get?.(sessionId)?.agentId ?? null;
+        const agentName = (agentId && configStore?.getAgent?.(agentId)?.name) || agentId || sessionId;
+        pushStore.sendPushToAll(
+          `권한 요청 — ${agentName}`,
+          `${toolName}: ${summarizeInput(input)}`,
+          {
+            url: `/chat?session=${encodeURIComponent(sessionId)}&approval=${encodeURIComponent(reqId)}`,
+            skipIdleCheck: true,
+            skipRunnerCheck: true,
+            actions: [
+              { action: 'approve', title: '승인' },
+              { action: 'deny', title: '거부' }
+            ]
+          }
+        ).catch(() => {});
+      }
 
       // Wait for user decision (or timeout) — broker resolves the promise.
       const decision = await promise;

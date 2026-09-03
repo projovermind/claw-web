@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { api } from '../../lib/api';
-import type { Agent } from '../../lib/types';
+import type { Agent, PermissionMode } from '../../lib/types';
 import SkillPicker from '../common/SkillPicker';
 import ToolPicker from '../common/ToolPicker';
 import { useT } from '../../lib/i18n';
@@ -21,6 +21,40 @@ export interface AgentFormState {
   pinnedFiles: string[];
   gitDiffAutoAttach: boolean;
   bridgeAutoAttach: boolean;
+  permissionMode: PermissionMode;
+  /** 순서 보존을 위해 배열로 편집하고 제출 시 객체로 변환. */
+  env: { key: string; value: string }[];
+}
+
+const PERMISSION_MODES: { value: PermissionMode; label: string; help: string }[] = [
+  { value: 'default', label: 'default', help: '위험 도구마다 승인 요청 (기본)' },
+  { value: 'auto', label: 'auto', help: '분류기가 위험 행동만 차단' },
+  { value: 'acceptEdits', label: 'acceptEdits', help: '파일 편집은 자동 승인' },
+  { value: 'plan', label: 'plan', help: '계획만 세우고 실행하지 않음' },
+  { value: 'bypassPermissions', label: 'bypassPermissions', help: '모든 승인 생략 — 주의' }
+];
+
+/** 서버 스키마와 동일: 대문자/숫자/밑줄, 숫자로 시작 불가. */
+const ENV_KEY_RE = /^[A-Z_][A-Z0-9_]*$/;
+const ENV_RESERVED = ['PATH', 'HOME', 'NODE_OPTIONS', 'CLAUDE_CONFIG_DIR'];
+const ENV_MAX = 32;
+const ENV_VALUE_MAX = 2000;
+
+/** 빈 키는 무시. 반환값이 null 이면 저장 불가. */
+export function envRowError(row: { key: string; value: string }): string | null {
+  if (!row.key.trim()) return null;
+  if (!ENV_KEY_RE.test(row.key)) return '대문자/숫자/_ 만, 숫자로 시작 불가';
+  if (ENV_RESERVED.includes(row.key)) return `${row.key} 는 사용할 수 없음`;
+  if (row.value.length > ENV_VALUE_MAX) return `값은 ${ENV_VALUE_MAX}자 이하`;
+  return null;
+}
+
+export function envRowsToRecord(rows: { key: string; value: string }[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const r of rows) {
+    if (r.key.trim()) out[r.key] = r.value;
+  }
+  return out;
 }
 
 export const emptyAgentForm = (): AgentFormState => ({
@@ -36,7 +70,9 @@ export const emptyAgentForm = (): AgentFormState => ({
   disallowedTools: [],
   pinnedFiles: [],
   gitDiffAutoAttach: false,
-  bridgeAutoAttach: false
+  bridgeAutoAttach: false,
+  permissionMode: 'default',
+  env: []
 });
 
 function Field({
@@ -103,7 +139,9 @@ export function AgentModal({
           disallowedTools: agent.disallowedTools ?? [],
           pinnedFiles: agent.pinnedFiles ?? [],
           gitDiffAutoAttach: agent.gitDiffAutoAttach ?? false,
-          bridgeAutoAttach: agent.bridgeAutoAttach ?? false
+          bridgeAutoAttach: agent.bridgeAutoAttach ?? false,
+          permissionMode: agent.permissionMode ?? 'default',
+          env: Object.entries(agent.env ?? {}).map(([key, value]) => ({ key, value }))
         }
       : emptyAgentForm()
   );
@@ -159,7 +197,19 @@ export function AgentModal({
       label: alias === modelId ? alias : `${alias}  →  ${modelId}`
     }));
   }, [backendsState, form.backend]);
-  const valid = form.id.trim() && form.name.trim();
+  const envErrors = form.env.map(envRowError);
+  const duplicateEnvKey = (() => {
+    const seen = new Set<string>();
+    for (const r of form.env) {
+      const k = r.key.trim();
+      if (!k) continue;
+      if (seen.has(k)) return k;
+      seen.add(k);
+    }
+    return null;
+  })();
+  const envValid = envErrors.every((e) => e === null) && !duplicateEnvKey && form.env.length <= ENV_MAX;
+  const valid = !!form.id.trim() && !!form.name.trim() && envValid;
 
   return (
     <div
@@ -350,6 +400,98 @@ export function AgentModal({
                 </span>
               </span>
             </label>
+          </div>
+
+          {/* 권한 모드 + 에이전트 환경변수 */}
+          <div className="border-t border-zinc-800 pt-4 space-y-3">
+            <Field
+              label="권한 모드"
+              help={PERMISSION_MODES.find((m) => m.value === form.permissionMode)?.help}
+            >
+              <select
+                value={form.permissionMode}
+                onChange={(e) =>
+                  setForm({ ...form, permissionMode: e.target.value as PermissionMode })
+                }
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
+              >
+                {PERMISSION_MODES.map((m) => (
+                  <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+              </select>
+            </Field>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] uppercase tracking-wider text-zinc-500">
+                  환경 변수 ({form.env.length}/{ENV_MAX})
+                </span>
+                <button
+                  type="button"
+                  disabled={form.env.length >= ENV_MAX}
+                  onClick={() => setForm({ ...form, env: [...form.env, { key: '', value: '' }] })}
+                  className="text-[11px] text-emerald-400 hover:text-emerald-300 disabled:opacity-40"
+                >
+                  + 추가
+                </button>
+              </div>
+              <div className="space-y-1.5">
+                {form.env.length === 0 && (
+                  <div className="text-[11px] text-zinc-600">
+                    없음 — 이 에이전트 실행 프로세스에만 병합됩니다.
+                  </div>
+                )}
+                {form.env.map((row, i) => (
+                  <div key={i}>
+                    <div className="flex gap-1.5">
+                      <input
+                        value={row.key}
+                        onChange={(e) => {
+                          const env = form.env.slice();
+                          env[i] = { ...row, key: e.target.value.toUpperCase() };
+                          setForm({ ...form, env });
+                        }}
+                        placeholder="MY_API_KEY"
+                        className={`w-1/3 bg-zinc-950 border rounded px-2 py-1.5 text-xs font-mono ${
+                          envErrors[i] || (duplicateEnvKey && row.key.trim() === duplicateEnvKey)
+                            ? 'border-red-800'
+                            : 'border-zinc-800'
+                        }`}
+                      />
+                      <input
+                        value={row.value}
+                        onChange={(e) => {
+                          const env = form.env.slice();
+                          env[i] = { ...row, value: e.target.value };
+                          setForm({ ...form, env });
+                        }}
+                        placeholder="값"
+                        className="flex-1 bg-zinc-950 border border-zinc-800 rounded px-2 py-1.5 text-xs font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setForm({ ...form, env: form.env.filter((_, j) => j !== i) })
+                        }
+                        className="px-2 text-zinc-500 hover:text-red-400"
+                        aria-label="환경 변수 삭제"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                    {envErrors[i] && (
+                      <div className="text-[11px] text-red-400 mt-0.5">{envErrors[i]}</div>
+                    )}
+                  </div>
+                ))}
+                {duplicateEnvKey && (
+                  <div className="text-[11px] text-red-400">중복된 키: {duplicateEnvKey}</div>
+                )}
+              </div>
+              <p className="text-[11px] text-zinc-600 mt-1">
+                PATH / HOME / NODE_OPTIONS / CLAUDE_CONFIG_DIR 은 서버가 거부합니다.
+              </p>
+            </div>
           </div>
 
           {/* Tool permissions section */}

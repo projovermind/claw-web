@@ -30,7 +30,9 @@ export function createChatRouter({
   webConfig,
   getBridgeContext,
   approvalBroker,
-  bridgeToken
+  bridgeToken,
+  hooksStore,
+  logsDir
 }) {
   const router = Router();
 
@@ -70,7 +72,9 @@ export function createChatRouter({
     MAX_REENTRY,
     MAX_FAILURE_REENTRY,
     approvalBroker,
-    bridgeToken
+    bridgeToken,
+    hooksStore,
+    logsDir
   };
 
   // Wire agent-delegation queue (needs ctx.executeDelegation — resolved later)

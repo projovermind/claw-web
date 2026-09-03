@@ -24,6 +24,10 @@ export interface Agent {
   gitDiffAutoAttach?: boolean;
   // Phase 5: VS Code bridge auto-inject
   bridgeAutoAttach?: boolean;
+  /** CLI --permission-mode 로 그대로 전달. */
+  permissionMode?: PermissionMode;
+  /** 러너 spawn 시 프로세스 env 에 병합 (에이전트 값이 우선). */
+  env?: Record<string, string>;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -193,6 +197,20 @@ export interface WebSettings {
   auth: { enabled: boolean; token: string | null };
   appearance?: Record<string, unknown>;
   editor?: EditorConfig;
+  chat?: ChatConfig;
+  usage?: UsageConfig;
+}
+
+export interface ChatConfig {
+  /** 컨텍스트 사용률이 이 %(0 = off) 를 넘으면 턴 종료 후 자동 compact. */
+  autoCompactPct?: number;
+}
+
+export interface UsageConfig {
+  /** 5시간 창 토큰 예산 (0 = 미설정). */
+  budget5h?: number;
+  /** 7일 창 토큰 예산 (0 = 미설정). */
+  budget7d?: number;
 }
 
 export interface EditorConfig {
@@ -300,4 +318,60 @@ export interface DelegationEntry {
   createdAt: string;
   completedAt: string | null;
   result: string | null;
+}
+
+/** CLI 권한 모드 — `auto` 는 분류기가 위험 행동만 차단 (CLI 2.1.259+). */
+export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'auto';
+
+export const HOOK_EVENTS = [
+  'PreToolUse',
+  'PostToolUse',
+  'Stop',
+  'Notification',
+  'SessionStart',
+  'UserPromptSubmit'
+] as const;
+export type HookEvent = (typeof HOOK_EVENTS)[number];
+
+/** hooks.json 항목 — 러너가 에이전트 실행 시 Claude settings 로 조립해 주입한다. */
+export interface HookConfig {
+  id: string;
+  event: HookEvent | string;
+  matcher: string;
+  command: string;
+  enabled: boolean;
+  /** 레거시 필드 — 서버는 'shell' 만 사용. */
+  action?: string;
+  /** true 면 훅 완료를 기다리지 않음. */
+  async?: boolean;
+  /** 초 단위. 미지정이면 CLI 기본값. */
+  timeout?: number;
+  /** 비어있으면 전체 에이전트에 적용. */
+  agentIds?: string[];
+}
+
+export interface McpPreset {
+  id: string;
+  name: string;
+  desc?: string;
+  config: Record<string, unknown>;
+}
+
+export interface ClaudeMemoryFile {
+  name: string;
+  size: number;
+  mtime: string;
+}
+
+export interface ClaudeMemoryList {
+  dir: string;
+  files: ClaudeMemoryFile[];
+  /** MEMORY.md 내용 — 파일이 없으면 null. */
+  index: string | null;
+}
+
+/** GET /api/stats/usage 의 토큰 예산 (0 = 미설정). */
+export interface UsageBudget {
+  tokens5h: number;
+  tokens7d: number;
 }
