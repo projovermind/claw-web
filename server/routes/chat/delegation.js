@@ -1,4 +1,5 @@
 import { logger } from '../../lib/logger.js';
+import { buildRoster, listProjectAgentIds } from '../../lib/agent-roster.js';
 
 /**
  * Hard ceiling on delegation chain length (planner → worker → sub-worker).
@@ -6,6 +7,14 @@ import { logger } from '../../lib/logger.js';
  * spend and there is no natural termination condition.
  */
 const MAX_DELEGATION_DEPTH = 3;
+
+/**
+ * 워커가 결과를 남기지 못한 채 사라지면(크래시, 외부 kill, 디스패치 유실) chat.done
+ * 이 끝내 오지 않아 트래커는 영원히 running 으로 남는다. 플래너는 오지 않을 보고를
+ * 기다리고 대상 에이전트는 계속 busy 로 잡힌다. 주기적으로 훑어 정리한다.
+ */
+const SWEEP_INTERVAL_MS = 60_000;
+const STALL_TIMEOUT_MS = 10 * 60_000;
 
 /**
  * Creates delegation-related handlers. All cross-module calls (ctx.dispatch)
@@ -84,21 +93,21 @@ export function createDelegation(ctx) {
 
   /** 원 세션 에이전트와 같은 프로젝트에 속한 위임 가능 대상 ID 목록. */
   function listDelegateTargets(originSessionId) {
-    const all = configStore.getAgents() || {};
     const originAgentId = sessionsStore.get(originSessionId)?.agentId ?? null;
-    const myProj = originAgentId ? ctx.metadataStore?.getAgent(originAgentId)?.projectId ?? null : null;
-    if (!myProj) return [];
-    const out = [];
-    for (const id of Object.keys(all)) {
-      if (id === originAgentId) continue;
-      if (ctx.metadataStore?.getAgent(id)?.projectId === myProj) out.push(id);
-    }
-    return out;
+    return listProjectAgentIds({
+      agents: configStore.getAgents() || {},
+      metadataStore: ctx.metadataStore,
+      projectId: originAgentId ? ctx.metadataStore?.getAgent(originAgentId)?.projectId ?? null : null,
+      excludeAgentId: originAgentId,
+    });
   }
 
   function formatTargets(ids) {
-    if (!ids.length) return '- (같은 프로젝트에 다른 에이전트가 없습니다 — planner_office 등 범용 에이전트를 쓰세요)';
-    return ids.map((id) => `- ${id}`).join('\n');
+    return buildRoster(
+      ids,
+      configStore.getAgents() || {},
+      '- (같은 프로젝트에 다른 에이전트가 없습니다 — planner_office 등 범용 에이전트를 쓰세요)'
+    );
   }
 
   /**
@@ -299,6 +308,48 @@ export function createDelegation(ctx) {
     }
   }
 
+  /**
+   * 위임이 마지막으로 살아 있었던 시각. 러너의 lastActivity 는 프로세스가 끝나면
+   * 지워지므로, 세션 updatedAt 과 생성 시각까지 함께 보고 가장 최근 것을 쓴다.
+   */
+  function lastActivityMs(entry) {
+    const stamps = [Date.parse(entry.createdAt)];
+    const fromRunner = ctx.runner?.lastActivityAt?.(entry.targetSessionId);
+    if (fromRunner) stamps.push(fromRunner);
+    const updatedAt = sessionsStore.get(entry.targetSessionId)?.updatedAt;
+    if (updatedAt) stamps.push(Date.parse(updatedAt));
+    return Math.max(0, ...stamps.filter(Number.isFinite));
+  }
+
+  /** running 인데 러너도 없고 한참 조용한 위임을 중단 처리한다. */
+  async function sweepStalledDelegations() {
+    if (!delegationTracker) return;
+    const now = Date.now();
+    for (const entry of delegationTracker.list()) {
+      if (entry.status !== 'running') continue;
+      // 러너가 살아 있거나 디스패치 큐에서 차례를 기다리는 중이면 정상 작동이다.
+      if (ctx.isSessionBusy?.(entry.targetSessionId)) continue;
+      const idleMs = now - lastActivityMs(entry);
+      if (idleMs < STALL_TIMEOUT_MS) continue;
+      const idleMinutes = Math.floor(idleMs / 60_000);
+      logger.warn(
+        { id: entry.id, targetSessionId: entry.targetSessionId, targetAgentId: entry.targetAgentId, idleMinutes },
+        'delegation: stalled worker detected by sweep'
+      );
+      await abandonDelegation(
+        entry.targetSessionId,
+        `응답 없이 중단됨 (워커 프로세스 없음, ${idleMinutes}분간 활동 없음)`
+      );
+    }
+  }
+
+  const sweepTimer = setInterval(() => {
+    sweepStalledDelegations().catch((err) => {
+      logger.warn({ err: err.message }, 'delegation: sweep failed');
+    });
+  }, SWEEP_INTERVAL_MS);
+  sweepTimer.unref?.();
+
   /** Escape special regex characters in a string. */
   function escapeForRegex(str) {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -432,6 +483,7 @@ export function createDelegation(ctx) {
     resolveAgentId,
     executeDelegation,
     abandonDelegation,
+    sweepStalledDelegations,
     handleLoopContinuation
   };
 }
