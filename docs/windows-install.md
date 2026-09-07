@@ -109,12 +109,19 @@ curl -fsSL https://raw.githubusercontent.com/projovermind/claw-web/main/scripts/
 
 ```bash
 bash scripts/self-update.sh --install-timer
-bash scripts/self-update.sh --check          # 지금 몇 커밋 뒤처졌는지만 확인
+bash scripts/self-update.sh --check          # git·프로세스·워커 상태만 확인
 ```
 
-재시작이 대화를 끊기 때문에 **워커가 하나라도 돌고 있으면 그 판을 통째로 건너뛰고**
-다음 주기에 다시 시도한다. 커밋 안 된 로컬 변경이 있어도 손대지 않는다.
-`package-lock.json` 이 바뀐 경우에만 `npm install`, `client/` 가 바뀐 경우에만 재빌드한다.
+타이머는 **5분 주기**로 두 가지를 본다.
+
+1. `origin/main` 이 앞서 있으면 → pull, `package-lock.json` 이 바뀐 경우에만 `npm install`,
+   `client/` 가 바뀐 경우에만 재빌드
+2. **떠 있는 프로세스가 디스크보다 낡았으면 → 재시작.** git 업데이트가 없어도 돈다.
+   손으로 빌드해 둔 변경도 여기서 반영된다.
+
+재시작이 대화를 끊기 때문에 **워커가 하나라도 살아 있으면 아무것도 하지 않고** 다음 주기로 미룬다.
+그래서 실질적으로 "세션이 없으면 5분 안에 알아서 최신으로 맞춰진다"에 가깝다.
+커밋 안 된 로컬 변경이 있으면 pull 은 건너뛰되, 재시작 판단은 그대로 한다.
 
 로그: `data/user/logs/self-update.log`
 
