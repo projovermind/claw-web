@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# claw-web 자동 업데이트 — origin/main 을 따라간다 (systemd 기기용).
+# claw-web 자동 업데이트 — origin/main 을 따라간다 (systemd / launchd 양쪽).
 #
 #   bash scripts/self-update.sh                # 1회 실행
 #   bash scripts/self-update.sh --check        # 확인만, 아무것도 안 바꿈
@@ -16,6 +16,8 @@ LOG_DIR="$REPO_DIR/data/user/logs"
 LOG="$LOG_DIR/self-update.log"
 TRACKER="$LOG_DIR/running-processes.json"
 SERVICE="claw-web"
+MAC_LABEL="cc.subinggrae.claw-web"          # 맥 LaunchAgent (서버 본체)
+MAC_UPDATE_LABEL="cc.subinggrae.claw-web-update"
 CHECK_ONLY=0
 [[ "${1:-}" == "--check" ]] && CHECK_ONLY=1
 
@@ -24,8 +26,36 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
 
 # ── 타이머 등록 ─────────────────────────────────────────
 if [[ "${1:-}" == "--install-timer" ]]; then
+  # 맥은 systemd 가 없으므로 LaunchAgent 로 같은 주기를 만든다.
+  if [ "$(uname -s)" = "Darwin" ]; then
+    PLIST="$HOME/Library/LaunchAgents/$MAC_UPDATE_LABEL.plist"
+    mkdir -p "$HOME/Library/LaunchAgents"
+    cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$MAC_UPDATE_LABEL</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>$REPO_DIR/scripts/self-update.sh</string>
+  </array>
+  <key>StartInterval</key><integer>1800</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>$LOG_DIR/self-update.launchd.log</string>
+  <key>StandardErrorPath</key><string>$LOG_DIR/self-update.launchd.log</string>
+</dict>
+</plist>
+EOF
+    launchctl bootout "gui/$(id -u)/$MAC_UPDATE_LABEL" 2>/dev/null
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" || { echo "LaunchAgent 등록 실패: $PLIST" >&2; exit 1; }
+    echo "등록됨 — $MAC_UPDATE_LABEL (30분 주기). 해제: launchctl bootout gui/$(id -u)/$MAC_UPDATE_LABEL"
+    exit 0
+  fi
+
   if ! ps -p 1 -o comm= | grep -q systemd; then
-    echo "systemd 가 아닙니다 — 타이머를 등록할 수 없습니다." >&2; exit 1
+    echo "systemd 도 launchd 도 아닙니다 — 타이머를 등록할 수 없습니다." >&2; exit 1
   fi
   mkdir -p "$HOME/.config/systemd/user"
   cat > "$HOME/.config/systemd/user/claw-web-update.service" <<EOF
@@ -127,18 +157,32 @@ if [ "$CLIENT_BEFORE" != "$(git rev-parse HEAD:client 2>/dev/null || echo none)"
 fi
 
 # ── 재시작 ──────────────────────────────────────────────
-# systemd 로 관리되는 기기에서만 재시작한다. 맥(LaunchAgent)에서는 여기 안 걸리고
-# 조용히 끝나므로, 세션 안에서 실수로 자기 자신을 죽이는 일이 없다.
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-if systemctl --user is-enabled --quiet "$SERVICE" 2>/dev/null; then
-  systemctl --user restart "$SERVICE"
+# 서비스 매니저가 관리하는 기기에서만 재시작한다. 여기까지 왔다는 건 위 워커 가드를
+# 통과했다는 뜻 — 살아있는 대화가 없다는 것이 확인된 상태다.
+health_check() {
   sleep 3
   PORT=$(python3 -c "import json;print(json.load(open('data/private/web-config.json')).get('port',3838))" 2>/dev/null || echo 3838)
   CODE=$(curl -s -o /dev/null -w '%{http_code}' -m 10 "http://localhost:$PORT/api/health" || echo 000)
   if [ "$CODE" = "200" ] || [ "$CODE" = "401" ]; then
-    log "완료 — 재시작 후 정상 (HTTP $CODE)"
+    log "완료 — 재시작 후 정상 (HTTP $CODE)"; return 0
+  fi
+  log "경고: 재시작했으나 헬스체크 실패 (HTTP $CODE)"; return 1
+}
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  if launchctl print "gui/$(id -u)/$MAC_LABEL" >/dev/null 2>&1; then
+    launchctl kickstart -k "gui/$(id -u)/$MAC_LABEL"
+    health_check || exit 1
   else
-    log "경고: 재시작했으나 헬스체크 실패 (HTTP $CODE)"
+    log "완료 — LaunchAgent $MAC_LABEL 없음, 재시작은 건너뜀 (수동 재시작 필요)"
+  fi
+  exit 0
+fi
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+if systemctl --user is-enabled --quiet "$SERVICE" 2>/dev/null; then
+  systemctl --user restart "$SERVICE"
+  if ! health_check; then
     systemctl --user status "$SERVICE" --no-pager -l 2>&1 | tail -15 >>"$LOG"
     exit 1
   fi

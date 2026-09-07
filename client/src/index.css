@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── 웹폰트 ──
+ * OS 기본 글꼴에 맡기면 맥은 SF Pro/Apple SD Gothic Neo, 윈도우는 Segoe UI →
+ * 맑은 고딕으로 떨어져 같은 rem 값인데도 글자 크기·행간이 눈에 띄게 달라진다.
+ * 자체 호스팅이라 외부 요청이 없고 터널 밖에서도 동일하게 렌더링된다.
+ * Pretendard 는 가변폰트 하나로 45~920 전 굵기를 덮는다. */
+@font-face {
+  font-family: 'Pretendard';
+  src: url('/fonts/PretendardVariable.woff2') format('woff2-variations');
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('/fonts/JetBrainsMono.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @layer base {
   /* 모바일 전체 화면 고정 — 주소창/하단바에 의한 스크롤 방지 */
   html, body, #root {
@@ -138,7 +158,7 @@
 .markdown-body code {
   color: #34d399; /* emerald-400 */
   font-size: 0.825rem;
-  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  font-family: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
 }
 .markdown-body pre code {
   color: inherit;

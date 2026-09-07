@@ -111,6 +111,14 @@ bash scripts/self-update.sh --check          # 지금 몇 커밋 뒤처졌는지
 
 로그: `data/user/logs/self-update.log`
 
+맥에서도 같은 명령이 먹는다 — systemd 대신 LaunchAgent `cc.subinggrae.claw-web-update` 를 걸고
+재시작은 `launchctl kickstart -k cc.subinggrae.claw-web` 으로 한다.
+해제는 `launchctl bootout gui/$(id -u)/cc.subinggrae.claw-web-update`.
+
+설정 → 기기 목록의 오른쪽에 각 기기의 버전이 뜬다. 주황색이면 이쪽과 버전이 다르다는 뜻 —
+그 기기에서 아직 업데이트가 안 돌았거나, 디스크는 최신인데 재시작을 안 한 상태다
+(`/api/health` 의 `version` 은 프로세스가 뜰 때 읽은 값이다).
+
 ---
 
 ## 자주 걸리는 것들

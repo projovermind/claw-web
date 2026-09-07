@@ -10,6 +10,7 @@ const slugify = (s: string) =>
 export function DevicesTab() {
   const qc = useQueryClient();
   const { data: devices, isLoading } = useQuery({ queryKey: ['devices'], queryFn: api.devices });
+  const { data: selfHealth } = useQuery({ queryKey: ['health'], queryFn: api.health, staleTime: 60_000 });
 
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
@@ -50,6 +51,8 @@ export function DevicesTab() {
         사이드바에서 그 기계의 claw-web 으로 건너뜁니다. 세션·프로젝트·설정은 기계마다 따로입니다.
         <br />
         왼쪽 숫자가 순번입니다 — 사이드바에서 <kbd className="text-zinc-400">Alt</kbd>+숫자로 바로 건너뜁니다.
+        {selfHealth?.version && <> 오른쪽 버전이 <span className="text-amber-400">주황색</span>이면 이 기기(v{selfHealth.version})와 달라
+        그쪽에서 <code className="text-zinc-400">self-update.sh</code> 가 아직 안 돈 것입니다.</>}
       </p>
 
       <div className="space-y-2">
@@ -58,6 +61,7 @@ export function DevicesTab() {
             key={d.id}
             device={d}
             index={i}
+            selfVersion={selfHealth?.version}
             onOrder={(order) => orderMut.mutate({ id: d.id, order })}
             onDelete={() => {
               if (confirm(`${d.name} 을(를) 목록에서 지울까요?`)) deleteMut.mutate(d.id);
@@ -112,9 +116,10 @@ export function DevicesTab() {
   );
 }
 
-function DeviceRow({ device, index, onOrder, onDelete }: {
+function DeviceRow({ device, index, selfVersion, onOrder, onDelete }: {
   device: Device;
   index: number;
+  selfVersion?: string;
   onOrder: (order: number) => void;
   onDelete: () => void;
 }) {
@@ -129,6 +134,11 @@ function DeviceRow({ device, index, onOrder, onDelete }: {
 
   const dot = isLoading ? 'bg-zinc-600' : ping?.online ? 'bg-emerald-400' : 'bg-red-400';
 
+  // 원격이 보고하는 version 은 그 프로세스가 뜰 때 읽은 값이다 — 디스크가 최신이어도
+  // 재시작 전이면 옛 값이 온다. 어긋나면 그쪽에서 self-update.sh 가 돌아야 한다는 신호.
+  const remoteVersion = ping?.health?.version;
+  const mismatched = !!remoteVersion && !!selfVersion && remoteVersion !== selfVersion;
+
   return (
     <div className="flex items-center gap-3 bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2.5">
       <OrderBox value={device.order ?? index + 1} onCommit={onOrder} />
@@ -142,10 +152,20 @@ function DeviceRow({ device, index, onOrder, onDelete }: {
         <div className="text-[11px] text-zinc-600 font-mono truncate">{device.url}</div>
         {device.note && <div className="text-[11px] text-zinc-500 truncate">{device.note}</div>}
       </div>
-      <div className="text-[11px] text-zinc-500 shrink-0 text-right">
-        {isLoading ? '확인 중…'
-          : ping?.online ? `${ping.latencyMs}ms`
-          : <span className="text-red-400">{ping?.error ?? '응답 없음'}</span>}
+      <div className="text-[11px] text-zinc-500 shrink-0 text-right leading-tight">
+        <div>
+          {isLoading ? '확인 중…'
+            : ping?.online ? `${ping.latencyMs}ms`
+            : <span className="text-red-400">{ping?.error ?? '응답 없음'}</span>}
+        </div>
+        {remoteVersion && (
+          <div
+            className={`font-mono ${mismatched ? 'text-amber-400' : 'text-zinc-600'}`}
+            title={mismatched ? `이 기기는 v${selfVersion} — 버전이 다릅니다` : undefined}
+          >
+            v{remoteVersion}{mismatched && ' ≠'}
+          </div>
+        )}
       </div>
       {!isSelf && (
         <a
