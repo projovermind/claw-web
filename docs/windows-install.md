@@ -96,6 +96,21 @@ SSE/WebSocket 이 오래 열려 있는 특성 때문에 `tcpKeepAlive` 를 세�
 node scripts/sync-agents.mjs --dry-run
 ```
 
+## 6. 자동 업데이트
+
+`origin/main` 을 따라가는 타이머를 건다 (30분 주기).
+
+```bash
+bash scripts/self-update.sh --install-timer
+bash scripts/self-update.sh --check          # 지금 몇 커밋 뒤처졌는지만 확인
+```
+
+재시작이 대화를 끊기 때문에 **워커가 하나라도 돌고 있으면 그 판을 통째로 건너뛰고**
+다음 주기에 다시 시도한다. 커밋 안 된 로컬 변경이 있어도 손대지 않는다.
+`package-lock.json` 이 바뀐 경우에만 `npm install`, `client/` 가 바뀐 경우에만 재빌드한다.
+
+로그: `data/user/logs/self-update.log`
+
 ---
 
 ## 자주 걸리는 것들
