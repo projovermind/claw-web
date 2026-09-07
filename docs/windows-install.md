@@ -8,6 +8,7 @@ claw-web 은 파일 스토어 + Claude CLI 전제라 Windows 네이티브가 아
 | `scripts/claw-web-wsl-setup.ps1` | Windows **관리자** PowerShell | systemd 활성화, `claw-web.service` 등록, LAN 포트포워딩, 로그온 자동 실행 |
 | `scripts/claw-web-cf-tunnel.sh` | WSL 셸 | cloudflared 설치·터널 생성·DNS 등록·서비스 상주 → 외부 도메인 공개 |
 | `scripts/win-bootstrap.sh` | WSL 셸 | 설치 후 상시 사용 — pull·의존성·빌드·재시작·자동업데이트 타이머를 한 번에 |
+| `scripts/omniroute-setup.sh` | WSL 셸 (맥도 동일) | 선택 — OmniRoute 게이트웨이 설치·상주·키 발급·백엔드 연결까지 한 번에 |
 
 ---
 
@@ -132,6 +133,35 @@ bash scripts/self-update.sh --check          # git·프로세스·워커 상태�
 설정 → 기기 목록의 오른쪽에 각 기기의 버전이 뜬다. 주황색이면 이쪽과 버전이 다르다는 뜻 —
 그 기기에서 아직 업데이트가 안 돌았거나, 디스크는 최신인데 재시작을 안 한 상태다
 (`/api/health` 의 `version` 은 프로세스가 뜰 때 읽은 값이다).
+
+## 7. OmniRoute 게이트웨이 (선택)
+
+여러 제공자의 무료 티어로 폴백해 주는 게이트웨이다. **호스팅 API 가 아니라 이 기계에서 직접 돌린다** —
+그래서 어디서 키를 발급받는 게 아니라 게이트웨이가 자기 키를 만들어 준다.
+
+```bash
+bash scripts/omniroute-setup.sh                 # 이 기계에서만 (127.0.0.1)
+bash scripts/omniroute-setup.sh --lan           # 같은 공유기의 다른 기기에서도 대시보드 접속
+bash scripts/omniroute-setup.sh --password 원하는비번
+bash scripts/omniroute-setup.sh --uninstall     # 상주만 해제
+```
+
+npm 전역 설치 → `REQUIRE_API_KEY` 잠금 → 상주 등록(맥 LaunchAgent / WSL systemd) →
+대시보드 비밀번호 → API 키 발급 → claw-web 백엔드 등록·토큰 주입 → 실제 호출 검증까지 한다.
+여러 번 돌려도 안전하고, 이미 된 단계는 건너뛴다.
+
+끝나면 **에이전트 편집 → 백엔드 `OmniRoute` + 모델 `auto`** 로 쓴다.
+
+알아둘 것:
+
+- 기본 바인딩은 루프백이다. `--lan` 을 준 적이 있으면 재실행해도 그 선택을 되돌리지 않는다.
+- 대시보드 초기 비밀번호는 `CHANGEME` 다. 스크립트가 이걸 감지하면 무작위 값으로 바꾸고 출력한다
+  (**그때만 보여준다** — 적어둘 것). 이미 바꿔둔 게 있으면 건드리지 않는다.
+- 키를 다시 만들려면 `--password` 로 알려줘야 한다. OmniRoute 는 발급된 키를 다시 보여주지 않는다.
+- 모델은 `auto` 만 기본 동작한다. `claude/glm/...` 같은 값은 OmniRoute 가 앞부분을 **제공자 이름**으로
+  읽어서 `No active credentials for provider: claude` 401 이 난다. GLM 등을 직접 쓰려면
+  대시보드 → Providers 에서 그 제공자를 먼저 연결해야 한다(브라우저 인증).
+- 무료 티어는 클로드가 아니라 GLM/Qwen 계열이고 프롬프트가 외부로 나간다. 운영 데이터 에이전트에는 붙이지 말 것.
 
 ---
 
