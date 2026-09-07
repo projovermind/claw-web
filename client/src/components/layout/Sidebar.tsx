@@ -162,14 +162,14 @@ export default function Sidebar() {
         </div>
         <button
           onClick={openPalette}
-          className={`mt-3 w-full h-9 flex items-center gap-2 ${isCollapsed ? 'justify-center px-0' : 'px-2.5'} rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-sm text-zinc-500 hover:text-zinc-300 transition-colors`}
+          className={`mt-3 w-full h-7 flex items-center gap-2 ${isCollapsed ? 'justify-center px-0' : 'px-2.5'} rounded-md bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-500 hover:text-zinc-300 transition-colors`}
           title={isCollapsed ? `${t('sidebar.searchPlaceholder')} (${isMac ? '⌘K' : 'Ctrl+K'})` : undefined}
         >
-          <Search size={14} className="shrink-0" />
+          <Search size={12} className="shrink-0" />
           {!isCollapsed && (
             <>
               <span className="flex-1 min-w-0 text-left truncate whitespace-nowrap">{t('sidebar.searchPlaceholder')}</span>
-              <kbd className="text-[0.8125rem] font-mono text-zinc-600 shrink-0 whitespace-nowrap">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
+              <kbd className="text-[0.6875rem] font-mono text-zinc-600 shrink-0 whitespace-nowrap">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
             </>
           )}
         </button>
@@ -189,14 +189,14 @@ export default function Sidebar() {
                   end={to === '/'}
                   title={isCollapsed ? label : undefined}
                   className={({ isActive }) =>
-                    `relative flex items-center gap-3 ${isCollapsed ? 'justify-center px-0' : 'px-3'} h-10 rounded-md text-base transition-colors ${
+                    `relative flex items-center gap-3 ${isCollapsed ? 'justify-center px-0' : 'px-3'} h-9 rounded-md text-sm transition-colors ${
                       isActive
                         ? 'bg-zinc-800 text-white'
                         : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
                     }`
                   }
                 >
-                  <Icon size={18} className="shrink-0" />
+                  <Icon size={16} className="shrink-0" />
                   {!isCollapsed && <span className="flex-1 min-w-0 truncate whitespace-nowrap">{label}</span>}
                   {showChatDot && !isCollapsed && (
                     <span className={`w-2 h-2 rounded-full ${chatDotColor} ${hasError || hasUnread || hasRunning ? 'animate-pulse' : ''}`} />
@@ -215,14 +215,14 @@ export default function Sidebar() {
         <div className={`${isCollapsed ? 'p-1' : 'p-2'} border-t border-zinc-800`}>
           {!isCollapsed && (
             <>
-              <div className="flex items-center gap-1 text-[0.8125rem] text-zinc-500 mb-1 px-2">
-                <Languages size={13} />
+              <div className="flex items-center gap-1 text-[0.6875rem] text-zinc-500 mb-1 px-2">
+                <Languages size={11} />
                 <span>Language</span>
               </div>
               <div className="flex gap-1">
                 <button
                   onClick={() => setLang('ko')}
-                  className={`flex-1 rounded px-2 py-1.5 text-sm whitespace-nowrap transition-colors ${
+                  className={`flex-1 rounded px-2 py-1.5 text-xs whitespace-nowrap transition-colors ${
                     lang === 'ko' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:bg-zinc-900'
                   }`}
                 >
@@ -243,9 +243,9 @@ export default function Sidebar() {
             <button
               onClick={handleLogout}
               title={isCollapsed ? '로그아웃' : undefined}
-              className={`w-full flex items-center gap-3 ${isCollapsed ? 'justify-center px-0' : 'mt-2 px-3'} h-10 rounded-md text-base text-zinc-500 hover:bg-zinc-900 hover:text-red-300 transition-colors`}
+              className={`w-full flex items-center gap-3 ${isCollapsed ? 'justify-center px-0' : 'mt-2 px-3'} h-9 rounded-md text-sm text-zinc-500 hover:bg-zinc-900 hover:text-red-300 transition-colors`}
             >
-              <LogOut size={18} className="shrink-0" />
+              <LogOut size={16} className="shrink-0" />
               {!isCollapsed && <span className="flex-1 min-w-0 text-left truncate whitespace-nowrap">로그아웃</span>}
             </button>
           )}
@@ -254,10 +254,10 @@ export default function Sidebar() {
               to="/settings?tab=access#update-check"
               onClick={() => setMobileOpen(false)}
               title={isCollapsed ? `v${version} — 업데이트 확인` : '업데이트 확인'}
-              className={`mt-1 flex items-center ${isCollapsed ? 'justify-center px-0' : 'justify-between px-2'} h-7 rounded text-[0.8125rem] font-mono text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900 transition-colors`}
+              className={`mt-1 flex items-center ${isCollapsed ? 'justify-center px-0' : 'justify-between px-2'} h-6 rounded text-[0.6875rem] font-mono text-zinc-600 hover:text-zinc-300 hover:bg-zinc-900 transition-colors`}
             >
               <span className="truncate whitespace-nowrap">v{version}</span>
-              {!isCollapsed && <span className="text-xs text-zinc-700">업데이트</span>}
+              {!isCollapsed && <span className="text-[0.625rem] text-zinc-700">업데이트</span>}
             </Link>
           )}
         </div>
@@ -276,7 +276,7 @@ export default function Sidebar() {
         >
           <Menu size={18} />
         </button>
-        <Link to="/" className="text-[1.0625rem] font-semibold tracking-tight hover:text-sky-400 transition-colors">{appName}</Link>
+        <Link to="/" className="text-sm font-semibold tracking-tight hover:text-sky-400 transition-colors">{appName}</Link>
         <button
           onClick={openPalette}
           className="ml-auto p-2 rounded hover:bg-zinc-800 text-zinc-400"
