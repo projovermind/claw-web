@@ -132,6 +132,19 @@ print(n)" 2>/dev/null || echo 0)
   fi
 fi
 
+# 3) 추적 안 되는 파일이 원격에도 같은 경로로 들어오면 merge 가 통째로 거부된다.
+#    (푸시 전에 스크립트를 손으로 받아둔 기기에서 실제로 발생) — 비켜놓고 진행한다.
+#    내용이 원격과 같으면 그냥 지우고, 다르면 타임스탬프를 붙여 남긴다.
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  git cat-file -e "origin/main:$f" 2>/dev/null || continue
+  if git show "origin/main:$f" 2>/dev/null | cmp -s - "$f"; then
+    rm -f "$f"; log "충돌 정리: $f (원격과 동일 — 삭제)"
+  else
+    mv "$f" "$f.local-$(date '+%Y%m%d-%H%M%S').bak"; log "충돌 정리: $f → *.local-*.bak"
+  fi
+done < <(git ls-files --others --exclude-standard)
+
 # ── 적용 ────────────────────────────────────────────────
 LOCK_BEFORE=$(git rev-parse HEAD:package-lock.json 2>/dev/null || echo none)
 CLIENT_BEFORE=$(git rev-parse HEAD:client 2>/dev/null || echo none)

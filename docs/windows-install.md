@@ -1,12 +1,13 @@
 # Windows 설치 (WSL2)
 
 claw-web 은 파일 스토어 + Claude CLI 전제라 Windows 네이티브가 아니라 **WSL2 Ubuntu** 안에서 돌린다.
-아래 두 스크립트가 설치 이후의 모든 반복 작업(상주화·포트 노출·외부 공개)을 대신한다.
+아래 스크립트들이 설치 이후의 모든 반복 작업(상주화·포트 노출·외부 공개·업데이트)을 대신한다.
 
 | 스크립트 | 실행 위치 | 하는 일 |
 |---|---|---|
 | `scripts/claw-web-wsl-setup.ps1` | Windows **관리자** PowerShell | systemd 활성화, `claw-web.service` 등록, LAN 포트포워딩, 로그온 자동 실행 |
 | `scripts/claw-web-cf-tunnel.sh` | WSL 셸 | cloudflared 설치·터널 생성·DNS 등록·서비스 상주 → 외부 도메인 공개 |
+| `scripts/win-bootstrap.sh` | WSL 셸 | 설치 후 상시 사용 — pull·의존성·빌드·재시작·자동업데이트 타이머를 한 번에 |
 
 ---
 
@@ -98,7 +99,13 @@ node scripts/sync-agents.mjs --dry-run
 
 ## 6. 자동 업데이트
 
-`origin/main` 을 따라가는 타이머를 건다 (30분 주기).
+설치 이후에는 이 한 줄이면 된다 — pull 부터 타이머 등록까지 전부 한다. 몇 번을 돌려도 안전하다.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/projovermind/claw-web/main/scripts/win-bootstrap.sh | bash
+```
+
+개별로 쓰려면:
 
 ```bash
 bash scripts/self-update.sh --install-timer
@@ -131,4 +138,6 @@ bash scripts/self-update.sh --check          # 지금 몇 커밋 뒤처졌는지
 | `EADDRINUSE :3838` | 이미 떠 있는 인스턴스가 있다. `curl localhost:3838/api/health` 로 확인 |
 | `ipconfig.exe \| grep` → binary file matches | Windows 실행파일이 UTF-16 출력 → `ipconfig.exe \| tr -d '\0' \| grep -a IPv4` |
 | 재부팅 후 LAN 접속 불가 | WSL IP 가 바뀌었다 → `claw-web-wsl-setup.ps1 -Refresh` |
+| `git pull` → `untracked working tree files would be overwritten` | 푸시 전에 손으로 받아둔 파일이 남아 있다 → `win-bootstrap.sh` 가 알아서 비켜놓는다 (내용이 같으면 삭제, 다르면 `*.local-*.bak` 보관) |
+| `Cannot find module '.../scripts/xxx.mjs'` | pull 이 위 사유로 중단됐다 → 같은 해법 |
 | 서비스 상태 확인 | `systemctl --user status claw-web cloudflared` |
