@@ -29,13 +29,14 @@ CHECK_ONLY=0
 mkdir -p "$LOG_DIR"
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
 
-# ── 타이머 등록 ─────────────────────────────────────────
-if [[ "${1:-}" == "--install-timer" ]]; then
-  # 맥은 systemd 가 없으므로 LaunchAgent 로 같은 주기를 만든다.
-  if [ "$(uname -s)" = "Darwin" ]; then
-    PLIST="$HOME/Library/LaunchAgents/$MAC_UPDATE_LABEL.plist"
-    mkdir -p "$HOME/Library/LaunchAgents"
-    cat > "$PLIST" <<EOF
+# ── 타이머 정의 ─────────────────────────────────────────
+# 유닛 파일을 쓰고 "changed"/"same" 을 찍는다. 주기를 바꿔도 pull 만으로는
+# 유닛 파일이 안 바뀌므로, 아래에서 pull 후 이걸 다시 돌려 자동으로 맞춘다.
+write_launchd_plist() {
+  local plist="$HOME/Library/LaunchAgents/$MAC_UPDATE_LABEL.plist" tmp
+  mkdir -p "$HOME/Library/LaunchAgents"
+  tmp=$(mktemp)
+  cat > "$tmp" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -53,17 +54,15 @@ if [[ "${1:-}" == "--install-timer" ]]; then
 </dict>
 </plist>
 EOF
-    launchctl bootout "gui/$(id -u)/$MAC_UPDATE_LABEL" 2>/dev/null
-    launchctl bootstrap "gui/$(id -u)" "$PLIST" || { echo "LaunchAgent 등록 실패: $PLIST" >&2; exit 1; }
-    echo "등록됨 — $MAC_UPDATE_LABEL (5분 주기). 해제: launchctl bootout gui/$(id -u)/$MAC_UPDATE_LABEL"
-    exit 0
-  fi
+  if cmp -s "$tmp" "$plist"; then rm -f "$tmp"; echo same; else mv "$tmp" "$plist"; echo changed; fi
+}
 
-  if ! ps -p 1 -o comm= | grep -q systemd; then
-    echo "systemd 도 launchd 도 아닙니다 — 타이머를 등록할 수 없습니다." >&2; exit 1
-  fi
-  mkdir -p "$HOME/.config/systemd/user"
-  cat > "$HOME/.config/systemd/user/claw-web-update.service" <<EOF
+write_systemd_units() {
+  local dir="$HOME/.config/systemd/user" svc tmr t1 t2 changed=0
+  mkdir -p "$dir"
+  svc="$dir/claw-web-update.service"; tmr="$dir/claw-web-update.timer"
+  t1=$(mktemp); t2=$(mktemp)
+  cat > "$t1" <<EOF
 [Unit]
 Description=claw-web self update
 
@@ -71,7 +70,7 @@ Description=claw-web self update
 Type=oneshot
 ExecStart=/usr/bin/env bash $REPO_DIR/scripts/self-update.sh
 EOF
-  cat > "$HOME/.config/systemd/user/claw-web-update.timer" <<'EOF'
+  cat > "$t2" <<'EOF'
 [Unit]
 Description=claw-web self update (5분마다)
 
@@ -85,6 +84,47 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+  cmp -s "$t1" "$svc" || changed=1
+  cmp -s "$t2" "$tmr" || changed=1
+  mv "$t1" "$svc"; mv "$t2" "$tmr"
+  [ "$changed" = 1 ] && echo changed || echo same
+}
+
+# 이미 타이머가 걸린 기기에서, 유닛 정의가 바뀌었으면 조용히 갱신한다.
+# (systemd 는 타이머 유닛 재시작이 지금 돌고 있는 이 서비스를 건드리지 않아 안전하다.
+#  launchd 는 bootout 이 자기 자신을 죽이므로 파일만 갱신하고 안내만 남긴다.)
+refresh_timer_if_installed() {
+  if [ "$(uname -s)" = "Darwin" ]; then
+    [ -f "$HOME/Library/LaunchAgents/$MAC_UPDATE_LABEL.plist" ] || return 0
+    if [ "$(write_launchd_plist)" = changed ]; then
+      log "타이머 정의가 바뀌었습니다 — 적용하려면: bash scripts/self-update.sh --install-timer"
+    fi
+  else
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+    systemctl --user is-enabled --quiet claw-web-update.timer 2>/dev/null || return 0
+    if [ "$(write_systemd_units)" = changed ]; then
+      systemctl --user daemon-reload
+      systemctl --user restart claw-web-update.timer
+      log "업데이트 타이머 갱신됨 (주기 변경 반영)"
+    fi
+  fi
+}
+
+# ── 타이머 등록 ─────────────────────────────────────────
+if [[ "${1:-}" == "--install-timer" ]]; then
+  if [ "$(uname -s)" = "Darwin" ]; then
+    write_launchd_plist >/dev/null
+    PLIST="$HOME/Library/LaunchAgents/$MAC_UPDATE_LABEL.plist"
+    launchctl bootout "gui/$(id -u)/$MAC_UPDATE_LABEL" 2>/dev/null
+    launchctl bootstrap "gui/$(id -u)" "$PLIST" || { echo "LaunchAgent 등록 실패: $PLIST" >&2; exit 1; }
+    echo "등록됨 — $MAC_UPDATE_LABEL (5분 주기). 해제: launchctl bootout gui/$(id -u)/$MAC_UPDATE_LABEL"
+    exit 0
+  fi
+
+  if ! ps -p 1 -o comm= | grep -q systemd; then
+    echo "systemd 도 launchd 도 아닙니다 — 타이머를 등록할 수 없습니다." >&2; exit 1
+  fi
+  write_systemd_units >/dev/null
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
   systemctl --user daemon-reload
   systemctl --user enable --now claw-web-update.timer
@@ -207,6 +247,9 @@ if [ "$LOCAL" != "$REMOTE" ]; then
       exit 1
     fi
     log "pull 완료: $(git rev-parse --short HEAD)"
+
+    # 이번 pull 에 타이머 주기 변경이 섞여 있을 수 있다 — 유닛 파일까지 따라가게 한다.
+    refresh_timer_if_installed
 
     # 의존성은 lock 이 바뀐 경우에만. NODE_ENV=production 환경에서도 빌드 도구가
     # 필요하므로 --include=dev 를 명시한다.
