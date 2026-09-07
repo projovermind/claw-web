@@ -201,8 +201,19 @@ export function startClaudeRun({
   // ── 모델 결정 (봇 bot.js 라인 2391-2410 동일) ──
   // 항상 MODEL_ID_MAP으로 변환 — Z.AI anthropic 프록시도 claude-sonnet-4-6을 받음
   const rawModel = (agent.model ?? 'opus').toLowerCase();
+  // 백엔드가 자체 models 맵을 들고 있으면 별칭을 그걸로 푼다.
+  // 이게 없으면 별칭(예: 'big-pickle')이 그대로 전선에 실려서 게이트웨이가 모르는 모델명을 받는다.
+  // MODEL_ID_MAP 보다 뒤에 두어 opus/sonnet/haiku 의 기존 동작(Z.AI 포함)은 그대로 둔다.
+  const backendModels = pickedBackendId
+    ? (_backendsStore?.getBackend?.(pickedBackendId)?.models ?? null)
+    : null;
   // glm- 으로 시작하는 모델은 원본 그대로 통과 (맵 등록 유무 무관)
-  const model = MODEL_ID_MAP[rawModel] ?? (rawModel.startsWith('glm-') ? agent.model : null) ?? agent.model ?? 'claude-opus-4-6';
+  const model = MODEL_ID_MAP[rawModel]
+    ?? backendModels?.[agent.model]
+    ?? backendModels?.[rawModel]
+    ?? (rawModel.startsWith('glm-') ? agent.model : null)
+    ?? agent.model
+    ?? 'claude-opus-4-6';
 
   // ⚠️ 핵심: --model 플래그만으로는 -p 모드에서 무시될 수 있음
   // ANTHROPIC_MODEL 환경변수로도 동시에 세팅 (봇 bot.js 라인 2408-2410)

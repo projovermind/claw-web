@@ -9,6 +9,7 @@ claw-web 은 파일 스토어 + Claude CLI 전제라 Windows 네이티브가 아
 | `scripts/claw-web-cf-tunnel.sh` | WSL 셸 | cloudflared 설치·터널 생성·DNS 등록·서비스 상주 → 외부 도메인 공개 |
 | `scripts/win-bootstrap.sh` | WSL 셸 | 설치 후 상시 사용 — pull·의존성·빌드·재시작·자동업데이트 타이머를 한 번에 |
 | `scripts/omniroute-setup.sh` | WSL 셸 (맥도 동일) | 선택 — OmniRoute 게이트웨이 설치·상주·키 발급·백엔드 연결까지 한 번에 |
+| `scripts/omniroute-probe.mjs` | WSL 셸 (맥도 동일) | 무료 모델이 아직 살아 있고 툴을 부르는지 재검증 |
 
 ---
 
@@ -152,16 +153,50 @@ npm 전역 설치 → `REQUIRE_API_KEY` 잠금 → 상주 등록(맥 LaunchAgent
 
 끝나면 **에이전트 편집 → 백엔드 `OmniRoute` + 모델 `auto`** 로 쓴다.
 
+### 실을 모델 고르기
+
+OmniRoute 에는 479개 모델이 뜨지만 **대부분은 브라우저 인증을 붙여야 열린다.** 아무 키 없이
+바로 되는 건 `oc`(OpenCode Free)와 `cfp`(Cloudflare Playground) 둘뿐이고, 그 안에서도 절반은 죽어 있다.
+
+거기에 더 좁은 조건이 하나 있다. claw-web 에이전트는 Read/Write/Bash 를 직접 호출해야 하므로
+**모델이 실제로 `tool_use` 블록을 내보내야 한다.** 카탈로그의 `tool_calling: true` 표기는 믿을 게 못 된다 —
+Cloudflare Playground 쪽은 전부 `true` 로 적혀 있지만 실제로는 툴을 부르지 않는다.
+
+그래서 프리셋에는 **직접 호출해 보고 통과한 것만** 실었다.
+
+| 프리셋의 모델 | 실제 모델 | 툴 호출 | 비고 |
+|---|---|---|---|
+| `auto` | 게이트웨이 자동 선택 | ✅ | 기본값. 지금은 `big-pickle` 로 간다 |
+| `big-pickle` | `oc/big-pickle` | ✅ | **주력.** 가장 빠르고 정확하다 |
+| `mimo-2.5` | `oc/mimo-v2.5-free` | ✅ | |
+| `muse-spark-1.2` | `oc/muse-spark-1.2-contributor-free` | ✅ | |
+| `glm-5.2-chat` | `cfp/zai-org/glm-5.2` | ❌ | **대화 전용** — 아래 참고 |
+
+**GLM-5.2 는 에이전트에 못 쓴다.** 답변 품질 자체는 좋은데(코드 리뷰 4/4, 한국어 정상),
+이 경로에서는 툴을 부르는 대신 `{"jsonrpc":"2.0","method":"mcp_read_file",...}` 를 **그냥 본문 텍스트로**
+뱉는다. 모델이 아니라 OmniRoute 가 그걸 `tool_use` 로 되돌리지 못하는 것이다.
+에이전트에 물리면 "파일을 읽겠습니다" 하고 아무것도 안 한 채 끝난다. 요약·번역·질의응답에만 써라.
+
+무료 티어는 수시로 죽으므로, 안 되기 시작하면 다시 골라내면 된다.
+
+```bash
+node scripts/omniroute-probe.mjs            # 프리셋에 실린 것만 재검증
+node scripts/omniroute-probe.mjs --all      # 무료 제공자 전체를 훑는다
+node scripts/omniroute-probe.mjs --all --json   # 프리셋에 붙여넣을 models 맵을 뽑는다
+```
+
 알아둘 것:
 
 - 기본 바인딩은 루프백이다. `--lan` 을 준 적이 있으면 재실행해도 그 선택을 되돌리지 않는다.
 - 대시보드 초기 비밀번호는 `CHANGEME` 다. 스크립트가 이걸 감지하면 무작위 값으로 바꾸고 출력한다
   (**그때만 보여준다** — 적어둘 것). 이미 바꿔둔 게 있으면 건드리지 않는다.
 - 키를 다시 만들려면 `--password` 로 알려줘야 한다. OmniRoute 는 발급된 키를 다시 보여주지 않는다.
-- 모델은 `auto` 만 기본 동작한다. `claude/glm/...` 같은 값은 OmniRoute 가 앞부분을 **제공자 이름**으로
-  읽어서 `No active credentials for provider: claude` 401 이 난다. GLM 등을 직접 쓰려면
-  대시보드 → Providers 에서 그 제공자를 먼저 연결해야 한다(브라우저 인증).
-- 무료 티어는 클로드가 아니라 GLM/Qwen 계열이고 프롬프트가 외부로 나간다. 운영 데이터 에이전트에는 붙이지 말 것.
+- 모델 별칭에 `opus`/`sonnet`/`haiku` 를 쓰면 안 된다. 러너의 `MODEL_ID_MAP` 이 먼저 가로채
+  `claude-sonnet-4-6` 을 보내고 OmniRoute 가 400 `Ambiguous` 로 거절한다.
+- `claude/glm/...` 같은 값도 안 된다. OmniRoute 는 **앞부분을 제공자 이름으로** 읽어서
+  `No active credentials for provider: claude` 401 을 낸다. 그런 경로를 쓰려면
+  대시보드 → Providers 에서 해당 제공자를 먼저 연결해야 한다(브라우저 인증).
+- 무료 티어는 클로드가 아니고 프롬프트가 외부로 나간다. 운영 데이터 에이전트에는 붙이지 말 것.
 
 ---
 

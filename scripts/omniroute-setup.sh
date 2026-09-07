@@ -253,11 +253,19 @@ else
     *)   warn "백엔드 등록 응답 HTTP $C" ;;
   esac
 
-  # 프리셋 기본 매핑(claude/glm/...)은 omniroute 가 'claude' 를 제공자 이름으로 읽어 401 이 난다.
-  # 제공자를 하나도 안 붙인 상태에서 확실히 도는 건 'auto' 뿐이라 이걸 기본으로 넣는다.
-  # 선택지 목록은 이 models 의 '키'가 그대로 쓰인다 (AgentModal.tsx).
-  R=$(cw PATCH /backends/omniroute '{"models":{"auto":"auto","sonnet":"auto","haiku":"auto"}}')
-  [ "$(echo "$R" | tail -1)" = "200" ] && ok "모델 매핑: auto" || warn "모델 매핑 실패"
+  # 제공자를 하나도 안 붙인 상태에서 무료로 도는 것 중, 실제로 tool_use 를 내보내는 것만 싣는다.
+  # (scripts/omniroute-probe.mjs 로 재검증 가능. 무료 티어는 수시로 죽으니 안 되면 다시 돌려라.)
+  # 별칭에 opus/sonnet/haiku 를 쓰면 안 된다 — 러너의 MODEL_ID_MAP 이 먼저 가로채
+  # claude-sonnet-4-6 을 보내고 omniroute 가 400 'Ambiguous' 로 거절한다.
+  MODELS='{"models":{'
+  MODELS="$MODELS\"auto\":\"auto\","
+  MODELS="$MODELS\"big-pickle\":\"oc/big-pickle\","
+  MODELS="$MODELS\"mimo-2.5\":\"oc/mimo-v2.5-free\","
+  MODELS="$MODELS\"muse-spark-1.2\":\"oc/muse-spark-1.2-contributor-free\","
+  MODELS="$MODELS\"glm-5.2-chat\":\"cfp/zai-org/glm-5.2\"}}"
+  R=$(cw PATCH /backends/omniroute "$MODELS")
+  [ "$(echo "$R" | tail -1)" = "200" ] && ok "모델 매핑: auto / big-pickle / mimo-2.5 / muse-spark-1.2 / glm-5.2-chat" \
+                                       || warn "모델 매핑 실패"
 
   if [ -n "$KEY" ]; then
     # 토큰이 비어 있으면 runner 가 진짜 Claude OAuth 토큰을 대신 넣는다
@@ -297,5 +305,7 @@ echo "  대시보드 : $HOSTLINE"
 [ -n "$KEY" ]      && echo "  API 키   : $KEY"
 echo "  로그     : $LOGDIR"
 echo
-echo "claw-web 에서 쓰려면: 에이전트 편집 → 백엔드 'OmniRoute' + 모델 'auto'."
+echo "claw-web 에서 쓰려면: 에이전트 편집 → 백엔드 'OmniRoute' + 모델 'auto' 또는 'big-pickle'."
+echo "  · glm-5.2-chat 은 답변은 좋지만 툴을 못 부른다 — 대화 전용이다."
+echo "  · 무료 모델이 죽으면: node scripts/omniroute-probe.mjs --all"
 echo "무료 티어는 GLM/Qwen 등 비클로드 모델이고 프롬프트가 외부로 나갑니다 — 운영 데이터 에이전트에는 붙이지 마세요."

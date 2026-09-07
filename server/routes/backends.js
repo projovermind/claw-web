@@ -55,17 +55,23 @@ export const BACKEND_PRESETS = [
   {
     id: 'omniroute',
     label: 'OmniRoute (로컬 게이트웨이)',
-    desc: '로컬 :20128 게이트웨이로 여러 제공자의 무료 티어를 자동 폴백. 실제 Claude 모델은 별도 구독 필요 — 무료 티어는 GLM/Qwen/Kimi 등 비클로드 모델이다.',
-    warn: 'omniroute 가 로컬에서 실행 중이어야 한다 (npx omniroute). 외부 제공자로 프롬프트가 나가므로 운영 데이터 에이전트에는 붙이지 말 것.',
+    desc: '로컬 :20128 게이트웨이로 무료 티어 모델을 쓴다. 클로드 구독 없이 claw-web 을 시험해 보는 용도. 실제 Claude 모델이 아니다.',
+    warn: 'scripts/omniroute-setup.sh 로 설치·상주·키 발급까지 한 번에 된다. 외부 제공자로 프롬프트가 나가므로 운영 데이터 에이전트에는 붙이지 말 것.',
     backend: {
       type: 'anthropic-compatible',
       label: 'OmniRoute',
       baseURL: 'http://localhost:20128',
       envKey: 'OMNIROUTE_TOKEN',
+      // 무료로 키 없이 붙고 실제로 tool_use 블록을 내보내는 것만 남겼다.
+      // 제공자 접두사가 곧 OmniRoute 의 provider 이름이라 'claude/...' 류는 401 이 난다.
+      // 검증 방법: scripts/omniroute-probe.mjs
       models: {
-        opus: 'claude/glm/glm-5.2',
-        sonnet: 'claude/glm/glm-5.2',
-        haiku: 'claude/qwen/qwen3-coder'
+        auto: 'auto',                                          // 게이트웨이 자동 선택 (= big-pickle)
+        'big-pickle': 'oc/big-pickle',                          // 주력 — 가장 빠르고 정확
+        'mimo-2.5': 'oc/mimo-v2.5-free',
+        'muse-spark-1.2': 'oc/muse-spark-1.2-contributor-free',
+        // GLM-5.2 는 답변 품질은 좋지만 이 경로에서 tool_use 를 못 내보낸다(대화 전용).
+        'glm-5.2-chat': 'cfp/zai-org/glm-5.2'
       }
     }
   },
