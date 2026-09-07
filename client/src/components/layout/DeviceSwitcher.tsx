@@ -51,8 +51,8 @@ export default function DeviceSwitcher({ collapsed }: { collapsed: boolean }) {
   return (
     <div className="mt-4 pt-4 border-t border-zinc-800/60 space-y-1">
       {!collapsed && (
-        <div className="flex items-center gap-1 text-[11px] text-zinc-500 mb-1 px-3">
-          <MonitorSmartphone size={11} />
+        <div className="flex items-center gap-1 text-[12px] text-zinc-500 mb-1 px-3">
+          <MonitorSmartphone size={12} />
           <span>기기</span>
         </div>
       )}
@@ -83,14 +83,14 @@ function DeviceLink({ device, num, collapsed }: { device: Device; num: number; c
         <>
           <span className="flex-1 min-w-0 truncate whitespace-nowrap">{device.name}</span>
           {num <= 9 && (
-            <span className="text-[10px] font-mono text-zinc-600 shrink-0">{num}</span>
+            <span className="text-[11px] font-mono text-zinc-600 shrink-0">{num}</span>
           )}
         </>
       )}
     </>
   );
 
-  const cls = `relative flex items-center gap-3 ${collapsed ? 'justify-center px-0' : 'px-3'} h-9 rounded-md text-sm transition-colors`;
+  const cls = `relative flex items-center gap-3 ${collapsed ? 'justify-center px-0' : 'px-3'} h-9 rounded-md text-[15px] transition-colors`;
 
   if (self) {
     return <div className={`${cls} bg-zinc-800 text-white`} title={title}>{body}</div>;
