@@ -33,8 +33,21 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG"; }
 # 유닛 파일을 쓰고 "changed"/"same" 을 찍는다. 주기를 바꿔도 pull 만으로는
 # 유닛 파일이 안 바뀌므로, 아래에서 pull 후 이걸 다시 돌려 자동으로 맞춘다.
 write_launchd_plist() {
-  local plist="$HOME/Library/LaunchAgents/$MAC_UPDATE_LABEL.plist" tmp
+  local plist="$HOME/Library/LaunchAgents/$MAC_UPDATE_LABEL.plist" tmp node
   mkdir -p "$HOME/Library/LaunchAgents"
+
+  # ⚠️ 레포가 외장 볼륨(/Volumes/...)에 있으면 launchd 가 띄운 /bin/bash 는
+  # TCC('이동식 볼륨') 권한이 없어서 스크립트를 읽지 못한다 —
+  # 로그 한 줄 없이 exit 78(EX_CONFIG) / 126 으로 죽는다.
+  # node 는 claw-web 본체를 돌리느라 이미 권한을 받아뒀고, node 가 띄운 bash 는
+  # 그 권한을 물려받는다. 그래서 node 를 한 겹 씌워 부른다.
+  node=$(command -v node || echo /usr/bin/env)
+  [ "$node" = /usr/bin/env ] && node=/usr/bin/env
+
+  # launchd 자신이 여는 파일이라 stdout/stderr 도 외장 볼륨에 두면 안 된다.
+  local llog="$HOME/Library/Logs/claw-web/self-update.launchd.log"
+  mkdir -p "$(dirname "$llog")"
+
   tmp=$(mktemp)
   cat > "$tmp" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -44,13 +57,15 @@ write_launchd_plist() {
   <key>Label</key><string>$MAC_UPDATE_LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/bin/bash</string>
+    <string>$node</string>
+    <string>-e</string>
+    <string>require('child_process').execFileSync('/bin/bash',[process.argv[1]],{stdio:'inherit'})</string>
     <string>$REPO_DIR/scripts/self-update.sh</string>
   </array>
   <key>StartInterval</key><integer>300</integer>
   <key>RunAtLoad</key><false/>
-  <key>StandardOutPath</key><string>$LOG_DIR/self-update.launchd.log</string>
-  <key>StandardErrorPath</key><string>$LOG_DIR/self-update.launchd.log</string>
+  <key>StandardOutPath</key><string>$llog</string>
+  <key>StandardErrorPath</key><string>$llog</string>
 </dict>
 </plist>
 EOF
