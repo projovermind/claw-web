@@ -87,6 +87,15 @@ SSE/WebSocket 이 오래 열려 있는 특성 때문에 `tcpKeepAlive` 를 세�
 건너뛰는 북마크이므로, 맥·윈도우 **양쪽 모두에서** 설정 → 기기에 서로를 등록해야 한다.
 순번을 맞춰두면 어느 쪽에서든 `Alt`+같은 숫자가 같은 기계를 가리킨다.
 
+## 5. 에이전트 공유 (선택)
+
+맥에서 만든 에이전트 정의를 그대로 당겨올 수 있다. `workingDir` 만 경로 매핑으로 번역된다 →
+[docs/agent-sync.md](agent-sync.md)
+
+```bash
+node scripts/sync-agents.mjs --dry-run
+```
+
 ---
 
 ## 자주 걸리는 것들
