@@ -134,6 +134,16 @@ export function BackendsTab() {
     mutationFn: ({ enabled, backendId }: { enabled: boolean; backendId?: string }) =>
       api.setAusterity(enabled, backendId),
   });
+  const presetsQuery = useQuery({
+    queryKey: ['backend-presets'],
+    queryFn: () => api.backendPresets(),
+  });
+  const applyPreset = useProgressMutation<unknown, Error, string>({
+    title: '백엔드 추가 중...',
+    successMessage: '추가 완료',
+    invalidateKeys: [['backends'], ['backend-presets']],
+    mutationFn: (id: string) => api.applyBackendPreset(id),
+  });
   const removeBackend = useProgressMutation<unknown, Error, string>({
     title: '백엔드 삭제 중...',
     successMessage: '삭제 완료',
@@ -236,6 +246,37 @@ export function BackendsTab() {
           {t('backendsTab.austerityDesc', { backend: data.austerityBackend })}
         </p>
       </div>
+
+      {/* 원클릭 프리셋 — 아직 등록 안 된 것만 노출 */}
+      {(presetsQuery.data?.some((p) => !p.installed) ?? false) && (
+        <div className="space-y-2">
+          <div className="text-[11px] uppercase tracking-wider text-zinc-500">빠른 추가</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {presetsQuery.data!.filter((p) => !p.installed).map((p) => (
+              <div key={p.id} className="border border-zinc-800 bg-zinc-900/40 rounded-lg p-3 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-zinc-200">{p.label}</span>
+                  <button
+                    onClick={() => applyPreset.mutate(p.id)}
+                    disabled={applyPreset.isPending}
+                    className="shrink-0 rounded bg-zinc-800 hover:bg-zinc-700 px-2 py-1 text-xs flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <Plus size={11} /> 추가
+                  </button>
+                </div>
+                <p className="text-[11px] text-zinc-500 leading-relaxed">{p.desc}</p>
+                {p.warn && (
+                  <p className="flex items-start gap-1 text-[11px] text-amber-400/80 leading-relaxed">
+                    <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                    <span>{p.warn}</span>
+                  </p>
+                )}
+                <p className="text-[10px] text-zinc-600 font-mono truncate">{p.backend.baseURL}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Backends (claude-cli first, openai-compatible after) */}
       <div className="space-y-3">

@@ -10,6 +10,7 @@ import type {
   ChatMessage,
   BackendsState,
   BackendPublic,
+  BackendPreset,
   Skill,
   UsageCost,
   ActivityEntry,
@@ -251,6 +252,9 @@ export const api = {
       env: Record<string, string> | null;
     }>(`/backends/${id}/reveal`, { password }),
   deleteBackend: (id: string) => del<void>(`/backends/${id}`),
+  backendPresets: () =>
+    get<{ presets: BackendPreset[] }>('/backends/presets').then((r) => r.presets),
+  applyBackendPreset: (id: string) => post<BackendPublic>(`/backends/presets/${id}/apply`, {}),
   setActiveBackend: (backendId: string) => post<{ activeBackend: string }>('/backends/active', { backendId }),
   setAusterity: (enabled: boolean, backendId?: string) =>
     post<{ austerityMode: boolean }>('/backends/austerity', { enabled, backendId }),

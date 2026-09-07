@@ -9,7 +9,9 @@ describe('context-window (server port)', () => {
     const backends = { b1: { contextWindows: { 'claude-x': 500_000 } } };
     expect(resolveContextWindow('claude-x', 'b1', backends)).toEqual({ tokens: 500_000, source: 'backend' });
     expect(resolveContextWindow('claude-x', 'missing', backends).tokens).toBe(500_000);
-    expect(resolveContextWindow('claude-opus-5', null, null)).toEqual({ tokens: 200_000, source: 'heuristic' });
+    // Opus 5 는 1M 창이다. 여기가 200K 로 돌아가면 게이지가 5배 어긋난다.
+    expect(resolveContextWindow('claude-opus-5', null, null)).toEqual({ tokens: 1_000_000, source: 'heuristic' });
+    expect(resolveContextWindow('claude-haiku-4-5', null, null)).toEqual({ tokens: 200_000, source: 'heuristic' });
     expect(resolveContextWindow('claude-sonnet-4-5-1m', null, null).tokens).toBe(1_000_000);
   });
 
@@ -28,7 +30,7 @@ describe('context-window (server port)', () => {
         { role: 'user', content: 'u2' }
       ]
     };
-    const usage = sessionContextUsage(session, { model: 'claude-opus-5' });
+    const usage = sessionContextUsage(session, { model: 'claude-haiku-4-5' });
     expect(usage).toEqual({ used: 150_000, max: 200_000, pct: 75 });
   });
 

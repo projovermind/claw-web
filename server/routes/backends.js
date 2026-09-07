@@ -22,7 +22,10 @@ const updateSchema = z.object({
   label: z.string().min(1).max(80).optional(),
   baseURL: z.string().url().optional(),
   envKey: z.string().min(1).max(80).optional(),
-  models: z.record(z.string()).optional()
+  models: z.record(z.string()).optional(),
+  // 모델 id → 컨텍스트 창(토큰). 휴리스틱(context-window.js)보다 우선한다.
+  // 새 모델이 나왔는데 휴리스틱이 아직 모를 때 코드 수정 없이 교정하는 통로.
+  contextWindows: z.record(z.number().int().positive()).optional()
 }).strict();
 
 const secretSchema = z.object({
@@ -37,6 +40,49 @@ const revealSchema = z.object({
   // server has no way to verify identity and will refuse).
   password: z.string().min(1).max(500)
 }).strict();
+
+/**
+ * 원클릭 등록용 백엔드 프리셋.
+ *
+ * 모두 `anthropic-compatible` — Claude CLI 가 ANTHROPIC_BASE_URL +
+ * ANTHROPIC_AUTH_TOKEN 으로 말을 거는 게이트웨이다. 실제 모델은 게이트웨이가
+ * 뒤에서 고르며, 우리 쪽은 opus/sonnet/haiku 티어 이름만 매핑해 준다.
+ *
+ * 주의: 게이트웨이 경유 시 thinkingEffort 는 주입되지 않는다
+ * (claude-cli-runner.js — ANTHROPIC_BASE_URL 이 있으면 스킵).
+ */
+export const BACKEND_PRESETS = [
+  {
+    id: 'omniroute',
+    label: 'OmniRoute (로컬 게이트웨이)',
+    desc: '로컬 :20128 게이트웨이로 여러 제공자의 무료 티어를 자동 폴백. 실제 Claude 모델은 별도 구독 필요 — 무료 티어는 GLM/Qwen/Kimi 등 비클로드 모델이다.',
+    warn: 'omniroute 가 로컬에서 실행 중이어야 한다 (npx omniroute). 외부 제공자로 프롬프트가 나가므로 운영 데이터 에이전트에는 붙이지 말 것.',
+    backend: {
+      type: 'anthropic-compatible',
+      label: 'OmniRoute',
+      baseURL: 'http://localhost:20128',
+      envKey: 'OMNIROUTE_TOKEN',
+      models: {
+        opus: 'claude/glm/glm-5.2',
+        sonnet: 'claude/glm/glm-5.2',
+        haiku: 'claude/qwen/qwen3-coder'
+      }
+    }
+  },
+  {
+    id: 'zai',
+    label: 'Z.AI Coding Plan',
+    desc: 'GLM 코딩 플랜. 저부가 에이전트(요약·분류·로그 파싱)용 절약 백엔드.',
+    warn: 'ZAI_API_KEY 를 등록 후 설정해야 실제로 붙는다.',
+    backend: {
+      type: 'anthropic-compatible',
+      label: 'Z.AI (GLM)',
+      baseURL: 'https://api.z.ai/api/anthropic',
+      envKey: 'ZAI_API_KEY',
+      models: { opus: 'glm-4.6', sonnet: 'glm-4.6', haiku: 'glm-4.5-air' }
+    }
+  }
+];
 
 export function createBackendsRouter({ backendsStore, eventBus, webConfig }) {
   const router = Router();
@@ -172,6 +218,30 @@ export function createBackendsRouter({ backendsStore, eventBus, webConfig }) {
     }
   });
 
+  // ── 원클릭 프리셋 ──
+  router.get('/presets', (_req, res) => {
+    const existing = backendsStore.getRaw()?.backends ?? {};
+    res.json({
+      presets: BACKEND_PRESETS.map((p) => ({ ...p, installed: !!existing[p.id] }))
+    });
+  });
+
+  router.post('/presets/:id/apply', async (req, res, next) => {
+    try {
+      const preset = BACKEND_PRESETS.find((p) => p.id === req.params.id);
+      if (!preset) throw new HttpError(404, 'Preset not found', 'PRESET_NOT_FOUND');
+      // 이미 있는 백엔드를 덮어쓰면 사용자가 맞춰 둔 모델 매핑/키가 소리 없이 날아간다.
+      await backendsStore.createBackend(preset.id, { ...preset.backend });
+      if (eventBus) eventBus.publish('backends.updated', {});
+      res.status(201).json(backendsStore.getPublic().backends[preset.id]);
+    } catch (err) {
+      if (err.code === 'DUPLICATE') {
+        return next(new HttpError(409, `백엔드 "${req.params.id}" 가 이미 있습니다`, 'DUPLICATE'));
+      }
+      next(err);
+    }
+  });
+
   router.post('/austerity', async (req, res, next) => {
     try {
       const { enabled, backendId } = z
@@ -182,6 +252,15 @@ export function createBackendsRouter({ backendsStore, eventBus, webConfig }) {
       res.json({ austerityMode: enabled });
     } catch (err) {
       if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
+      // 기본 austerityBackend 는 'zai' 인데 그 백엔드를 등록한 적이 없으면
+      // 여기서 터진다. 원인을 알 수 없는 500 대신 할 일을 알려 준다.
+      if (/^Unknown backend /.test(err.message ?? '')) {
+        return next(new HttpError(
+          400,
+          `절약 모드 대상 백엔드가 등록되어 있지 않습니다. 설정 > 백엔드에서 프리셋으로 먼저 추가하세요. (${err.message})`,
+          'AUSTERITY_BACKEND_MISSING'
+        ));
+      }
       next(err);
     }
   });

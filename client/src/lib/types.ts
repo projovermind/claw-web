@@ -300,6 +300,22 @@ export interface Account {
   };
 }
 
+/** 원클릭 백엔드 프리셋 (GET /api/backends/presets). */
+export interface BackendPreset {
+  id: string;
+  label: string;
+  desc: string;
+  warn?: string;
+  installed: boolean;
+  backend: {
+    type: string;
+    label: string;
+    baseURL: string;
+    envKey: string;
+    models: Record<string, string>;
+  };
+}
+
 export interface BackendsState {
   activeBackend: string;
   austerityMode: boolean;

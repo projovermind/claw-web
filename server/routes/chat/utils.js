@@ -155,7 +155,18 @@ export function resolveBackend(agent, backendsStore) {
   if (!backendsStore) return { backendId: 'claude', backendType: 'claude-cli', backendObj: null };
   const raw = backendsStore.getRaw();
   const agentBackendId = agent?.backendId;
-  const globalActiveId = raw?.austerityMode ? raw.austerityBackend : raw?.activeBackend;
+  // 절약 모드가 켜져 있어도 대상 백엔드가 실제로 등록돼 있어야 한다. 없으면
+  // backendObj 가 null 이 되고 backendType 이 'claude-cli' 로 기본값을 먹어서
+  // "절약 모드인데 조용히 클로드로 나가는" 상태가 된다 → 평소 백엔드로 되돌린다.
+  let globalActiveId = raw?.activeBackend;
+  if (raw?.austerityMode) {
+    if (raw?.backends?.[raw.austerityBackend]) {
+      globalActiveId = raw.austerityBackend;
+    } else {
+      logger.warn({ austerityBackend: raw.austerityBackend, fellBackTo: globalActiveId },
+        'resolveBackend: 절약 모드 대상 백엔드가 없어 activeBackend 로 폴백');
+    }
+  }
   let backendId = agentBackendId || globalActiveId || 'claude';
   let backendObj = raw?.backends?.[backendId] ?? null;
 
