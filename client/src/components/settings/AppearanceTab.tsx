@@ -58,6 +58,53 @@ export function AppearanceTab() {
         />
       </section>
 
+      {/* 화면 배율 */}
+      <section>
+        <h3 className="text-sm font-semibold mb-2">화면 배율</h3>
+        <p className="text-xs text-zinc-500 mb-3">
+          이 기기에서만 적용됩니다. 맥과 윈도우는 OS 디스플레이 배율·모니터 DPI 가 달라
+          같은 코드라도 글자가 다르게 보이는데, CSS 로는 그 차이를 알 수 없어 여기서 직접 맞춥니다.
+          <b className="text-zinc-400"> 100% 가 맥 기준</b>입니다.
+        </p>
+        <div className="flex items-center gap-2">
+          <input
+            type="range"
+            min={75}
+            max={150}
+            step={5}
+            value={draft.uiScale}
+            onChange={(e) => setDraft({ ...draft, uiScale: parseInt(e.target.value, 10) })}
+            className="flex-1"
+          />
+          <span className="text-xs font-mono text-zinc-300 w-12 text-right">{draft.uiScale}%</span>
+          <button
+            onClick={() => setDraft({ ...draft, uiScale: 100 })}
+            disabled={draft.uiScale === 100}
+            className="px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 text-[11px] text-zinc-300"
+          >
+            기본
+          </button>
+        </div>
+        <div className="flex gap-1 mt-2">
+          {[90, 95, 100, 105, 110, 120].map((v) => (
+            <button
+              key={v}
+              onClick={() => setDraft({ ...draft, uiScale: v })}
+              className={`flex-1 rounded px-2 py-1 text-[11px] font-mono border ${
+                draft.uiScale === v
+                  ? 'border-sky-600 bg-sky-900/30 text-sky-200'
+                  : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:bg-zinc-800'
+              }`}
+            >
+              {v}%
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-zinc-600 mt-2">
+          저장해야 반영됩니다. 새로고침 없이 즉시 적용됩니다.
+        </p>
+      </section>
+
       {/* 버블 색상 */}
       <section>
         <h3 className="text-sm font-semibold mb-2">{t('appearance.bubbleTitle')}</h3>

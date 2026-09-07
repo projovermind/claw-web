@@ -12,6 +12,12 @@ export interface Appearance {
   soundVolume: number;
   /** 모델 별칭 — key=원본모델명, value=표시할 별칭 */
   modelAliases: Record<string, string>;
+  /**
+   * 화면 배율 (%). 100 = 맥 기준 16px.
+   * OS 디스플레이 배율·모니터 DPI 는 CSS 가 볼 수 없어서, 기기마다 이 값으로 맞춘다.
+   * appearance 는 인스턴스별 설정이라 맥/윈도우가 서로 다른 값을 가질 수 있다.
+   */
+  uiScale: number;
 }
 
 export const DEFAULT_APPEARANCE: Appearance = {
@@ -20,7 +26,8 @@ export const DEFAULT_APPEARANCE: Appearance = {
   assistantBubbleColor: '#18181b',
   soundEnabled: true,
   soundVolume: 0.2,
-  modelAliases: {}
+  modelAliases: {},
+  uiScale: 100
 };
 
 /**
@@ -58,6 +65,13 @@ export function useAppearance(): Appearance {
   useEffect(() => {
     document.title = appearance.appName;
   }, [appearance.appName]);
+
+  useEffect(() => {
+    // rem 기준값을 바꾼다 — Tailwind 크기 클래스가 전부 rem 이라 UI 전체가 같이 커진다.
+    // index.css 의 html{font-size:16px} 을 인라인 스타일로 덮어쓴다.
+    const scale = Math.min(150, Math.max(75, appearance.uiScale || 100));
+    document.documentElement.style.fontSize = `${(16 * scale) / 100}px`;
+  }, [appearance.uiScale]);
 
   return appearance;
 }

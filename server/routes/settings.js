@@ -18,7 +18,9 @@ const featurePatchSchema = z.object({
       assistantBubbleColor: z.string().max(40).optional(),
       soundEnabled: z.boolean().optional(),
       soundVolume: z.number().min(0).max(1).optional(),
-      modelAliases: z.record(z.string()).optional()
+      modelAliases: z.record(z.string()).optional(),
+      // 화면 배율(%) — 기기마다 OS 디스플레이 배율이 달라 rem 기준값을 여기서 맞춘다
+      uiScale: z.number().int().min(75).max(150).optional()
     })
     .optional(),
   push: z
