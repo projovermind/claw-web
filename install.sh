@@ -142,7 +142,8 @@ ok "빌드 완료"
 
 step "Claude API 키 설정"
 
-SECRETS_FILE="$INSTALL_DIR/secrets.json"
+SECRETS_FILE="$INSTALL_DIR/data/private/secrets.json"
+mkdir -p "$INSTALL_DIR/data/private"
 EXISTING_KEY=""
 
 if [ -f "$SECRETS_FILE" ]; then
@@ -197,7 +198,18 @@ fi
 
 step "웹 접속 인증 설정"
 
-CONFIG_FILE="$INSTALL_DIR/web-config.json"
+CONFIG_FILE="$INSTALL_DIR/data/private/web-config.json"
+
+# 신규 클론엔 web-config.json 이 없다 (private 파일이라 git tracked 아님).
+# 서버도 부팅 시 같은 템플릿으로 시드하지만, 아래 node -e 들이 먼저 읽으므로 여기서 만든다.
+mkdir -p "$INSTALL_DIR/data/private"
+if [ ! -f "$CONFIG_FILE" ]; then
+  if [ -f "$INSTALL_DIR/data/shared/web-config.template.json" ]; then
+    cp "$INSTALL_DIR/data/shared/web-config.template.json" "$CONFIG_FILE"
+  else
+    echo '{}' > "$CONFIG_FILE"
+  fi
+fi
 
 echo -e "  외부에서 접속할 때 Bearer 토큰으로 인증합니다."
 echo -e "  ${DIM}로컬만 사용하면 건너뛰어도 됩니다.${NC}"
@@ -229,15 +241,23 @@ read -r WORK_DIR
 WORK_DIR="${WORK_DIR:-$HOME}"
 WORK_DIR=$(eval echo "$WORK_DIR")  # ~ 확장
 
+# 신규 클론이면 agents-config 도 템플릿에서 시드 (서버 부팅 때도 하지만,
+# workingDir 을 여기서 넣으려면 파일이 먼저 있어야 한다)
+mkdir -p "$INSTALL_DIR/data/user"
+if [ ! -f "$INSTALL_DIR/data/user/agents-config.json" ] && \
+   [ -f "$INSTALL_DIR/data/shared/agents-config.template.json" ]; then
+  cp "$INSTALL_DIR/data/shared/agents-config.template.json" "$INSTALL_DIR/data/user/agents-config.json"
+fi
+
 # agents-config.json에 workingDir 설정 (파일 없으면 건너뜀)
-if [ -f "$INSTALL_DIR/agents-config.json" ]; then
+if [ -f "$INSTALL_DIR/data/user/agents-config.json" ]; then
   node -e "
     const fs = require('fs');
-    const cfg = JSON.parse(fs.readFileSync('$INSTALL_DIR/agents-config.json','utf8'));
+    const cfg = JSON.parse(fs.readFileSync('$INSTALL_DIR/data/user/agents-config.json','utf8'));
     for (const a of Object.values(cfg.agents || {})) {
       if (!a.workingDir) a.workingDir = '$WORK_DIR';
     }
-    fs.writeFileSync('$INSTALL_DIR/agents-config.json', JSON.stringify(cfg, null, 2));
+    fs.writeFileSync('$INSTALL_DIR/data/user/agents-config.json', JSON.stringify(cfg, null, 2));
   "
 fi
 

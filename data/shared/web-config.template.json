@@ -1,0 +1,19 @@
+{
+  "port": 3838,
+  "features": {
+    "dashboard": true,
+    "agentsPage": true,
+    "dragAndDrop": true,
+    "chat": true,
+    "activityFeed": true,
+    "mdEditor": false,
+    "logsViewer": false,
+    "tokenManager": false
+  },
+  "auth": { "enabled": false, "token": null },
+  "editor": { "scheme": "vscode", "pathMap": {} },
+  "chat": { "autoCompactPct": 0 },
+  "usage": { "budget5h": 0, "budget7d": 0 },
+  "allowedRoots": [],
+  "autoTunnel": false
+}

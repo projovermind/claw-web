@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash2, ExternalLink, MonitorSmartphone } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -29,6 +29,15 @@ export function DevicesTab() {
     onSuccess: invalidate
   });
 
+  const orderMut = useMutation({
+    mutationFn: ({ id, order }: { id: string; order: number }) => api.patchDevice(id, { order }),
+    onSuccess: invalidate,
+    onError: (e: Error) => setError(e.message)
+  });
+
+  // 순번은 사이드바 Alt+숫자 단축키와 같은 값 — 새 기기는 맨 뒤로 붙인다.
+  const nextOrder = Math.max(0, ...(devices ?? []).map((d) => d.order ?? 0)) + 1;
+
   const id = slugify(name);
   const canAdd = !!id && /^https?:\/\//.test(url.trim());
 
@@ -39,13 +48,21 @@ export function DevicesTab() {
       <p className="text-[11px] text-zinc-500">
         다른 기계에서 돌고 있는 claw-web 을 등록합니다. 여기서 원격 조종하는 게 아니라,
         사이드바에서 그 기계의 claw-web 으로 건너뜁니다. 세션·프로젝트·설정은 기계마다 따로입니다.
+        <br />
+        왼쪽 숫자가 순번입니다 — 사이드바에서 <kbd className="text-zinc-400">Alt</kbd>+숫자로 바로 건너뜁니다.
       </p>
 
       <div className="space-y-2">
-        {(devices ?? []).map((d) => (
-          <DeviceRow key={d.id} device={d} onDelete={() => {
-            if (confirm(`${d.name} 을(를) 목록에서 지울까요?`)) deleteMut.mutate(d.id);
-          }} />
+        {(devices ?? []).map((d, i) => (
+          <DeviceRow
+            key={d.id}
+            device={d}
+            index={i}
+            onOrder={(order) => orderMut.mutate({ id: d.id, order })}
+            onDelete={() => {
+              if (confirm(`${d.name} 을(를) 목록에서 지울까요?`)) deleteMut.mutate(d.id);
+            }}
+          />
         ))}
         {(devices ?? []).length === 0 && (
           <div className="text-[11px] text-zinc-600 border border-dashed border-zinc-800 rounded px-3 py-4 text-center">
@@ -83,7 +100,7 @@ export function DevicesTab() {
         {error && <div className="text-[11px] text-red-400">{error}</div>}
         <div className="flex justify-end">
           <button
-            onClick={() => createMut.mutate({ id, name: name.trim(), url: url.trim(), ...(note.trim() ? { note: note.trim() } : {}) })}
+            onClick={() => createMut.mutate({ id, name: name.trim(), url: url.trim(), order: nextOrder, ...(note.trim() ? { note: note.trim() } : {}) })}
             disabled={!canAdd || createMut.isPending}
             className="text-xs bg-emerald-900/50 text-emerald-200 px-4 py-2 rounded disabled:opacity-40 hover:bg-emerald-900/70"
           >
@@ -95,7 +112,12 @@ export function DevicesTab() {
   );
 }
 
-function DeviceRow({ device, onDelete }: { device: Device; onDelete: () => void }) {
+function DeviceRow({ device, index, onOrder, onDelete }: {
+  device: Device;
+  index: number;
+  onOrder: (order: number) => void;
+  onDelete: () => void;
+}) {
   const { data: ping, isLoading } = useQuery({
     queryKey: ['device-ping', device.id],
     queryFn: () => api.pingDevice(device.id),
@@ -109,6 +131,7 @@ function DeviceRow({ device, onDelete }: { device: Device; onDelete: () => void 
 
   return (
     <div className="flex items-center gap-3 bg-zinc-900/60 border border-zinc-800 rounded px-3 py-2.5">
+      <OrderBox value={device.order ?? index + 1} onCommit={onOrder} />
       <span className={`w-2 h-2 rounded-full shrink-0 ${dot}`} />
       <MonitorSmartphone size={14} className="text-zinc-500 shrink-0" />
       <div className="min-w-0 flex-1">
@@ -141,5 +164,31 @@ function DeviceRow({ device, onDelete }: { device: Device; onDelete: () => void 
         <Trash2 size={14} />
       </button>
     </div>
+  );
+}
+
+/** 순번 입력. 서버가 order 로 정렬하므로 값만 바꾸면 목록·단축키 순서가 같이 따라온다. */
+function OrderBox({ value, onCommit }: { value: number; onCommit: (n: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+
+  // 다른 행을 고쳐 재정렬되면 서버 값으로 되돌린다
+  useEffect(() => { setDraft(String(value)); }, [value]);
+
+  const commit = () => {
+    const n = parseInt(draft, 10);
+    if (!Number.isFinite(n) || n === value) { setDraft(String(value)); return; }
+    onCommit(n);
+  };
+
+  return (
+    <input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value.replace(/[^0-9]/g, '').slice(0, 2))}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+      title="순번 (사이드바 Alt+숫자)"
+      className="w-7 shrink-0 bg-zinc-950 border border-zinc-800 rounded text-center text-[11px] font-mono
+                 text-zinc-400 py-1 focus:outline-none focus:border-zinc-600 focus:text-zinc-200"
+    />
   );
 }

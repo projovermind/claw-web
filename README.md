@@ -9,6 +9,7 @@ Claude 에이전트를 웹에서 관리·대화·위임하는 셀프호스팅 �
 - **Node 20+**
 - **Claude CLI** (`claude`) — 로그인 완료 상태. 설치 위치는 `~/.local/bin/claude` 네이티브 빌드 기준.
 - macOS / Linux. 파일 스토어라 별도 DB 불필요.
+  Windows 는 WSL2 안에서 돌린다 → [docs/windows-install.md](docs/windows-install.md)
 
 ## 설치 · 실행
 
@@ -21,6 +22,9 @@ npm --prefix client install
 npm run build           # client/dist/ 생성 (tsc -b && vite build)
 npm start               # NODE_ENV=production node server/index.js
 ```
+
+Windows(WSL2) 는 상주화·포트 노출·외부 공개까지 스크립트로 묶여 있다 →
+[docs/windows-install.md](docs/windows-install.md)
 
 개발 모드:
 

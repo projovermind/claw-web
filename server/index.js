@@ -379,19 +379,22 @@ for (const d of [DATA_DIR, PRIVATE_DIR, USER_DIR, SHARED_DIR]) {
 })();
 
 // ═══════════════════════════════════════════════════════
-// Template seeding — data/shared/*.template.json 을 data/user/*.json 으로
-// 시드 (해당 user 파일이 없을 때만). 신규 설치자에게 깨끗한 기본값 제공.
+// Template seeding — data/shared/*.template.json 을 data/{user,private}/*.json 으로
+// 시드 (대상 파일이 없을 때만). 신규 설치자에게 깨끗한 기본값 제공.
 // data/shared/ 는 git tracked, 절대 코드에서 *write* 하지 않음 (read-only).
 // ═══════════════════════════════════════════════════════
 (function seedFromTemplates() {
   const SEEDS = [
     { template: 'skills.template.json', user: 'skills.json' },
     { template: 'backends.template.json', user: 'backends.json' },
-    { template: 'agents-config.template.json', user: 'agents-config.json' }
+    { template: 'agents-config.template.json', user: 'agents-config.json' },
+    // web-config 는 private. 없으면 loadWebConfig 가 ENOENT 로 부팅을 막는다 —
+    // 신규 클론에서 첫 기동이 실패하던 원인.
+    { template: 'web-config.template.json', user: 'web-config.json', dir: PRIVATE_DIR }
   ];
-  for (const { template, user } of SEEDS) {
+  for (const { template, user, dir } of SEEDS) {
     const tmpl = path.join(SHARED_DIR, template);
-    const dst = path.join(USER_DIR, user);
+    const dst = path.join(dir ?? USER_DIR, user);
     if (fssync.existsSync(dst)) continue;
     if (!fssync.existsSync(tmpl)) continue;
     try {
