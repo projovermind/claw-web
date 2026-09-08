@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """GitHub SKILL.md → claw-web 스킬 수입 + 역할별 자동 배정 (idempotent, name 기준)."""
 import json, re, sys, urllib.request, os
-API='http://localhost:3838/api'; TOK=os.environ.get('CLAW_TOKEN','930214')
+API='http://localhost:3838/api'; TOK=os.environ.get('CLAW_TOKEN') or sys.exit('CLAW_TOKEN 환경변수가 필요합니다 (web-config.json 의 auth.token)')
 SRC='/tmp/claw-skills'
 def call(m,p,b=None):
     r=urllib.request.Request(API+p,method=m,data=json.dumps(b).encode() if b is not None else None,

@@ -44,7 +44,8 @@ tailscale --socket=/tmp/tailscaled.sock status
 | 같은 Wi-Fi LAN | http://172.30.1.26:3838 (또는 http://subinggraeui-Macmini.local:3838) |
 | 외부(tailnet) | http://100.106.13.76:3838 |
 
-모든 경우 로그인 비밀번호: `930214` (처음 접속 시 LoginDialog에 입력).
+모든 경우 로그인 비밀번호는 `data/private/web-config.json` 의 `auth.token` (처음 접속 시 LoginDialog에 입력).
+실제 값은 레포에 적지 않는다 — 공개 레포다.
 
 ## 비밀번호 / 토큰 분실 시
 

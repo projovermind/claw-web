@@ -44,6 +44,9 @@ rsync -a \
   --exclude='/dist' \
   --exclude='/pkg' \
   --exclude='*.backup-*' \
+  --exclude='*.bak' \
+  --exclude='*.bak-*' \
+  --exclude='*.bak_*' \
   --exclude='*.pkg' \
   --exclude='.playwright-mcp' \
   --exclude='.migration-backup-*' \
@@ -78,6 +81,9 @@ rsync -a \
   --exclude='/packaging' \
   --exclude='/build-pkg.sh' \
   --exclude='/install.sh' \
+  --exclude='/config.json' \
+  --exclude='/.env' \
+  --exclude='/.env.*' \
   "$SCRIPT_DIR/" "$BUILD_DIR/payload/"
 
 FILE_COUNT=$(find "$BUILD_DIR/payload" -type f | wc -l | tr -d ' ')
