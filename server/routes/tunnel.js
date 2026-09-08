@@ -83,20 +83,23 @@ async function clearTunnelUrlFile() {
  * 임시 터널을 spawn 하고 URL 캡처까지 처리. 라우트 핸들러와 자동 기동에서 공유.
  * 이미 실행 중이면 false 반환.
  */
-function spawnTunnel(type, domain = null) {
+const DEFAULT_PORT = 3838;
+
+function spawnTunnel(type, domain = null, port = DEFAULT_PORT) {
   if (tunnelState.running) return { ok: false, reason: 'already-running' };
+  const portStr = String(port || DEFAULT_PORT);
 
   let cmd, args;
   if (type === 'ngrok') {
     const bin = findNgrokBin();
     if (!bin) return { ok: false, reason: 'ngrok-not-installed' };
     cmd = bin;
-    args = domain ? ['http', '3838', `--url=${domain}`] : ['http', '3838'];
+    args = domain ? ['http', portStr, `--url=${domain}`] : ['http', portStr];
   } else if (type === 'cloudflared') {
     const bin = findCloudflaredBin();
     if (!bin) return { ok: false, reason: 'cloudflared-not-installed' };
     cmd = bin;
-    args = ['tunnel', '--url', 'http://localhost:3838'];
+    args = ['tunnel', '--url', `http://localhost:${portStr}`];
   } else {
     return { ok: false, reason: 'invalid-type' };
   }
@@ -121,8 +124,12 @@ function spawnTunnel(type, domain = null) {
     const text = data.toString();
     const ngrokMatch = text.match(/https?:\/\/[a-zA-Z0-9\-\.]+\.ngrok(?:\.io|[-\w]*)?[^\s]*/);
     const cfMatch = text.match(/https?:\/\/[a-zA-Z0-9\-]+\.trycloudflare\.com[^\s]*/);
+    // cloudflared 는 배너에 약관 링크(https://www.cloudflare.com/website-terms/)를
+    // 터널 URL 보다 먼저 출력한다. generic 폴백이 그걸 집으면 UI 에 엉뚱한 주소가 뜬다.
     const genericMatch = text.match(/https?:\/\/[a-zA-Z0-9\-\.]+\.[a-z]{2,}[^\s]*/);
-    const found = ngrokMatch?.[0] ?? cfMatch?.[0] ?? genericMatch?.[0];
+    const generic = genericMatch?.[0];
+    const genericUsable = generic && !/(^|\/\/)(www\.)?cloudflare\.com\//.test(generic) ? generic : null;
+    const found = ngrokMatch?.[0] ?? cfMatch?.[0] ?? (type === 'cloudflared' ? null : genericUsable);
     if (found && !tunnelState.url) {
       const url = found.trim();
       tunnelState.url = url;
@@ -153,7 +160,7 @@ function spawnTunnel(type, domain = null) {
  *   (서버 재기동 시 stdio pipe 끊어진 cloudflared 는 URL 캡처 불가 → 재사용 불가)
  * - Named Tunnel(고정) 과는 독립 — 둘 다 동시 구동 가능
  */
-export async function autoStartQuickTunnel({ logger } = {}) {
+export async function autoStartQuickTunnel({ logger, port } = {}) {
   const log = logger || console;
   try {
     if (tunnelState.running) return { skipped: 'already-running' };
@@ -184,8 +191,13 @@ export async function autoStartQuickTunnel({ logger } = {}) {
 
     try {
       const { execFileSync } = await import('node:child_process');
-      const stdout = execFileSync('pgrep', ['-f', 'cloudflared tunnel --url http://localhost:3838'],
-        { encoding: 'utf8', timeout: 3000 });
+      // 자기 포트를 가리키는 quick tunnel 만 고아로 본다. 포트를 안 맞추면
+      // 다른 포트로 돌고 있는 남의 인스턴스 터널까지 끊는다.
+      const stdout = execFileSync(
+        'pgrep',
+        ['-f', `cloudflared tunnel --url http://localhost:${port || DEFAULT_PORT}`],
+        { encoding: 'utf8', timeout: 3000 }
+      );
       for (const p of stdout.trim().split('\n').filter(Boolean).map(Number)) {
         if (p !== process.pid) pidsToKill.add(p);
       }
@@ -206,7 +218,7 @@ export async function autoStartQuickTunnel({ logger } = {}) {
       clearPidFile();
     }
 
-    const result = spawnTunnel('cloudflared');
+    const result = spawnTunnel('cloudflared', null, port);
     if (result.ok) {
       log.info?.({ pid: result.state.pid }, 'auto-tunnel: cloudflared quick tunnel started');
     } else {
@@ -232,7 +244,7 @@ export function stopQuickTunnel() {
   clearPidFile();
 }
 
-export function createTunnelRouter() {
+export function createTunnelRouter({ port } = {}) {
   const router = Router();
 
   router.get('/url', async (req, res, next) => {
@@ -257,7 +269,7 @@ export function createTunnelRouter() {
     if (type !== 'ngrok' && type !== 'cloudflared') {
       return res.status(400).json({ error: 'type must be "ngrok" or "cloudflared"' });
     }
-    const result = spawnTunnel(type, domain);
+    const result = spawnTunnel(type, domain, port);
     if (!result.ok) {
       const code = result.reason === 'already-running' ? 409 : 400;
       return res.status(code).json({ error: result.reason, state: tunnelState });

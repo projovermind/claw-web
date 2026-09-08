@@ -659,7 +659,7 @@ async function main() {
   );
   app.use('/api/activity', createActivityRouter({ activityLog }));
   app.use('/api/fs', createFsBrowserRouter({ webConfig, configStore }));
-  app.use('/api/tunnel', createTunnelRouter());
+  app.use('/api/tunnel', createTunnelRouter({ port: webConfig.port }));
   app.use('/api/admin', createAdminRouter({ runner, eventBus }));
   app.use('/api/domain', createDomainRouter({ secretsStore }));
   app.use('/api/settings', createSettingsRouter({ webConfig, webConfigPath: WEB_CONFIG_PATH, eventBus }));
@@ -747,7 +747,7 @@ async function main() {
     // webConfig.autoTunnel === false 로 끌 수 있음
     if (webConfig.autoTunnel !== false) {
       setTimeout(() => {
-        autoStartQuickTunnel({ logger }).catch((err) =>
+        autoStartQuickTunnel({ logger, port: webConfig.port }).catch((err) =>
           logger.warn({ err: err.message }, 'auto-tunnel: failed')
         );
       }, 1500);
