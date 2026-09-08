@@ -238,7 +238,13 @@ if [ -f "$PRIV/web-config.json" ] && [ -n "$NODE_BIN" ]; then
     } catch (e) {}
   " "$PRIV/web-config.json" 2>/dev/null || true)
 fi
-BEARER_TOKEN="${EXISTING_TOKEN:-1234}"
+# 기본값 1234 는 공개 배포물에 쓸 수 없다 — 설치 즉시 상주하는데 누구나 맞힌다.
+# 신규 설치면 랜덤 6자리를 만든다 (완료 다이얼로그가 값을 보여주고 복사도 해준다).
+if [ -n "$EXISTING_TOKEN" ]; then
+  BEARER_TOKEN="$EXISTING_TOKEN"
+else
+  BEARER_TOKEN=$(jot -r 1 100000 999999 2>/dev/null || echo $(( RANDOM % 900000 + 100000 )))
+fi
 
 if [ ! -f "$PRIV/web-config.json" ]; then
   cat > "$PRIV/web-config.json" <<CFG
