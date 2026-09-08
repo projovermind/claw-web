@@ -13,8 +13,41 @@ Claude 에이전트를 웹에서 관리·대화·위임하는 셀프호스팅 �
 
 ## 설치 · 실행
 
+원라이너 — clone 부터 서버 기동까지 한 번에:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/projovermind/claw-web/main/scripts/bootstrap.sh | bash
+```
+
+기본 설치 위치는 `~/claw-web` (`CLAW_WEB_DIR` 로 변경). 이미 받아둔 게 있으면 clone 대신 `--ff-only` pull 로 갱신하고,
+커밋 안 된 로컬 수정은 건드리지 않는다.
+
+프롬프트 없이 완전 무인으로 깔려면 `CLAW_YES=1` 을 붙인다 (토큰 미지정 시 랜덤 6자리 자동생성):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/projovermind/claw-web/main/scripts/bootstrap.sh \
+  | CLAW_YES=1 CLAW_TOKEN=123456 CLAW_WORKDIR=~/code bash
+```
+
+| 환경변수 | 용도 |
+|---------|------|
+| `CLAW_WEB_DIR` | 설치 위치 (기본 `~/claw-web`) |
+| `CLAW_YES=1` | 무인 모드 — 모든 프롬프트 스킵 (`./install.sh --yes` 와 동일) |
+| `CLAW_TOKEN` | 웹 인증 토큰 (미지정 시 랜덤 6자리) |
+| `CLAW_API_KEY` | Anthropic API 키 (미지정 시 CLI OAuth 사용) |
+| `CLAW_WORKDIR` | 에이전트 기본 작업 디렉토리 (기본 `$HOME`) |
+| `CLAW_NGROK_DOMAIN` / `CLAW_NGROK_TOKEN` | ngrok 고정 도메인 |
+| `CLAW_NO_SERVICE=1` | 자동 시작(LaunchAgent/systemd) 등록 건너뛰기 |
+
+Node 20 이 없으면 brew(mac) → nvm 순으로 직접 설치를 시도하고, `claude` CLI 도 없으면 같이 깐다.
+상주화는 macOS = LaunchAgent, Linux = `systemd --user` 유닛(`claw-web.service`) 으로 등록된다.
+마지막에 접속 URL 과 인증 토큰을 출력하니 그걸로 브라우저에서 로그인하면 된다.
+
+이미 클론한 레포에서 직접 돌려도 된다:
+
 ```bash
 ./install.sh            # deps 설치 + 초기 데이터 파일 생성까지
+./install.sh --yes      # 무인 (install.sh --help 로 옵션 확인)
 
 # 또는 수동
 npm install
