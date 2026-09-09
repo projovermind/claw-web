@@ -10,8 +10,10 @@ import {
   CERT_PATH,
   CONFIG_PATH,
   TUNNEL_NAME,
-  LA_LABEL,
-  LA_PATH
+  SERVICE_KIND,
+  TUNNEL_SERVICE_PATH,
+  installTunnelService,
+  uninstallTunnelService
 } from './utils.js';
 
 /** Register /tunnel/cf/* routes. */
@@ -42,14 +44,15 @@ export function registerTunnelCfRoutes(router) {
         if (m) hostname = m[1];
       } catch { /* ignore */ }
     }
-    const plistLoaded = fssync.existsSync(LA_PATH);
+    const plistLoaded = fssync.existsSync(TUNNEL_SERVICE_PATH);
 
     res.json({
       binInstalled,
       authed,
       tunnelId,
       hostname,
-      plistInstalled: plistLoaded,
+      plistInstalled: plistLoaded,   // 이름은 옛것이지만 의미는 '상주 등록됨'
+      serviceKind: SERVICE_KIND,
       setupState: { ...setupState }
     });
   });
@@ -143,12 +146,6 @@ export function registerTunnelCfRoutes(router) {
       setupState.tunnelId = tunnelId;
       logger.info({ tunnelId, hostname }, 'admin: tunnel ready');
 
-      setupState.phase = 'routing-dns';
-      await execFileAsync(bin, ['tunnel', 'route', 'dns', TUNNEL_NAME, hostname], { timeout: 30000 })
-        .catch((err) => {
-          if (!err.stderr?.includes('already exists')) throw err;
-        });
-
       setupState.phase = 'writing-config';
       const credsPath = path.join(CF_DIR, `${tunnelId}.json`);
       const cfg = `tunnel: ${tunnelId}
@@ -161,30 +158,17 @@ ingress:
 `;
       await fs.writeFile(CONFIG_PATH, cfg, 'utf8');
 
-      setupState.phase = 'installing-plist';
-      const plist = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>${LA_LABEL}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>${bin}</string>
-    <string>tunnel</string>
-    <string>--no-autoupdate</string>
-    <string>run</string>
-    <string>${TUNNEL_NAME}</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/tmp/claw-web-tunnel.log</string>
-  <key>StandardErrorPath</key><string>/tmp/claw-web-tunnel.log</string>
-</dict>
-</plist>
-`;
-      await fs.writeFile(LA_PATH, plist, 'utf8');
-      await execFileAsync('launchctl', ['unload', LA_PATH], { timeout: 5000 }).catch(() => {});
-      await execFileAsync('launchctl', ['load', LA_PATH], { timeout: 5000 });
+      // ⚠️ 상주 등록을 DNS 보다 **먼저** 한다.
+      // 예전엔 DNS 를 먼저 돌렸는데, WSL 에서 상주 등록이 실패하면
+      // 호스트명만 아무도 안 띄우는 터널을 가리키게 돼서 Error 1033 이 났다.
+      setupState.phase = 'installing-service';
+      const serviceKind = await installTunnelService(bin, CONFIG_PATH);
+
+      setupState.phase = 'routing-dns';
+      await execFileAsync(bin, ['tunnel', 'route', 'dns', TUNNEL_NAME, hostname], { timeout: 30000 })
+        .catch((err) => {
+          if (!err.stderr?.includes('already exists')) throw err;
+        });
 
       setupState.phase = 'ready';
       logger.info({ hostname, tunnelId }, 'admin: Named Tunnel setup complete');
@@ -194,7 +178,8 @@ ingress:
         hostname,
         tunnelId,
         url: `https://${hostname}`,
-        phases: ['creating-tunnel', 'routing-dns', 'writing-config', 'installing-plist', 'ready']
+        serviceKind,
+        phases: ['creating-tunnel', 'writing-config', 'installing-service', 'routing-dns', 'ready']
       });
     } catch (err) {
       setupState.phase = 'failed';
@@ -208,10 +193,7 @@ ingress:
   router.post('/tunnel/cf/teardown', async (req, res) => {
     const bin = findCloudflaredBin();
     try {
-      if (fssync.existsSync(LA_PATH)) {
-        await execFileAsync('launchctl', ['unload', LA_PATH], { timeout: 5000 }).catch(() => {});
-        await fs.unlink(LA_PATH).catch(() => {});
-      }
+      await uninstallTunnelService();
       try {
         await execFileAsync(bin, ['tunnel', 'delete', '-f', TUNNEL_NAME], { timeout: 15000 });
       } catch { /* 이미 없음 */ }

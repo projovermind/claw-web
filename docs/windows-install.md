@@ -10,6 +10,7 @@ claw-web 은 파일 스토어 + Claude CLI 전제라 Windows 네이티브가 아
 | `scripts/win-bootstrap.sh` | WSL 셸 | 설치 후 상시 사용 — pull·의존성·빌드·재시작·자동업데이트 타이머를 한 번에 |
 | `scripts/omniroute-setup.sh` | WSL 셸 (맥도 동일) | 선택 — OmniRoute 게이트웨이 설치·상주·키 발급·백엔드 연결까지 한 번에 |
 | `scripts/omniroute-probe.mjs` | WSL 셸 (맥도 동일) | 무료 모델이 아직 살아 있고 툴을 부르는지 재검증 |
+| `scripts/claw-web-win-recover.ps1` | Windows **관리자** PowerShell | 고장났을 때 한 방에 복구 — 서비스·터널·포트포워딩·재부팅 대비까지 |
 
 ---
 
@@ -200,6 +201,28 @@ node scripts/omniroute-probe.mjs --all --json   # 프리셋에 붙여넣을 mode
 
 ---
 
+## 고장났을 때 — 한 방 복구
+
+재부팅 뒤 `https://<호스트명>` 이 안 열리거나 LAN 도 응답이 없으면, 어디가 깨졌는지 찾지 말고 이걸 돌린다.
+WSL 기동 → 레포 최신화 → claw-web 서비스 → **cloudflared 터널 상주** → 포트포워딩 → 로그온 작업 재등록 →
+LAN·터널 양쪽 실제 응답 확인까지 한 번에 한다. 몇 번을 돌려도 안전하다(이미 된 단계는 건너뛴다).
+
+```powershell
+# 관리자 PowerShell
+cd $env:USERPROFILE
+iwr -useb https://raw.githubusercontent.com/projovermind/claw-web/main/scripts/claw-web-win-recover.ps1 -OutFile claw-web-win-recover.ps1
+powershell -ExecutionPolicy Bypass -File .\claw-web-win-recover.ps1
+```
+
+호스트명은 WSL 의 `~/.cloudflared/config.yml` 에서 읽는다. 못 읽거나 바꾸고 싶으면 `-Hostname win.example.com`.
+그 외 `-Port 3838` `-Distro Ubuntu` `-RepoDir ~/claw-web` `-SkipPull`.
+
+마지막에 로그온 예약 작업 `claw-web WSL` 을 다시 걸어두므로, **다음 재부팅부터는 알아서 복구된다.**
+
+> DNS 는 `--overwrite-dns` 로 강제로 이 기계의 터널을 가리키게 바꾼다.
+> 죽은 터널을 가리키고 있던 게 Error 1033 의 원인이라 그냥 두면 안 고쳐진다.
+
+
 ## 자주 걸리는 것들
 
 | 증상 | 원인 · 해결 |
@@ -214,3 +237,4 @@ node scripts/omniroute-probe.mjs --all --json   # 프리셋에 붙여넣을 mode
 | `Cannot find module '.../scripts/xxx.mjs'` | pull 이 위 사유로 중단됐다 → 같은 해법 |
 | 서비스 상태 확인 | `systemctl --user status claw-web cloudflared` |
 | (맥) 자동 업데이트가 조용히 안 돎 | 레포가 외장 볼륨이면 launchd 의 `/bin/bash` 가 TCC 에 막혀 로그도 없이 exit 78/126 으로 죽는다 → `bash scripts/self-update.sh --install-timer` 로 다시 깔면 node 를 한 겹 씌운 plist 로 교체된다 |
+| 도메인이 **Cloudflare Error 1033** | 호스트명이 가리키는 터널에 붙어 있는 커넥터가 하나도 없다. v1.17.47 이전 자동 터널은 DNS 를 먼저 돌리고 상주 등록은 macOS 에서만 했어서, WSL 에서는 죽은 터널을 가리킨 채 끝났다 → 관리자 PowerShell 에서 `claw-web-win-recover.ps1` |
