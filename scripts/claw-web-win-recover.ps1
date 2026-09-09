@@ -369,13 +369,86 @@ systemctl --user daemon-reload
 systemctl --user enable --now claw-web-tunnel
 "@
 Wsl $mk | Out-Null
-Start-Sleep -Seconds 5
 
-if (WslOk 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user is-active --quiet claw-web-tunnel') {
-  Ok "터널 서비스 실행 중"
+# ── 실제로 엣지에 등록되는 조합을 찾는다 ────────────────
+# 이 기계 안에서 패킷을 볼 수 없으니 추측하지 않는다.
+# 조합을 하나씩 걸어보고 저널에 'Registered tunnel connection' 이 뜨는지로 판정한다.
+# 뜨면 그 설정을 그대로 남기고 멈춘다.
+Info "엣지에 등록되는 설정을 찾는 중 (조합당 최대 40초)..."
+$ladder = Wsl @'
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+U="$HOME/.config/systemd/user/claw-web-tunnel.service"
+CFB=$(command -v cloudflared)
+
+write_unit() {   # $1 = Environment 줄(없으면 빈 문자열), $2 = ExecStart 추가 인자
+  mkdir -p "$(dirname "$U")"
+  cat > "$U" <<EOF
+[Unit]
+Description=claw-web cloudflared tunnel
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+$1
+ExecStart=$CFB --no-autoupdate --config $HOME/.cloudflared/config.yml $2 tunnel run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+  systemctl --user daemon-reload
+}
+
+attempt() {      # $1 = 설명, $2 = Environment 줄, $3 = 추가 인자
+  write_unit "$2" "$3"
+  t0=$(date +%s)
+  systemctl --user restart claw-web-tunnel 2>/dev/null
+  for _ in $(seq 1 40); do
+    if journalctl --user -u claw-web-tunnel --since "@$t0" --no-pager 2>/dev/null \
+       | grep -q "Registered tunnel connection"; then
+      echo "OK|$1"; return 0
+    fi
+    sleep 1
+  done
+  echo "  실패: $1"
+  return 1
+}
+
+attempt "기본"                        ""                                ""      && exit 0
+attempt "양자내성 키 끄기"            "Environment=GODEBUG=tlsmlkem=0"  ""      && exit 0
+attempt "양자내성 끄기 + IPv4 고정"   "Environment=GODEBUG=tlsmlkem=0"  "--edge-ip-version 4" && exit 0
+attempt "QUIC 로 전환"                "Environment=GODEBUG=tlsmlkem=0"  "--protocol quic"     && exit 0
+echo "NONE|어떤 조합으로도 등록되지 않았다"
+'@
+
+$hit = ($ladder -split "`n" | Where-Object { $_ -match '^(OK|NONE)\|' } | Select-Object -Last 1)
+($ladder -split "`n" | Where-Object { $_ -match '^\s+실패' }) | ForEach-Object { Info $_.Trim() }
+
+if ($hit -match '^OK\|(.+)$') {
+  Ok "터널 등록됨 — 설정: $($Matches[1])"
 } else {
-  Warn (Wsl 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user status claw-web-tunnel --no-pager -l | tail -15')
-  Die "터널이 뜨지 않았다."
+  Warn "어떤 조합으로도 엣지에 등록되지 않았다. 아래 증거를 보라."
+  Write-Host (Wsl @'
+echo "--- eth0 MTU: $(cat /sys/class/net/eth0/mtu 2>/dev/null)"
+echo "--- ping 으로 확인한 실제 경로 MTU:"
+found=""
+for s in 1472 1420 1372 1272 1172 972; do
+  if ping -M do -s $s -c 1 -W 3 1.1.1.1 >/dev/null 2>&1; then found=$((s+28)); break; fi
+done
+echo "    ${found:-측정 불가 (ICMP 차단일 수 있다)}"
+echo "--- 엣지 :7844 로 평범한 TLS (작은 ClientHello) 가 되는지:"
+if command -v openssl >/dev/null 2>&1; then
+  timeout 15 openssl s_client -connect 198.41.200.233:7844 </dev/null 2>&1     | grep -m2 -E "CONNECTED|Cipher is|verify error|errno" || echo "    응답 없음"
+else
+  echo "    openssl 없음"
+fi
+echo "--- 터널 로그 마지막 25줄:"
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+journalctl --user -u claw-web-tunnel -n 25 --no-pager -o short-iso
+'@)
+  Die "터널 등록 실패 — 위 증거를 그대로 보여주면 원인을 짚겠다."
 }
 
 # DNS 를 이 터널로 돌린다. 옛 자동터널이 죽은 터널을 가리켜 놨을 수 있어서(=Error 1033)

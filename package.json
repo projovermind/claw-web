@@ -1,6 +1,6 @@
 {
   "name": "claw-web",
-  "version": "1.17.53",
+  "version": "1.17.54",
   "private": true,
   "type": "module",
   "scripts": {

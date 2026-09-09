@@ -250,7 +250,7 @@ WSL 가동 시간, 서비스·linger 상태, 터널 유닛 로그 40줄, 레포�
 | `git pull` → `untracked working tree files would be overwritten` | 푸시 전에 손으로 받아둔 파일이 남아 있다 → `win-bootstrap.sh` 가 알아서 비켜놓는다 (내용이 같으면 삭제, 다르면 `*.local-*.bak` 보관) |
 | `Cannot find module '.../scripts/xxx.mjs'` | pull 이 위 사유로 중단됐다 → 같은 해법 |
 | 서비스 상태 확인 | `systemctl --user status claw-web cloudflared` |
-| 터널 로그가 `Tunnel connection curve preferences` 에서 멈추고 그 다음 줄이 안 나옴 | TLS ClientHello 에 양자내성 키(X25519MLKEM768)가 실려 1.7KB 를 넘는데, WSL2 의 깨진 경로 MTU 때문에 두 번째 패킷이 조용히 사라진다. 오류도 안 난다 → `claw-web-win-recover.ps1` 이 `GODEBUG=tlsmlkem=0` 과 eth0 MTU 1400 을 걸어준다. 정상이면 이 줄 1~2초 뒤 `Registered tunnel connection` 이 나온다 |
+| 터널 로그가 `Tunnel connection curve preferences` 에서 멈추고 그 다음 줄이 안 나옴 | 엣지와의 TLS 핸드셰이크가 오류도 없이 멈춘 것이다. 정상이면 이 줄 1~2초 뒤 `Registered tunnel connection` 이 나온다 → `claw-web-win-recover.ps1` 이 설정 조합을 하나씩 걸어보며 **실제로 등록되는지**를 저널로 확인한다 (기본 → `GODEBUG=tlsmlkem=0` → `+ --edge-ip-version 4` → `--protocol quic`, 조합당 최대 40초). 되는 조합을 찾으면 그대로 남기고 멈추고, 넷 다 실패하면 경로 MTU·`openssl s_client`·저널을 찍어준다 |
 | systemd 로그에 `Unknown key '+ try { $out'` | 유닛 파일에 PowerShell 오류 텍스트가 박혔다. v1.17.52 이전 설치 스크립트가 WSL 로 넘긴 따옴표가 뭉개져 오류 메시지가 반환값에 섞였다 → `claw-web-win-recover.ps1` 이 유닛을 다시 쓴다 |
 | `git pull` 이 `package-lock.json` 때문에 계속 막힘 | npm 이 다시 쓴 파일이라 작업물이 아니다 → `claw-web-win-recover.ps1` 이 `.bak` 으로 남기고 되돌린 뒤 fast-forward 한다 |
 | (맥) 자동 업데이트가 조용히 안 돎 | 레포가 외장 볼륨이면 launchd 의 `/bin/bash` 가 TCC 에 막혀 로그도 없이 exit 78/126 으로 죽는다 → `bash scripts/self-update.sh --install-timer` 로 다시 깔면 node 를 한 겹 씌운 plist 로 교체된다 |
