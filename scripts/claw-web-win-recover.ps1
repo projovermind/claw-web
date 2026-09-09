@@ -94,7 +94,8 @@ if (-not $isAdmin) { Die "관리자 PowerShell 에서 실행해야 한다 (포�
 if ($Diagnose) {
   Step "진단"
   Info "WSL 부팅 시각 / 가동 시간"
-  Write-Host (Wsl 'uptime -s; uptime -p; echo "systemd: $(test -d /run/systemd/system && echo yes || echo no)"')
+  # 가동 시간이 매번 짧게 리셋돼 있으면 VM 이 계속 꺼지고 있다는 뜻이다.
+  Write-Host (Wsl 'uptime -s; uptime -p; echo "systemd: $(test -d /run/systemd/system && echo yes || echo no)"; echo "앵커: $(ps -eo args= | grep -c "^/bin/sleep infinity") 개"')
 
   Info "서비스 상태"
   Write-Host (Wsl 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user list-units --no-pager --no-legend "claw-web*" ; echo "--- linger:"; loginctl show-user $USER -p Linger 2>/dev/null')
@@ -121,7 +122,7 @@ if ($Diagnose) {
 }
 
 # ── 1. WSL 깨우기 ────────────────────────────────────────
-Step "1/7  WSL"
+Step "1/8  WSL"
 if (-not (WslOk 'true')) { Die "WSL 배포판 '$Distro' 에 접속할 수 없다. 'wsl -l -v' 로 이름을 확인하라." }
 Ok "WSL '$Distro' 응답함"
 
@@ -137,8 +138,41 @@ Ok "systemd 동작 중"
 # 터미널을 닫아도 서비스가 유지되게
 Wsl 'loginctl enable-linger $USER 2>/dev/null' | Out-Null
 
-# ── 2. 레포 최신화 ───────────────────────────────────────
-Step "2/7  레포 최신화"
+# ── 2. WSL VM 을 붙잡아 둔다 ─────────────────────────────
+# 여섯 번 반복된 실패의 진짜 원인이 여기였다. WSL2 는 마지막 세션이 끝나면
+# VM 자체를 꺼버린다. systemd 도 cloudflared 도 같이 사라지므로, 스크립트가
+# 도는 동안에는 멀쩡히 붙었다가 창을 닫으면 몇 십 초 뒤 죽는다.
+# 사용자 로그가 이걸 증명한다: systemd 사용자 매니저 PID 가 294 → 284 로
+# "줄었다". 한 번의 부팅 안에서 PID 는 줄어들 수 없다 = VM 이 새로 뜬 것.
+# 그래서 절대 끝나지 않는 앵커 프로세스를 하나 물려 VM 을 열어둔다.
+Step "2/8  WSL 상주 고정"
+$anchorUp = (Wsl "ps -eo args= 2>/dev/null | grep -c '^/bin/sleep infinity'")
+if ($anchorUp -notmatch '^[1-9]') {
+  Start-Process -FilePath 'wsl.exe' `
+    -ArgumentList @('-d', $Distro, '-u', 'root', '--exec', '/bin/sleep', 'infinity') `
+    -WindowStyle Hidden
+  Start-Sleep -Seconds 3
+  $anchorUp = (Wsl "ps -eo args= 2>/dev/null | grep -c '^/bin/sleep infinity'")
+}
+if ($anchorUp -match '^[1-9]') { Ok "앵커 동작 중 — 창을 닫아도 VM 이 살아 있다" }
+else { Warn "앵커가 뜨지 않았다 — 창을 닫으면 터널이 같이 죽을 수 있다" }
+
+# 로그온할 때마다 앵커를 다시 세운다 (재부팅 대비)
+$anchorTask = "$TaskName anchor"
+try {
+  Unregister-ScheduledTask -TaskName $anchorTask -Confirm:$false -ErrorAction SilentlyContinue
+  $aAct = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument "-NoProfile -WindowStyle Hidden -Command `"wsl.exe -d $Distro -u root --exec /bin/sleep infinity`""
+  $aSet = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero)
+  Register-ScheduledTask -TaskName $anchorTask -Action $aAct `
+    -Trigger (New-ScheduledTaskTrigger -AtLogOn) -Settings $aSet -Force | Out-Null
+  Ok "로그온 시 앵커 자동 기동 등록 ('$anchorTask')"
+} catch { Warn "앵커 작업 등록 실패: $($_.Exception.Message)" }
+
+
+# ── 3. 레포 최신화 ───────────────────────────────────────
+Step "3/8  레포 최신화"
 if (-not (WslOk "test -d $RepoDir/.git")) { Die "$RepoDir 에 claw-web 레포가 없다." }
 if ($SkipPull) {
   Warn "-SkipPull 지정 — 건너뜀"
@@ -182,8 +216,8 @@ echo "$behind 커밋 최신화 → $(git rev-parse --short HEAD)"
   }
 }
 
-# ── 3. claw-web 서비스 ───────────────────────────────────
-Step "3/7  claw-web 서비스"
+# ── 4. claw-web 서비스 ───────────────────────────────────
+Step "4/8  claw-web 서비스"
 # 유닛 파일이 깨져 있을 수 있다. 옛 설치 스크립트가 PowerShell 오류 텍스트를
 # 그대로 PATH 줄에 박아 넣은 사고가 있었다 (systemd: Unknown key '+ try { $out').
 # systemd 문법에 안 맞는 줄이 하나라도 있으면 다시 쓴다.
@@ -233,10 +267,10 @@ if (WslOk 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user is-active
   Die "claw-web 서비스가 뜨지 않았다."
 }
 
-# ── 4. cloudflared 터널 상주 ─────────────────────────────
+# ── 5. cloudflared 터널 상주 ─────────────────────────────
 # 여기가 1033 의 원인이었다. 옛 자동터널은 ~/Library/LaunchAgents 에 plist 를
 # 쓰려다 WSL 에서 죽었는데, 그 직전에 DNS 는 이미 새 터널로 돌려놓은 상태였다.
-Step "4/7  cloudflared 터널"
+Step "5/8  cloudflared 터널"
 if (-not (WslOk 'command -v cloudflared')) {
   Die "WSL 안에 cloudflared 가 없다. 먼저: bash $RepoDir/scripts/claw-web-cf-tunnel.sh <호스트명>"
 }
@@ -457,9 +491,9 @@ $route = Wsl "cloudflared tunnel route dns --overwrite-dns $tid $Hostname 2>&1 |
 if ($route -match 'success|Added|created|updated|already configured') { Ok "DNS → 이 터널" }
 else { Warn "DNS 경로 확인 필요: $route" }
 
-# ── 5. 포트포워딩 갱신 ───────────────────────────────────
+# ── 6. 포트포워딩 갱신 ───────────────────────────────────
 # WSL IP 는 재부팅마다 바뀐다. 옛 규칙이 남아 있으면 TCP 는 붙는데 응답이 없다.
-Step "5/7  LAN 포트포워딩"
+Step "6/8  LAN 포트포워딩"
 $wslIp = (Wsl "hostname -I | awk '{print `$1}'")
 if (-not $wslIp) { Die "WSL IP 를 못 읽었다." }
 Info "WSL IP: $wslIp"
@@ -471,8 +505,8 @@ New-NetFirewallRule -DisplayName "claw-web $Port" -Direction Inbound -Action All
   -Protocol TCP -LocalPort $Port -ErrorAction SilentlyContinue | Out-Null
 Ok "0.0.0.0:$Port → ${wslIp}:$Port"
 
-# ── 6. 로그온 작업 재등록 ────────────────────────────────
-Step "6/7  재부팅 대비"
+# ── 7. 로그온 작업 재등록 ────────────────────────────────
+Step "7/8  재부팅 대비"
 $self = $MyInvocation.MyCommand.Path
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
 $action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
@@ -483,8 +517,8 @@ Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
   -Settings $set -RunLevel Highest -Force | Out-Null
 Ok "로그온 시 자동 복구 등록 ('$TaskName')"
 
-# ── 7. 실제 확인 ─────────────────────────────────────────
-Step "7/7  확인"
+# ── 8. 실제 확인 ─────────────────────────────────────────
+Step "8/8  확인"
 $localOk = WslOk "curl -fsS -m 8 http://localhost:$Port/api/health -o /dev/null"
 if ($localOk) { Ok "WSL 내부 :$Port 응답" } else { Warn "WSL 내부 응답 없음" }
 
@@ -506,10 +540,12 @@ foreach ($i in 1..12) {
   }
 }
 
-# 붙자마자 죽는 경우가 있었다. 한 번 200 받았다고 끝내지 않고 60초 뒤 다시 본다.
+# 여기가 핵심 검증이다. 지금부터 90초 동안 wsl.exe 를 단 한 번도 부르지 않는다.
+# 앵커가 제대로 물려 있지 않으면 이 사이에 VM 이 꺼지면서 터널이 같이 죽는다.
+# 즉 이 확인을 통과했다는 건 "창을 닫아도 살아 있다" 를 실제로 증명한 것이다.
 if ($tunnelOk) {
-  Info "60초 뒤 한 번 더 확인한다 (붙었다가 죽는 경우가 있었다)..."
-  Start-Sleep -Seconds 60
+  Info "90초 동안 WSL 을 건드리지 않고 그대로 둔다 (창을 닫은 것과 같은 상태)..."
+  Start-Sleep -Seconds 90
   $tunnelOk = $false
   try {
     $r = Invoke-WebRequest -Uri "https://$Hostname/api/health" -TimeoutSec 10 -UseBasicParsing
@@ -518,7 +554,8 @@ if ($tunnelOk) {
     $code = $_.Exception.Response.StatusCode.value__
     if ($code -and $code -ne 530) { $tunnelOk = $true }
   }
-  if ($tunnelOk) { Ok "60초 뒤에도 살아 있다" } else { Warn "붙었다가 다시 끊겼다 — 아래 로그를 보라" }
+  if ($tunnelOk) { Ok "손 떼고 90초 뒤에도 살아 있다 — 창을 닫아도 유지된다" }
+  else { Warn "손 떼자마자 죽었다 = VM 이 꺼진 것이다. 앵커 상태를 아래에서 보라" }
 }
 
 Write-Host ""
@@ -526,6 +563,8 @@ if ($tunnelOk) {
   Write-Host "  https://$Hostname  살아났다." -ForegroundColor Green
 } else {
   Write-Host "  https://$Hostname  아직 응답 없음." -ForegroundColor Yellow
+  Write-Host "  WSL 앵커 / 가동시간:" -ForegroundColor Yellow
+  Write-Host (Wsl 'echo "앵커 $(ps -eo args= | grep -c "^/bin/sleep infinity") 개, uptime $(cut -d. -f1 /proc/uptime)초"')
   Write-Host "  MTU:" -ForegroundColor Yellow
   Write-Host (Wsl 'echo "eth0 mtu = $(cat /sys/class/net/eth0/mtu 2>/dev/null)"')
   Write-Host "  터널 유닛 상태:" -ForegroundColor Yellow

@@ -233,6 +233,11 @@ WSL 가동 시간, 서비스·linger 상태, 터널 유닛 로그 40줄, 레포�
 > 이 `.ps1` 은 **UTF-8 BOM** 으로 저장돼 있다. BOM 을 떼면 Windows PowerShell 5.1 이
 > CP949 로 읽어서 한글이 깨지고 `ParserError: UnexpectedToken` 으로 죽는다. 편집할 때 유지할 것.
 
+> WSL VM 을 앵커 프로세스(`sleep infinity`)로 붙잡아 둔다. 이게 없으면 스크립트가 도는
+> 동안에만 터널이 살아 있고, 창을 닫는 순간 VM 과 함께 죽는다. 마지막 8단계는 90초 동안
+> WSL 을 한 번도 부르지 않고 기다린 뒤 도메인을 다시 때려본다 — 창을 닫은 것과 같은 상태에서
+> 살아 있는지를 실제로 확인하기 위해서다.
+
 > DNS 는 `--overwrite-dns` 로 강제로 이 기계의 터널을 가리키게 바꾼다.
 > 죽은 터널을 가리키고 있던 게 Error 1033 의 원인이라 그냥 두면 안 고쳐진다.
 
@@ -250,6 +255,7 @@ WSL 가동 시간, 서비스·linger 상태, 터널 유닛 로그 40줄, 레포�
 | `git pull` → `untracked working tree files would be overwritten` | 푸시 전에 손으로 받아둔 파일이 남아 있다 → `win-bootstrap.sh` 가 알아서 비켜놓는다 (내용이 같으면 삭제, 다르면 `*.local-*.bak` 보관) |
 | `Cannot find module '.../scripts/xxx.mjs'` | pull 이 위 사유로 중단됐다 → 같은 해법 |
 | 서비스 상태 확인 | `systemctl --user status claw-web cloudflared` |
+| 스크립트는 `살아났다` 인데 창을 닫으면 몇 분 뒤 **Error 1033 / 530** | WSL2 는 마지막 세션이 끝나면 VM 자체를 끈다. systemd 도 cloudflared 도 같이 사라진다. 판별법: `-Diagnose` 의 WSL 가동 시간이 매번 짧게 리셋돼 있거나, 저널에서 systemd 사용자 매니저 PID 가 **줄어들어** 있으면(한 부팅 안에서는 PID 가 줄 수 없다) VM 이 새로 뜬 것이다 → `claw-web-win-recover.ps1` 이 `wsl.exe --exec /bin/sleep infinity` 앵커를 띄워 VM 을 붙잡고, 로그온 작업 `claw-web WSL anchor` 로 재부팅 뒤에도 다시 세운다 |
 | 터널 로그가 `Tunnel connection curve preferences` 에서 멈추고 그 다음 줄이 안 나옴 | 엣지와의 TLS 핸드셰이크가 오류도 없이 멈춘 것이다. 정상이면 이 줄 1~2초 뒤 `Registered tunnel connection` 이 나온다 → `claw-web-win-recover.ps1` 이 설정 조합을 하나씩 걸어보며 **실제로 등록되는지**를 저널로 확인한다 (기본 → `GODEBUG=tlsmlkem=0` → `+ --edge-ip-version 4` → `--protocol quic`, 조합당 최대 40초). 되는 조합을 찾으면 그대로 남기고 멈추고, 넷 다 실패하면 경로 MTU·`openssl s_client`·저널을 찍어준다 |
 | systemd 로그에 `Unknown key '+ try { $out'` | 유닛 파일에 PowerShell 오류 텍스트가 박혔다. v1.17.52 이전 설치 스크립트가 WSL 로 넘긴 따옴표가 뭉개져 오류 메시지가 반환값에 섞였다 → `claw-web-win-recover.ps1` 이 유닛을 다시 쓴다 |
 | `git pull` 이 `package-lock.json` 때문에 계속 막힘 | npm 이 다시 쓴 파일이라 작업물이 아니다 → `claw-web-win-recover.ps1` 이 `.bak` 으로 남기고 되돌린 뒤 fast-forward 한다 |
