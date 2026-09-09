@@ -50,14 +50,24 @@ function Step { param($m) Write-Host ""; Write-Host "== $m" -ForegroundColor Cya
 $prevEnc = [Console]::OutputEncoding
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# ⚠️ Windows PowerShell 5.1 은 네이티브 exe 로 인자를 넘길 때 따옴표를 뭉갠다.
+# bash 안의 작은따옴표가 사라지면 awk '{print $1}' 의 $1 이 bash 위치인자로 해석돼
+# 빈 문자열이 된다 (실제로 `awk: NF>=2 && length()==36` 로 깨졌다).
+# 그래서 스크립트를 base64 로 감싸 전선에는 따옴표를 아예 안 태운다.
+function WslCmd {
+  param([string]$Cmd)
+  $lf  = $Cmd -replace "`r`n", "`n"          # CRLF 로 저장돼도 bash 가 안 깨지게
+  $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($lf))
+  return "echo $b64 | base64 -d | bash"
+}
 function Wsl {
   param([string]$Cmd)
-  $out = & wsl.exe -d $Distro -- bash -lc $Cmd 2>&1
+  $out = & wsl.exe -d $Distro -- bash -lc (WslCmd $Cmd) 2>&1
   return ($out | Out-String).Trim()
 }
 function WslOk {
   param([string]$Cmd)
-  & wsl.exe -d $Distro -- bash -lc $Cmd *> $null
+  & wsl.exe -d $Distro -- bash -lc (WslCmd $Cmd) *> $null
   return ($LASTEXITCODE -eq 0)
 }
 
@@ -94,15 +104,19 @@ if (-not (WslOk "test -d $RepoDir/.git")) { Die "$RepoDir 에 claw-web 레포가
 if ($SkipPull) {
   Warn "-SkipPull 지정 — 건너뜀"
 } else {
-  $pull = Wsl "cd $RepoDir && git pull --ff-only 2>&1 | tail -3"
-  Info $pull
-  # 의존성/빌드는 bootstrap 이 알아서 판단한다
+  # pull·의존성·빌드·재시작은 bootstrap 이 다 한다.
+  # bootstrap 은 pull 을 막는 로컬 변경(npm 이 다시 쓰는 package-lock.json 등)까지 스스로 푼다.
   if (WslOk "test -f $RepoDir/scripts/win-bootstrap.sh") {
     Info "win-bootstrap 실행 중 (의존성·빌드·재시작)..."
-    $bs = Wsl "cd $RepoDir && bash scripts/win-bootstrap.sh 2>&1 | tail -6"
-    Info $bs
+    $bsOk = WslOk "cd $RepoDir && bash scripts/win-bootstrap.sh > /tmp/claw-recover-bootstrap.log 2>&1"
+    Info (Wsl 'tail -8 /tmp/claw-recover-bootstrap.log')
+    if ($bsOk) { Ok "최신화 완료" }
+    # 최신화가 막혀도 터널 복구는 이 스크립트가 직접 하므로 계속 간다.
+    else { Warn "최신화 실패 — 옛 코드 그대로 두고 복구는 계속한다" }
+  } else {
+    $pull = Wsl "cd $RepoDir && git pull --ff-only 2>&1 | tail -3"
+    Info $pull
   }
-  Ok "최신화 완료"
 }
 
 # ── 3. claw-web 서비스 ───────────────────────────────────

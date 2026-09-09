@@ -219,6 +219,9 @@ powershell -ExecutionPolicy Bypass -File .\claw-web-win-recover.ps1
 
 마지막에 로그온 예약 작업 `claw-web WSL` 을 다시 걸어두므로, **다음 재부팅부터는 알아서 복구된다.**
 
+> WSL 로 넘기는 명령은 base64 로 감싼다. Windows PowerShell 5.1 이 네이티브 exe 인자의
+> 따옴표를 뭉개서, `awk '{print $1}'` 의 `$1` 이 bash 위치인자로 해석돼 빈 값이 되기 때문이다.
+
 > 이 `.ps1` 은 **UTF-8 BOM** 으로 저장돼 있다. BOM 을 떼면 Windows PowerShell 5.1 이
 > CP949 로 읽어서 한글이 깨지고 `ParserError: UnexpectedToken` 으로 죽는다. 편집할 때 유지할 것.
 

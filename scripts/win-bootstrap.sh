@@ -48,7 +48,27 @@ fi
 if [ "$BEFORE" = "$(git rev-parse origin/main)" ]; then
   ok "이미 최신"
 else
-  git merge --ff-only origin/main || die "fast-forward 불가 — 로컬 커밋이 갈라졌습니다. 수동 확인 필요"
+  if ! MERGE_ERR=$(git merge --ff-only origin/main 2>&1); then
+    # 병합을 막는 게 추적 중인 파일일 때가 있다. 거의 항상 npm 이 다시 써버린
+    # package-lock.json 이라, 여기서 멈추면 기계가 영영 낡은 채로 남는다.
+    # 막는 파일만 골라 .bak 으로 남기고 되돌린 뒤 한 번만 더 시도한다.
+    BLOCKED=$(printf '%s\n' "$MERGE_ERR" \
+      | sed -n '/would be overwritten by merge/,/^Please/p' \
+      | sed -n 's/^\t\(.*\)$/\1/p')
+    if [ -n "$BLOCKED" ]; then
+      while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        cp "$f" "$f.local-$(date '+%Y%m%d-%H%M%S').bak" 2>/dev/null \
+          && warn "$f → *.local-*.bak 로 보관 후 원격 버전으로 되돌림"
+        git checkout -- "$f" 2>/dev/null || true
+      done <<< "$BLOCKED"
+      git merge --ff-only origin/main \
+        || die "fast-forward 불가 — 로컬 커밋이 갈라졌습니다. 수동 확인 필요"
+    else
+      printf '%s\n' "$MERGE_ERR" | tail -5
+      die "fast-forward 불가 — 로컬 커밋이 갈라졌습니다. 수동 확인 필요"
+    fi
+  fi
   ok "$(git rev-parse --short HEAD)"
 fi
 

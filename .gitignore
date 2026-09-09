@@ -55,6 +55,8 @@ data/.layout-migration-done
 
 # Local agents/channels config (do not commit — contains private setup)
 /config.json
+# win-bootstrap 이 pull 을 막는 로컬 변경을 보관할 때 쓰는 이름
+*.local-*.bak
 /config.json.bak*
 data/user/agents-config.json.bak-*
 data/user/agents-config.json.moved-*
