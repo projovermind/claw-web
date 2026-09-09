@@ -214,6 +214,14 @@ iwr -useb https://raw.githubusercontent.com/projovermind/claw-web/main/scripts/c
 powershell -ExecutionPolicy Bypass -File .\claw-web-win-recover.ps1
 ```
 
+고쳐도 잠시 뒤 또 죽는다면, 추측하지 말고 상태부터 뽑는다. 아무것도 바꾸지 않는다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\claw-web-win-recover.ps1 -Diagnose
+```
+
+WSL 가동 시간, 서비스·linger 상태, 터널 유닛 로그 40줄, 레포와 origin 의 차이, 포트포워딩을 찍는다.
+
 호스트명은 WSL 의 `~/.cloudflared/config.yml` 에서 읽는다. 못 읽거나 바꾸고 싶으면 `-Hostname win.example.com`.
 그 외 `-Port 3838` `-Distro Ubuntu` `-RepoDir ~/claw-web` `-SkipPull`.
 

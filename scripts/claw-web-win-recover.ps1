@@ -34,7 +34,8 @@ param(
   [int]$Port        = 3838,
   [string]$Distro   = 'Ubuntu',
   [string]$RepoDir  = '~/claw-web',
-  [switch]$SkipPull                        # 네트워크가 막혔을 때 git pull 건너뛰기
+  [switch]$SkipPull,                       # 네트워크가 막혔을 때 git pull 건너뛰기
+  [switch]$Diagnose                        # 고치지 않고 지금 상태만 뽑아본다
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,7 +64,8 @@ function WslCmd {
 function Wsl {
   param([string]$Cmd)
   $out = & wsl.exe -d $Distro -- bash -lc (WslCmd $Cmd) 2>&1
-  return ($out | Out-String).Trim()
+  # ANSI 색코드를 걷어낸다. 그냥 두면 레거시 콘솔에서 글자가 겹쳐 찍힌다.
+  return (($out | Out-String) -replace "\x1b\[[0-9;]*[A-Za-z]", '').Trim()
 }
 function WslOk {
   param([string]$Cmd)
@@ -80,6 +82,38 @@ $isAdmin = ([Security.Principal.WindowsPrincipal] `
   [Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) { Die "관리자 PowerShell 에서 실행해야 한다 (포트포워딩·작업 등록에 필요)." }
+
+# ── 진단만 (-Diagnose) ───────────────────────────────────
+# "됐다고 했는데 잠시 뒤 또 죽었다" 를 추측으로 고치지 않기 위한 모드.
+# 아무것도 바꾸지 않고 지금 상태만 찍는다.
+if ($Diagnose) {
+  Step "진단"
+  Info "WSL 부팅 시각 / 가동 시간"
+  Write-Host (Wsl 'uptime -s; uptime -p; echo "systemd: $(test -d /run/systemd/system && echo yes || echo no)"')
+
+  Info "서비스 상태"
+  Write-Host (Wsl 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user list-units --no-pager --no-legend "claw-web*" ; echo "--- linger:"; loginctl show-user $USER -p Linger 2>/dev/null')
+
+  Info "터널 유닛"
+  Write-Host (Wsl 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user status claw-web-tunnel --no-pager -l | head -20')
+
+  Info "터널 로그 (최근 40줄)"
+  Write-Host (Wsl 'export XDG_RUNTIME_DIR=/run/user/$(id -u); journalctl --user -u claw-web-tunnel -n 40 --no-pager -o short-iso')
+
+  Info "claw-web 로그 (최근 15줄)"
+  Write-Host (Wsl 'export XDG_RUNTIME_DIR=/run/user/$(id -u); journalctl --user -u claw-web -n 15 --no-pager -o short-iso')
+
+  Info "레포 상태"
+  Write-Host (Wsl "cd $RepoDir 2>/dev/null && git log --oneline -3 && echo '--- origin 과의 차이:' && git rev-list --left-right --count HEAD...origin/main 2>/dev/null && echo '--- 로컬 수정:' && git status --short --untracked-files=no | head -10")
+
+  Info "로컬 응답"
+  Write-Host (Wsl "curl -s -o /dev/null -w 'WSL localhost:$Port -> %{http_code}\n' -m 5 http://localhost:$Port/api/health")
+
+  Info "포트포워딩"
+  & netsh interface portproxy show v4tov4
+  [Console]::OutputEncoding = $prevEnc
+  exit 0
+}
 
 # ── 1. WSL 깨우기 ────────────────────────────────────────
 Step "1/7  WSL"
@@ -203,6 +237,8 @@ cat > ~/.config/systemd/user/claw-web-tunnel.service <<EOF
 [Unit]
 Description=claw-web cloudflared tunnel
 After=network.target
+# 기본값(10초에 5회)에 걸리면 systemd 가 영영 포기한다. 터널은 끝까지 재시도해야 한다.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -232,7 +268,7 @@ if (WslOk 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user is-active
 # DNS 를 이 터널로 돌린다. 옛 자동터널이 죽은 터널을 가리켜 놨을 수 있어서(=Error 1033)
 # --overwrite-dns 로 강제한다. 이게 없으면 "record already exists" 만 나고 안 고쳐진다.
 $route = Wsl "cloudflared tunnel route dns --overwrite-dns $tid $Hostname 2>&1 | tail -2"
-if ($route -match 'success|Added|created|updated') { Ok "DNS → 이 터널" }
+if ($route -match 'success|Added|created|updated|already configured') { Ok "DNS → 이 터널" }
 else { Warn "DNS 경로 확인 필요: $route" }
 
 # ── 5. 포트포워딩 갱신 ───────────────────────────────────
