@@ -36,18 +36,30 @@ function Step { param($m) Write-Host ""; Write-Host "== $m" -ForegroundColor Cya
 
 # ── WSL 헬퍼 ────────────────────────────────────────────
 # 로그인 셸(-lc)로 실행해야 nvm PATH 가 잡힌다.
+# ⚠️ Windows PowerShell 5.1 은 네이티브 exe 로 인자를 넘길 때 따옴표를 뭉갠다.
+# bash 안의 따옴표가 사라지면 명령이 깨지고, 아래 2>&1 때문에 그 오류 텍스트가
+# 반환값에 섞인다. 실제로 그 찌꺼기가 claw-web.service 의 PATH 줄에 박혀
+# systemd 가 "Unknown key '+ try { $out'" 를 뱉는 사고가 났다.
+# base64 로 감싸 전선에 따옴표를 아예 안 태운다.
+function WslCmd {
+  param([string]$Cmd)
+  $lf  = $Cmd -replace "`r`n", "`n"
+  $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($lf))
+  return "echo $b64 | base64 -d | bash"
+}
 function Wsl {
   param([string]$Cmd, [switch]$AsRoot)
   $a = @()
   if ($Distro) { $a += @('-d', $Distro) }
   if ($AsRoot) { $a += @('-u', 'root') }
-  $a += @('-e', 'bash', '-lc', $Cmd)
+  $a += @('-e', 'bash', '-lc', (WslCmd $Cmd))
   # Windows PowerShell 5.1 은 네이티브 stderr 를 ErrorRecord 로 만들어서
   # $ErrorActionPreference='Stop' 이면 경고 한 줄에도 스크립트가 죽는다.
   $prev = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
-  try { $out = & wsl.exe @a 2>&1 } finally { $ErrorActionPreference = $prev }
-  return ($out | Out-String).Trim()
+  try { $out = & wsl.exe @a 2>$null } finally { $ErrorActionPreference = $prev }
+  # ANSI 색코드 제거. 그냥 두면 유닛 파일이나 콘솔에 제어문자가 새어 들어간다.
+  return (($out | Out-String) -replace "\x1b\[[0-9;]*[A-Za-z]", '').Trim()
 }
 
 function WslOk {

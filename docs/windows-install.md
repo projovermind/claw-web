@@ -250,5 +250,7 @@ WSL 가동 시간, 서비스·linger 상태, 터널 유닛 로그 40줄, 레포�
 | `git pull` → `untracked working tree files would be overwritten` | 푸시 전에 손으로 받아둔 파일이 남아 있다 → `win-bootstrap.sh` 가 알아서 비켜놓는다 (내용이 같으면 삭제, 다르면 `*.local-*.bak` 보관) |
 | `Cannot find module '.../scripts/xxx.mjs'` | pull 이 위 사유로 중단됐다 → 같은 해법 |
 | 서비스 상태 확인 | `systemctl --user status claw-web cloudflared` |
+| systemd 로그에 `Unknown key '+ try { $out'` | 유닛 파일에 PowerShell 오류 텍스트가 박혔다. v1.17.52 이전 설치 스크립트가 WSL 로 넘긴 따옴표가 뭉개져 오류 메시지가 반환값에 섞였다 → `claw-web-win-recover.ps1` 이 유닛을 다시 쓴다 |
+| `git pull` 이 `package-lock.json` 때문에 계속 막힘 | npm 이 다시 쓴 파일이라 작업물이 아니다 → `claw-web-win-recover.ps1` 이 `.bak` 으로 남기고 되돌린 뒤 fast-forward 한다 |
 | (맥) 자동 업데이트가 조용히 안 돎 | 레포가 외장 볼륨이면 launchd 의 `/bin/bash` 가 TCC 에 막혀 로그도 없이 exit 78/126 으로 죽는다 → `bash scripts/self-update.sh --install-timer` 로 다시 깔면 node 를 한 겹 씌운 plist 로 교체된다 |
 | 도메인이 **Cloudflare Error 1033** | 호스트명이 가리키는 터널에 붙어 있는 커넥터가 하나도 없다. v1.17.47 이전 자동 터널은 DNS 를 먼저 돌리고 상주 등록은 macOS 에서만 했어서, WSL 에서는 죽은 터널을 가리킨 채 끝났다 → 관리자 PowerShell 에서 `claw-web-win-recover.ps1` |

@@ -138,8 +138,32 @@ if (-not (WslOk "test -d $RepoDir/.git")) { Die "$RepoDir 에 claw-web 레포가
 if ($SkipPull) {
   Warn "-SkipPull 지정 — 건너뜀"
 } else {
-  # pull·의존성·빌드·재시작은 bootstrap 이 다 한다.
-  # bootstrap 은 pull 을 막는 로컬 변경(npm 이 다시 쓰는 package-lock.json 등)까지 스스로 푼다.
+  # 먼저 fast-forward 를 직접 뚫는다.
+  # 기계에 있는 bootstrap 은 낡은 판이라 이 상황을 못 푼다 — pull 이 막혀 있으니
+  # 고친 bootstrap 을 받으려면 pull 이 돼야 하는 순환에 빠진다. 그래서 여기서 끊는다.
+  $ff = Wsl @'
+cd "$HOME/claw-web" 2>/dev/null || exit 0
+git fetch origin main --quiet 2>/dev/null || { echo "fetch 실패"; exit 0; }
+ahead=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+behind=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
+if [ "$ahead" != 0 ]; then echo "로컬 전용 커밋 $ahead 개 — 손대지 않는다"; exit 0; fi
+[ "$behind" = 0 ] && { echo "이미 최신"; exit 0; }
+if ! err=$(git merge --ff-only origin/main 2>&1); then
+  # 병합을 막는 파일만 골라 .bak 으로 남기고 되돌린다 (거의 항상 package-lock.json).
+  blocked=$(printf '%s\n' "$err" | sed -n '/would be overwritten by merge/,/^Please/p' \
+            | sed -n 's/^\t\(.*\)$/\1/p')
+  [ -z "$blocked" ] && { printf '%s\n' "$err" | tail -3; exit 0; }
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    cp "$f" "$f.local-$(date +%Y%m%d-%H%M%S).bak" 2>/dev/null && echo "$f 보관 후 되돌림"
+    git checkout -- "$f" 2>/dev/null || true
+  done <<< "$blocked"
+  git merge --ff-only origin/main >/dev/null 2>&1 || { echo "fast-forward 여전히 불가"; exit 0; }
+fi
+echo "$behind 커밋 최신화 → $(git rev-parse --short HEAD)"
+'@
+  Info $ff
+
   if (WslOk "test -f $RepoDir/scripts/win-bootstrap.sh") {
     Info "win-bootstrap 실행 중 (의존성·빌드·재시작)..."
     $bsOk = WslOk "cd $RepoDir && bash scripts/win-bootstrap.sh > /tmp/claw-recover-bootstrap.log 2>&1"
@@ -155,6 +179,46 @@ if ($SkipPull) {
 
 # ── 3. claw-web 서비스 ───────────────────────────────────
 Step "3/7  claw-web 서비스"
+# 유닛 파일이 깨져 있을 수 있다. 옛 설치 스크립트가 PowerShell 오류 텍스트를
+# 그대로 PATH 줄에 박아 넣은 사고가 있었다 (systemd: Unknown key '+ try { $out').
+# systemd 문법에 안 맞는 줄이 하나라도 있으면 다시 쓴다.
+$fix = Wsl @'
+U="$HOME/.config/systemd/user/claw-web.service"
+R="$HOME/claw-web"
+if [ ! -f "$U" ]; then
+  bad=999
+else
+  bad=$(grep -vcE '^[[:space:]]*($|#|\[|[A-Za-z][A-Za-z0-9]*=)' "$U" 2>/dev/null || true)
+fi
+[ "$bad" = 0 ] && { echo "유닛 정상"; exit 0; }
+NODE=$(command -v node) || { echo "node 를 못 찾음"; exit 1; }
+mkdir -p "$(dirname "$U")" "$R/data/user/logs"
+cat > "$U" <<EOF
+[Unit]
+Description=Claw Web
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=$R
+Environment=NODE_ENV=production
+Environment=PATH=$(dirname "$NODE"):$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=$NODE $R/server/index.js
+Restart=always
+RestartSec=3
+StandardOutput=append:$R/data/user/logs/claw-web.log
+StandardError=append:$R/data/user/logs/claw-web.err.log
+
+[Install]
+WantedBy=default.target
+EOF
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+systemctl --user daemon-reload
+systemctl --user restart claw-web 2>/dev/null || true
+echo "깨진 줄 $bad 개 — 유닛을 다시 썼다"
+'@
+Info $fix
 Wsl 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user daemon-reload; systemctl --user enable --now claw-web' | Out-Null
 Start-Sleep -Seconds 3
 if (WslOk 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user is-active --quiet claw-web') {
@@ -320,13 +384,30 @@ foreach ($i in 1..12) {
   }
 }
 
+# 붙자마자 죽는 경우가 있었다. 한 번 200 받았다고 끝내지 않고 60초 뒤 다시 본다.
+if ($tunnelOk) {
+  Info "60초 뒤 한 번 더 확인한다 (붙었다가 죽는 경우가 있었다)..."
+  Start-Sleep -Seconds 60
+  $tunnelOk = $false
+  try {
+    $r = Invoke-WebRequest -Uri "https://$Hostname/api/health" -TimeoutSec 10 -UseBasicParsing
+    if ($r.StatusCode -eq 200) { $tunnelOk = $true }
+  } catch {
+    $code = $_.Exception.Response.StatusCode.value__
+    if ($code -and $code -ne 530) { $tunnelOk = $true }
+  }
+  if ($tunnelOk) { Ok "60초 뒤에도 살아 있다" } else { Warn "붙었다가 다시 끊겼다 — 아래 로그를 보라" }
+}
+
 Write-Host ""
 if ($tunnelOk) {
   Write-Host "  https://$Hostname  살아났다." -ForegroundColor Green
 } else {
   Write-Host "  https://$Hostname  아직 응답 없음." -ForegroundColor Yellow
-  Write-Host "  터널 로그:" -ForegroundColor Yellow
-  Write-Host (Wsl 'export XDG_RUNTIME_DIR=/run/user/$(id -u); journalctl --user -u claw-web-tunnel -n 20 --no-pager')
+  Write-Host "  터널 유닛 상태:" -ForegroundColor Yellow
+  Write-Host (Wsl 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user status claw-web-tunnel --no-pager -l | head -12')
+  Write-Host "  터널 로그 (최근 40줄):" -ForegroundColor Yellow
+  Write-Host (Wsl 'export XDG_RUNTIME_DIR=/run/user/$(id -u); journalctl --user -u claw-web-tunnel -n 40 --no-pager -o short-iso')
 }
 Write-Host ""
 
