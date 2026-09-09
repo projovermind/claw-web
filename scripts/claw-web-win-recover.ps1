@@ -72,6 +72,11 @@ function WslOk {
   & wsl.exe -d $Distro -- bash -lc (WslCmd $Cmd) *> $null
   return ($LASTEXITCODE -eq 0)
 }
+function WslRoot {
+  param([string]$Cmd)
+  $out = & wsl.exe -d $Distro -u root -- bash -lc (WslCmd $Cmd) 2>&1
+  return (($out | Out-String) -replace "\x1b\[[0-9;]*[A-Za-z]", '').Trim()
+}
 
 Write-Host ""
 Write-Host "  claw-web 윈도우 복구" -ForegroundColor Cyan
@@ -282,6 +287,46 @@ if (-not $tid -or -not $tcred) {
 Ok "터널 $tid"
 Info "자격증명: $tcred"
 
+# WSL2 의 경로 MTU 가 깨져 있으면 큰 패킷이 조용히 사라진다.
+# cloudflared 의 TLS 핸드셰이크가 오류 없이 멈추는 원인이라, 1400 으로 낮추고
+# root systemd 유닛으로 재부팅 뒤에도 유지되게 한다.
+$mtu = WslRoot @'
+cur=$(cat /sys/class/net/eth0/mtu 2>/dev/null || echo 0)
+[ "$cur" = 0 ] && { echo "eth0 MTU 를 못 읽었다 — 건드리지 않는다"; exit 0; }
+if [ "$cur" -le 1400 ] 2>/dev/null; then echo "MTU $cur — 그대로 둔다"; exit 0; fi
+ip link set dev eth0 mtu 1400 2>/dev/null || { echo "MTU 변경 실패 (현재 $cur)"; exit 0; }
+cat > /etc/systemd/system/claw-web-mtu.service <<EOF
+[Unit]
+Description=claw-web — lower eth0 MTU for cloudflared
+After=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/ip link set dev eth0 mtu 1400
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload 2>/dev/null
+systemctl enable claw-web-mtu >/dev/null 2>&1
+echo "MTU $cur → 1400 (재부팅 뒤에도 유지)"
+'@
+Info $mtu
+
+# 엣지에 TCP 로 닿기는 하는지 (핸드셰이크 이전 단계 확인)
+$edge = Wsl @'
+T=""; command -v timeout >/dev/null 2>&1 && T="timeout 6"
+for ip in 198.41.200.233 198.41.192.7; do
+  if $T bash -c "exec 3<>/dev/tcp/$ip/7844" 2>/dev/null; then
+    echo "엣지 $ip:7844 연결됨"
+  else
+    echo "엣지 $ip:7844 연결 안 됨"
+  fi
+done
+'@
+Info $edge
+
 # config.yml 과 systemd 유닛을 확실히 써둔다 (있으면 덮어쓴다 — 내용이 정본)
 $mk = @"
 set -e
@@ -306,6 +351,10 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
+# Go 1.24+ 는 TLS ClientHello 에 X25519MLKEM768(양자내성) 키를 실어서 1.7KB 가 넘는다.
+# WSL2 는 경로 MTU 가 깨져 있어 그 두 번째 패킷이 조용히 사라지고, 핸드셰이크가
+# 오류도 없이 멈춘다. 실제로 'curve preferences' 다음 줄이 영영 안 나왔다.
+Environment=GODEBUG=tlsmlkem=0
 ExecStart=`$CFB --no-autoupdate --config `$HOME/.cloudflared/config.yml tunnel run
 Restart=always
 RestartSec=5
@@ -404,6 +453,8 @@ if ($tunnelOk) {
   Write-Host "  https://$Hostname  살아났다." -ForegroundColor Green
 } else {
   Write-Host "  https://$Hostname  아직 응답 없음." -ForegroundColor Yellow
+  Write-Host "  MTU:" -ForegroundColor Yellow
+  Write-Host (Wsl 'echo "eth0 mtu = $(cat /sys/class/net/eth0/mtu 2>/dev/null)"')
   Write-Host "  터널 유닛 상태:" -ForegroundColor Yellow
   Write-Host (Wsl 'export XDG_RUNTIME_DIR=/run/user/$(id -u); systemctl --user status claw-web-tunnel --no-pager -l | head -12')
   Write-Host "  터널 로그 (최근 40줄):" -ForegroundColor Yellow
