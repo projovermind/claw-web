@@ -219,6 +219,9 @@ powershell -ExecutionPolicy Bypass -File .\claw-web-win-recover.ps1
 
 마지막에 로그온 예약 작업 `claw-web WSL` 을 다시 걸어두므로, **다음 재부팅부터는 알아서 복구된다.**
 
+> 이 `.ps1` 은 **UTF-8 BOM** 으로 저장돼 있다. BOM 을 떼면 Windows PowerShell 5.1 이
+> CP949 로 읽어서 한글이 깨지고 `ParserError: UnexpectedToken` 으로 죽는다. 편집할 때 유지할 것.
+
 > DNS 는 `--overwrite-dns` 로 강제로 이 기계의 터널을 가리키게 바꾼다.
 > 죽은 터널을 가리키고 있던 게 Error 1033 의 원인이라 그냥 두면 안 고쳐진다.
 

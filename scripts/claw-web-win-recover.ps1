@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   윈도우(WSL2) claw-web 을 한 번에 되살린다 — 서비스·터널·포트포워딩·재부팅 대비까지.
 
@@ -22,6 +22,11 @@
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File .\claw-web-win-recover.ps1 -Hostname win.example.com
+
+.NOTES
+  이 파일은 반드시 **UTF-8 BOM** 으로 저장해야 한다.
+  Windows PowerShell 5.1 은 BOM 이 없으면 .ps1 을 시스템 코드페이지(한국어 = CP949)로 읽는다.
+  그러면 한글 주석·문자열이 깨지면서 따옴표와 중괄호가 어긋나 ParserError 로 죽는다.
 #>
 [CmdletBinding()]
 param(
