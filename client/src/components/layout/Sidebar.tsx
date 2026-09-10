@@ -22,7 +22,7 @@ import { useI18nStore, useT } from '../../lib/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { api, setAuthToken } from '../../lib/api';
 import { useChatStore } from '../../store/chat-store';
-import { isSessionRunning } from '../../lib/visibility';
+import { isSessionBusy } from '../../lib/visibility';
 import { DEFAULT_APPEARANCE } from '../../hooks/useAppearance';
 import DeviceSwitcher from './DeviceSwitcher';
 
@@ -85,7 +85,7 @@ export default function Sidebar() {
   const hasUnread = visibleUnread.length > 0;
   const hasError = visibleUnread.some((id) => unread[id]?.isError);
   const hasRunning = (sessionsData?.sessions ?? []).some(
-    (s) => isSessionRunning(s, runtime) && !isHiddenDelegation(s.title)
+    (s) => isSessionBusy(s, runtime) && !isHiddenDelegation(s.title)
   );
   const chatDotColor = hasError ? 'bg-red-400' : hasUnread ? 'bg-sky-400' : hasRunning ? 'bg-amber-400' : null;
 

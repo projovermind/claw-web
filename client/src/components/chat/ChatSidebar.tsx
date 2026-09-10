@@ -6,7 +6,7 @@ import { useT } from '../../lib/i18n';
 import { useChatStore } from '../../store/chat-store';
 import { useProgressToastStore } from '../../store/progress-toast-store';
 import type { SessionMeta, Agent, Project, BackendsState } from '../../lib/types';
-import { isSessionRunning } from '../../lib/visibility';
+import { isSessionRunning, isSessionBusy } from '../../lib/visibility';
 import DraggableSession from './DraggableSession';
 
 /** 에이전트 모델 단축명 뱃지 — 모델명만 표시 (백엔드명 제외) */
@@ -657,8 +657,12 @@ export function ChatSidebar({
                 {!selectMode && isUnread && (
                   <span className={`w-1.5 h-1.5 rounded-full shrink-0 animate-pulse ${unread[s.id]?.isError ? 'bg-red-400' : 'bg-sky-400'}`} title={t('chat.session.unread')} />
                 )}
-                {!selectMode && isSessionRunning(s, runtime) && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title={t('chat.session.running')} />
+                {!selectMode && isSessionBusy(s, runtime) && (
+                  isSessionRunning(s, runtime) ? (
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title={t('chat.session.running')} />
+                  ) : (
+                    <span className="w-1.5 h-1.5 rounded-full border border-amber-400 shrink-0 animate-pulse" title={t('chat.session.delegating')} />
+                  )
                 )}
                 {!selectMode && s.pinned && (
                   <Star size={10} className="text-amber-400 shrink-0" fill="currentColor" />
@@ -745,7 +749,11 @@ export function ChatSidebar({
                   title={`${agent?.name ?? s.agentId} — ${s.title}`}
                 >
                   {isUnreadRecent && <span className={`w-1.5 h-1.5 rounded-full shrink-0 animate-pulse ${unread[s.id]?.isError ? 'bg-red-400' : 'bg-sky-400'}`} />}
-                  {!isUnreadRecent && isSessionRunning(s, runtime) && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" />}
+                  {!isUnreadRecent && isSessionBusy(s, runtime) && (
+                    isSessionRunning(s, runtime)
+                      ? <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title={t('chat.session.running')} />
+                      : <span className="w-1.5 h-1.5 rounded-full border border-amber-400 shrink-0 animate-pulse" title={t('chat.session.delegating')} />
+                  )}
                   <span className="shrink-0">{agent?.avatar ?? '🤖'}</span>
                   <span className="flex-1 truncate">{s.title}</span>
                   <span className="text-zinc-600 text-[10px] shrink-0 truncate max-w-[60px]">

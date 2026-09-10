@@ -26,7 +26,7 @@ const bulkDeleteSchema = z.object({
   ids: z.array(z.string().min(1).max(64)).min(1).max(200)
 }).strict();
 
-export function createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker, abortDispatch, abandonDelegation }) {
+export function createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker, abortDispatch, abandonDelegation, delegationTracker }) {
   const router = Router();
 
   /**
@@ -74,6 +74,7 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
         messageCount: msgs.length,
         recent24hCount,
         isRunning: runner.isRunning(s.id),
+        delegating: delegationTracker?.hasActiveByOrigin?.(s.id) ?? false,
         lastActivityAt: lastActivityIso(s.id),
       };
     });
@@ -113,6 +114,7 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
       totalInputTokens,
       totalOutputTokens,
       isRunning: runner.isRunning(s.id),
+      delegating: delegationTracker?.hasActiveByOrigin?.(s.id) ?? false,
       lastActivityAt: lastActivityIso(s.id),
     });
   });

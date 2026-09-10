@@ -279,6 +279,16 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
     },
 
     /**
+     * True while at least one delegation started by this session is still
+     * running. Cheap enough to call per-session on list endpoints.
+     */
+    hasActiveByOrigin(originSessionId) {
+      const bucket = byOrigin.get(originSessionId);
+      if (!bucket) return false;
+      return bucket.some((e) => e.status === 'running');
+    },
+
+    /**
      * Register the router's live wait queue so it gets persisted alongside the
      * active delegations. Calling it again after the queue mutates re-arms the
      * debounced write.

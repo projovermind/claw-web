@@ -637,7 +637,7 @@ async function main() {
   });
   app.use('/api/chat', chatRouter);
   // Mounted after chat so it can share the dispatch queue's abort path.
-  app.use('/api/sessions', createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker, abortDispatch, abandonDelegation }));
+  app.use('/api/sessions', createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker, abortDispatch, abandonDelegation, delegationTracker }));
   // MCP approval — mount at root so `/internal/approval/request` (no /api prefix)
   // bypasses user auth; `/api/chat/:sessionId/approval/:reqId` still goes through
   // the `/api` auth middleware registered above.

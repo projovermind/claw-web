@@ -436,6 +436,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     // Chat session dots/status titles
     'chat.session.unread': '안 읽음',
     'chat.session.running': '실행 중',
+    'chat.session.delegating': '위임 대기 중',
     // Tool calls
     'chat.toolUsed': '도구 {count}회 사용',
     // Choices
@@ -1275,6 +1276,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     // Chat session dots/status titles
     'chat.session.unread': 'Unread',
     'chat.session.running': 'Running',
+    'chat.session.delegating': 'Awaiting delegation',
     // Tool calls
     'chat.toolUsed': '{count} tool calls',
     // Choices

@@ -9,6 +9,15 @@ export function isSessionRunning(
   return !!(session.isRunning || runtime[session.id]?.running);
 }
 
+/** 세션이 '바쁜' 상태인지 — 실행 중이거나, 위임한 하위 세션의 회신을 기다리는 중.
+ *  사이드바 상태 점은 이 기준으로 표시한다(실행 중 = 꽉 찬 점, 위임 대기 = 속 빈 링). */
+export function isSessionBusy(
+  session: { id: string; isRunning?: boolean; delegating?: boolean },
+  runtime: Record<string, { running: boolean } | undefined>
+): boolean {
+  return isSessionRunning(session, runtime) || !!session.delegating;
+}
+
 const byOrder = (a: Agent, b: Agent) => {
   const ao = typeof a.order === 'number' ? a.order : Number.MAX_SAFE_INTEGER;
   const bo = typeof b.order === 'number' ? b.order : Number.MAX_SAFE_INTEGER;

@@ -82,6 +82,8 @@ export interface Session {
   pinned?: boolean;
   loop?: LoopConfig | null;
   isDelegation?: boolean;
+  /** True while a delegation started by this session is still awaiting its reply. */
+  delegating?: boolean;
   /** Per-session model alias override. null/undefined → follow the agent's model. */
   model?: string | null;
 }
@@ -100,6 +102,8 @@ export interface SessionMeta {
   pinned?: boolean;
   loop?: LoopConfig | null;
   isDelegation?: boolean;
+  /** True while a delegation started by this session is still awaiting its reply. */
+  delegating?: boolean;
 }
 
 export interface GoalCard {
