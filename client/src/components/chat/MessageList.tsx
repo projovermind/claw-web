@@ -278,8 +278,19 @@ interface MessageListProps {
 
 export interface ChoiceItem { text: string; recommended: boolean }
 
-export function extractChoices(text: string): { body: string; choices: ChoiceItem[] } {
-  const tagMatch = text.match(/<choices>([\s\S]*?)<\/choices>/i);
+export interface ExtractChoicesOptions {
+  /** 닫는 태그(</choices>)가 없어도 <choices> 이후 끝까지를 블록으로 인식한다. */
+  allowUnterminated?: boolean;
+}
+
+export function extractChoices(
+  text: string,
+  opts: ExtractChoicesOptions = {},
+): { body: string; choices: ChoiceItem[] } {
+  let tagMatch = text.match(/<choices>([\s\S]*?)<\/choices>/i);
+  if (!tagMatch && opts.allowUnterminated) {
+    tagMatch = text.match(/<choices>([\s\S]*)$/i);
+  }
   if (tagMatch) {
     const inner = tagMatch[1];
     const choices: ChoiceItem[] = inner
@@ -515,7 +526,7 @@ function MessageBubble({ message, searchQuery, onChoice, nextUserContent, hasLat
   const { body, choices, downloads, wakeup } = useMemo(() => {
     if (isUser) return { body: message.content, choices: [], downloads: [] as DownloadItem[], wakeup: null };
     const dl = extractDownloads(message.content);
-    const parsed = extractChoices(dl.body);
+    const parsed = extractChoices(dl.body, { allowUnterminated: true });
     const wk = extractWakeup(parsed.body);
     return { body: linkifyFilePaths(wk.body, editorCfg), choices: parsed.choices, downloads: dl.items, wakeup: wk.wakeup };
   }, [message.content, isUser, editorCfg]);
