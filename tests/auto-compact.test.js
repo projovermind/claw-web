@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldAutoCompact, buildCompactSummary, compactSession } from '../server/lib/compact.js';
+import { shouldAutoCompact, buildCompactSummary, compactSession, stripCompactSuffix } from '../server/lib/compact.js';
 import { sessionContextUsage, resolveContextWindow, usedContextTokens } from '../server/lib/context-window.js';
 
 const assistant = (usage, over = {}) => ({ role: 'assistant', content: 'a', usage, ...over });
@@ -64,8 +64,8 @@ describe('compactSession', () => {
     const created = [];
     return {
       created,
-      async create({ agentId, title }) {
-        const s = { id: `new-${created.length}`, agentId, title, messages: [] };
+      async create({ agentId, title, ...extra }) {
+        const s = { id: `new-${created.length}`, agentId, title, messages: [], ...extra };
         created.push(s);
         return s;
       },
@@ -103,11 +103,37 @@ describe('compactSession', () => {
     });
 
     expect(result.newSessionId).toBe('new-0');
-    expect(store.created[0].title).toBe('T (compact)');
+    expect(store.created[0].title).toBe('T');
     expect(store.created[0].messages[0].role).toBe('user');
     expect(store.created[0].messages[0].content).toContain('[이전 세션에서 이어짐]');
     expect(published[0].topic).toBe('session.compacted');
     expect(result.savings).toBeGreaterThan(0);
+  });
+
+  it('carries the lineage forward so 2nd-gen compacts share the root', async () => {
+    const store = fakeStore(session);
+    await compactSession({ session, sessionsStore: store });
+
+    const gen1 = store.created[0];
+    expect(gen1.compactRoot).toBe('sess-1');
+    expect(gen1.compactGen).toBe(1);
+
+    // 2세대: 1세대 결과를 다시 압축해도 root 는 원본 세션이어야 한다.
+    await compactSession({
+      session: { ...gen1, messages: session.messages },
+      sessionsStore: store
+    });
+
+    const gen2 = store.created[1];
+    expect(gen2.compactRoot).toBe('sess-1');
+    expect(gen2.compactGen).toBe(2);
+    expect(gen2.title).toBe('T');
+  });
+
+  it('strips a legacy " (compact)" suffix instead of stacking another', () => {
+    expect(stripCompactSuffix('T (compact)')).toBe('T');
+    expect(stripCompactSuffix('T (compact) (compact)')).toBe('T');
+    expect(stripCompactSuffix('T')).toBe('T');
   });
 
   it('throws EMPTY_SESSION with no messages', async () => {

@@ -52,6 +52,11 @@ export function buildCompactSummary(session) {
   return lines.join('\n');
 }
 
+/** 이전 세대가 남긴 ' (compact)' 접미사를 모두 벗겨 원본 제목을 되돌린다. */
+export function stripCompactSuffix(title) {
+  return (title ?? '').replace(/(\s*\(compact\))+$/, '');
+}
+
 /**
  * Compact a session into a fresh one seeded with its summary.
  * The new session deliberately does NOT inherit claudeSessionId — the summary
@@ -75,7 +80,11 @@ export async function compactSession({ session, sessionsStore, eventBus }) {
 
   const newSession = await sessionsStore.create({
     agentId: session.agentId,
-    title: `${session.title} (compact)`
+    // 세대마다 접미사를 덧붙이면 제목이 "T (compact) (compact)" 로 자란다.
+    // 혈통은 compactRoot/compactGen 이 들고 있으므로 제목은 원본 그대로 둔다.
+    title: stripCompactSuffix(session.title),
+    compactRoot: session.compactRoot ?? session.id,
+    compactGen: (session.compactGen ?? 0) + 1
   });
 
   await sessionsStore.appendMessage(newSession.id, {

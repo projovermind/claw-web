@@ -336,6 +336,109 @@ export function ChatSidebar({
 
   const visibleSessions = sessions.filter((s) => !isHiddenDelegation(s));
 
+  // ── 압축 체인 그룹핑 ────────────────────────────────
+  // compactRoot 가 같은 세션들을 한 그룹으로 묶어 루트 1줄만 노출한다.
+  // 두 필드가 없는 레거시 세션은 (compactRoot ?? id) 로 자기 혼자인 그룹이 되어 기존대로 평면 표시된다.
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const toggleGroup = (key: string) =>
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  // 현재 세션이 속한 그룹은 자동으로 펼친다 (이후 사용자가 접으면 접힌 채 유지).
+  useEffect(() => {
+    if (!currentSessionId) return;
+    const cur = sessions.find((s) => s.id === currentSessionId);
+    if (!cur) return;
+    const key = cur.compactRoot ?? cur.id;
+    const hasSiblings = sessions.some((s) => s.id !== cur.id && (s.compactRoot ?? s.id) === key);
+    if (!hasSiblings) return;
+    setExpandedGroups((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+  }, [currentSessionId, sessions]);
+
+  type SidebarRow = {
+    /** 이 줄이 대표하는 세션 — 제목/핀/내보내기/삭제 대상 */
+    s: SessionMeta;
+    /** 클릭 시 열 세션 (그룹 루트는 최신 세대) */
+    openId: string;
+    /** 0 = 루트, 1 = 압축 자식 */
+    depth: 0 | 1;
+    /** 그룹 루트일 때 자식 수, 아니면 0 */
+    childCount: number;
+    expanded: boolean;
+    groupKey: string | null;
+    /** 자식 줄에 붙는 '↻ 압축 #N' 세대 번호 */
+    gen: number | null;
+    /** 점(미읽음/실행중) 표시에 쓸 세션들 — 접힌 루트는 그룹 전체 */
+    dotMembers: SessionMeta[];
+  };
+
+  const sidebarRows: SidebarRow[] = (() => {
+    const byKey = new Map<string, SessionMeta[]>();
+    for (const s of visibleSessions) {
+      const key = s.compactRoot ?? s.id;
+      const arr = byKey.get(key);
+      if (arr) arr.push(s);
+      else byKey.set(key, [s]);
+    }
+    const genOf = (s: SessionMeta) => s.compactGen ?? 0;
+    const groups = [...byKey.entries()].map(([key, list]) => {
+      const members = list
+        .slice()
+        .sort((a, b) => genOf(a) - genOf(b) || (a.updatedAt ?? '').localeCompare(b.updatedAt ?? ''));
+      const root = members.find((m) => m.id === key) ?? members[0];
+      const latest = members[members.length - 1];
+      return { key, root, latest, members, children: members.filter((m) => m.id !== root.id) };
+    });
+
+    const isUnread = (m: SessionMeta) => !!unread[m.id] && m.id !== currentSessionId;
+    groups.sort((a, b) => {
+      const au = a.members.some(isUnread) ? 1 : 0;
+      const bu = b.members.some(isUnread) ? 1 : 0;
+      if (au !== bu) return bu - au;
+      const ap = a.members.some((m) => m.pinned) ? 1 : 0;
+      const bp = b.members.some((m) => m.pinned) ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      const at = a.members.reduce((max, m) => ((m.updatedAt ?? '') > max ? (m.updatedAt ?? '') : max), '');
+      const bt = b.members.reduce((max, m) => ((m.updatedAt ?? '') > max ? (m.updatedAt ?? '') : max), '');
+      return bt.localeCompare(at);
+    });
+
+    const rows: SidebarRow[] = [];
+    for (const g of groups) {
+      // 선택 모드에서는 개별 세션을 전부 고를 수 있어야 하므로 항상 펼친다.
+      const expanded = expandedGroups.has(g.key) || selectMode;
+      rows.push({
+        s: g.root,
+        openId: g.children.length && !expanded ? g.latest.id : g.root.id,
+        depth: 0,
+        childCount: g.children.length,
+        expanded,
+        groupKey: g.children.length ? g.key : null,
+        gen: null,
+        dotMembers: g.children.length && !expanded ? g.members : [g.root]
+      });
+      if (expanded) {
+        for (const c of g.children) {
+          rows.push({
+            s: c,
+            openId: c.id,
+            depth: 1,
+            childCount: 0,
+            expanded: false,
+            groupKey: null,
+            gen: genOf(c),
+            dotMembers: [c]
+          });
+        }
+      }
+    }
+    return rows;
+  })();
+
   if (collapsed) {
     return (
       <aside
@@ -612,39 +715,46 @@ export function ChatSidebar({
             {t('chat.sidebar.noSessions')}
           </div>
         )}
-        {visibleSessions
-          .slice()
-          .sort((a, b) => {
-            // 현재 열린 세션은 항상 읽음 취급
-            const au = unread[a.id] && a.id !== currentSessionId ? 1 : 0;
-            const bu = unread[b.id] && b.id !== currentSessionId ? 1 : 0;
-            if (au !== bu) return bu - au;
-            const ap = a.pinned ? 1 : 0;
-            const bp = b.pinned ? 1 : 0;
-            if (ap !== bp) return bp - ap;
-            return (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
-          })
-          .map((s) => {
+        {sidebarRows.map((row) => {
+            const s = row.s;
             const isSelected = selectedIds.has(s.id);
             const isDelegated = s.title?.startsWith('[위임]');
-            const isUnread = !!unread[s.id] && s.id !== currentSessionId;
+            const unreadMember = row.dotMembers.find((m) => !!unread[m.id] && m.id !== currentSessionId);
+            const isUnread = !!unreadMember;
+            const busyMember = row.dotMembers.find((m) => isSessionBusy(m, runtime));
+            // 접힌 그룹 루트는 그룹 안 어느 세션이 열려 있어도 활성으로 보인다
+            const isActive = row.dotMembers.some((m) => m.id === currentSessionId);
             return (
               <DraggableSession key={s.id} sessionId={s.id} agentId={s.agentId}>
               <div
                 className={`group rounded px-2 py-1.5 mb-1 text-xs cursor-pointer flex items-center gap-1.5 ${
+                  row.depth ? 'ml-4' : ''
+                } ${
                   selectMode
                     ? isSelected
                       ? 'bg-emerald-900/30 text-emerald-100'
                       : 'text-zinc-400 hover:bg-zinc-900'
-                    : currentSessionId === s.id
+                    : isActive
                       ? 'bg-zinc-800 text-white'
                       : 'text-zinc-400 hover:bg-zinc-900'
                 }`}
                 onClick={() => {
                   if (selectMode) toggleSelect(s.id);
-                  else setCurrentSession(s.id);
+                  else setCurrentSession(row.openId);
                 }}
               >
+                {!selectMode && row.groupKey && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleGroup(row.groupKey!);
+                    }}
+                    className="shrink-0 -ml-1 p-0.5 rounded text-zinc-500 hover:text-white hover:bg-zinc-800"
+                    title={row.expanded ? '압축 세션 접기' : '압축 세션 펼치기'}
+                  >
+                    {row.expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                  </button>
+                )}
                 {selectMode && (
                   <span className="shrink-0">
                     {isSelected ? (
@@ -655,10 +765,10 @@ export function ChatSidebar({
                   </span>
                 )}
                 {!selectMode && isUnread && (
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 animate-pulse ${unread[s.id]?.isError ? 'bg-red-400' : 'bg-sky-400'}`} title={t('chat.session.unread')} />
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 animate-pulse ${unread[unreadMember!.id]?.isError ? 'bg-red-400' : 'bg-sky-400'}`} title={t('chat.session.unread')} />
                 )}
-                {!selectMode && isSessionBusy(s, runtime) && (
-                  isSessionRunning(s, runtime) ? (
+                {!selectMode && busyMember && (
+                  isSessionRunning(busyMember, runtime) ? (
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 animate-pulse" title={t('chat.session.running')} />
                   ) : (
                     <span className="w-1.5 h-1.5 rounded-full border border-amber-400 shrink-0 animate-pulse" title={t('chat.session.delegating')} />
@@ -670,7 +780,18 @@ export function ChatSidebar({
                 {!selectMode && isDelegated && (
                   <span className="text-[11px] text-sky-400 shrink-0">↗</span>
                 )}
+                {row.gen !== null && (
+                  <span className="shrink-0 text-[10px] text-zinc-500 font-mono">↻ 압축 #{row.gen}</span>
+                )}
                 <span className="flex-1 truncate">{s.title}</span>
+                {row.childCount > 0 && (
+                  <span
+                    className="shrink-0 px-1 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]"
+                    title={`압축으로 이어진 세션 ${row.childCount}개`}
+                  >
+                    ↻{row.childCount}
+                  </span>
+                )}
                 {!selectMode && (
                   <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100">
                     <button
