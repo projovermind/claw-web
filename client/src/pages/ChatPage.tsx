@@ -8,7 +8,7 @@ import {
 import { Plus, Pin, ChevronDown, ListTodo, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { api } from '../lib/api';
 import type { Session, SessionMeta, ChatMessage, Agent, Project } from '../lib/types';
-import { isSessionRunning } from '../lib/visibility';
+import { isSessionBusy } from '../lib/visibility';
 import { useChatStore, selectActiveWorkspace } from '../store/chat-store';
 import { useProgressToastStore } from '../store/progress-toast-store';
 import { useT } from '../lib/i18n';
@@ -664,7 +664,7 @@ function MobileHeader({
       if (s.title?.startsWith('[위임]')) continue;
       if (!byAgent[s.agentId]) byAgent[s.agentId] = { unread: false, running: false };
       if (unread[s.id] && s.id !== currentSessionId) byAgent[s.agentId].unread = true;
-      if (isSessionRunning(s, runtimeAll)) byAgent[s.agentId].running = true;
+      if (isSessionBusy(s, runtimeAll)) byAgent[s.agentId].running = true;
     }
     return byAgent;
   }, [allSessionsQ.data, unread, currentSessionId, runtimeAll]);
@@ -684,7 +684,7 @@ function MobileHeader({
   const isHiddenDelegation = (s: SessionMeta) => s.title?.startsWith('[위임]');
   const runningSessions = useMemo(() => {
     const all = allSessionsQ.data?.sessions ?? [];
-    return all.filter((s: SessionMeta) => isSessionRunning(s, runtimeAll) && !isHiddenDelegation(s));
+    return all.filter((s: SessionMeta) => isSessionBusy(s, runtimeAll) && !isHiddenDelegation(s));
   }, [allSessionsQ.data, runtimeAll]);
   const unreadSessions = useMemo(() => {
     const all = allSessionsQ.data?.sessions ?? [];
@@ -814,7 +814,7 @@ function MobileHeader({
           <ChevronDown size={12} className="text-zinc-500 shrink-0" />
           <StatusDot
             unread={sessions.some(s => sessionUnread(s.id))}
-            running={sessions.some(s => isSessionRunning(s, runtimeAll) && s.id !== currentSessionId)}
+            running={sessions.some(s => isSessionBusy(s, runtimeAll) && s.id !== currentSessionId)}
           />
         </button>
         {sessOpen && (
@@ -831,7 +831,7 @@ function MobileHeader({
                 className={`w-full text-left px-3 py-2 text-xs flex items-center gap-1.5 ${currentSessionId === s.id ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'}`}>
                 {s.pinned && <Pin size={10} className="text-amber-400 shrink-0" />}
                 <span className="truncate flex-1">{s.title}</span>
-                <StatusDot unread={sessionUnread(s.id)} running={isSessionRunning(s, runtimeAll)} />
+                <StatusDot unread={sessionUnread(s.id)} running={isSessionBusy(s, runtimeAll)} />
               </button>
             ))}
             {sessions.length === 0 && (

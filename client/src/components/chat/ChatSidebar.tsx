@@ -79,7 +79,7 @@ export function ChatSidebar({
   const isHiddenDelegation = (s: SessionMeta) => s.title?.startsWith('[위임]');
   const runningSessions = useMemo(() => {
     const all = allSessionsData?.sessions ?? [];
-    return all.filter((s: SessionMeta) => isSessionRunning(s, runtime) && !isHiddenDelegation(s));
+    return all.filter((s: SessionMeta) => isSessionBusy(s, runtime) && !isHiddenDelegation(s));
   }, [allSessionsData, runtime]);
 
   const unreadSessions = useMemo(() => {
@@ -97,7 +97,7 @@ export function ChatSidebar({
     for (const s of all) {
       if (!byAgent[s.agentId]) byAgent[s.agentId] = { unread: false, running: false };
       // running 체크: 위임 세션도 포함 (ovm_pipeline 등 서브 에이전트가 실행 중이면 반영)
-      if (isSessionRunning(s, runtime)) byAgent[s.agentId].running = true;
+      if (isSessionBusy(s, runtime)) byAgent[s.agentId].running = true;
       // unread/error 체크: 위임 세션 제외 (사용자가 직접 본 적 없는 세션)
       if (isHiddenDelegation(s)) continue;
       if (unread[s.id] && s.id !== currentSessionId) {
