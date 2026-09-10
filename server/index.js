@@ -47,6 +47,7 @@ import { errorHandler } from './middleware/error-handler.js';
 import { createAuthMiddleware } from './middleware/auth.js';
 import { createAutoBackup } from './lib/auto-backup.js';
 import { createAutoCleanup } from './lib/auto-cleanup.js';
+import { createDelegationRetention } from './lib/delegation-retention.js';
 import { createStatsRouter } from './routes/stats.js';
 import { createTasksRouter } from './routes/tasks.js';
 import { createHooksRouter } from './routes/hooks.js';
@@ -585,6 +586,15 @@ async function main() {
     label: 'uploads'
   });
   uploadsCleanup.start();
+
+  // 완료된 위임 워커 세션 정리 (기본 30일, dry-run)
+  createDelegationRetention({
+    sessionsStore,
+    delegationTracker,
+    runner,
+    retentionDays: webConfig.chat?.delegationRetentionDays,
+    dryRun: webConfig.chat?.delegationRetentionDryRun !== false
+  }).start();
 
   configStore.onChange(() => eventBus.publish('agents.refreshed', {}));
   metadataStore.onChange(() => eventBus.publish('metadata.refreshed', {}));

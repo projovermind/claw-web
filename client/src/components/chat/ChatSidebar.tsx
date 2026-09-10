@@ -750,7 +750,7 @@ export function ChatSidebar({
                       toggleGroup(row.groupKey!);
                     }}
                     className="shrink-0 -ml-1 p-0.5 rounded text-zinc-500 hover:text-white hover:bg-zinc-800"
-                    title={row.expanded ? '압축 세션 접기' : '압축 세션 펼치기'}
+                    title={row.expanded ? t('chat.session.compactCollapse') : t('chat.session.compactExpand')}
                   >
                     {row.expanded ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
                   </button>
@@ -781,13 +781,13 @@ export function ChatSidebar({
                   <span className="text-[11px] text-sky-400 shrink-0">↗</span>
                 )}
                 {row.gen !== null && (
-                  <span className="shrink-0 text-[10px] text-zinc-500 font-mono">↻ 압축 #{row.gen}</span>
+                  <span className="shrink-0 text-[10px] text-zinc-500 font-mono">{t('chat.session.compactGen', { gen: row.gen })}</span>
                 )}
                 <span className="flex-1 truncate">{s.title}</span>
                 {row.childCount > 0 && (
                   <span
                     className="shrink-0 px-1 py-0.5 rounded bg-zinc-800 text-zinc-400 font-mono text-[10px]"
-                    title={`압축으로 이어진 세션 ${row.childCount}개`}
+                    title={t('chat.session.compactChildren', { count: row.childCount })}
                   >
                     ↻{row.childCount}
                   </span>

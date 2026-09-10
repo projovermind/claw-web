@@ -28,6 +28,14 @@ describe('loadWebConfig', () => {
     expect(cfg.auth.enabled).toBe(false);
   });
 
+  it('defaults delegation retention to 30 days in dry-run', () => {
+    fs.writeFileSync(tmpFile, JSON.stringify({ port: 3838, chat: { autoCompactPct: 80 } }));
+    const cfg = loadWebConfig(tmpFile);
+    expect(cfg.chat.autoCompactPct).toBe(80);
+    expect(cfg.chat.delegationRetentionDays).toBe(30);
+    expect(cfg.chat.delegationRetentionDryRun).toBe(true);
+  });
+
   it('throws on missing file', () => {
     expect(() => loadWebConfig('/nonexistent-file.json')).toThrow();
   });

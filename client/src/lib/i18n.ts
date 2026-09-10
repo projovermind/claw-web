@@ -437,6 +437,10 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.session.unread': '안 읽음',
     'chat.session.running': '실행 중',
     'chat.session.delegating': '위임 대기 중',
+    'chat.session.compactCollapse': '압축 세션 접기',
+    'chat.session.compactExpand': '압축 세션 펼치기',
+    'chat.session.compactGen': '↻ 압축 #{gen}',
+    'chat.session.compactChildren': '압축으로 이어진 세션 {count}개',
     // Tool calls
     'chat.toolUsed': '도구 {count}회 사용',
     // Choices
@@ -1277,6 +1281,10 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.session.unread': 'Unread',
     'chat.session.running': 'Running',
     'chat.session.delegating': 'Awaiting delegation',
+    'chat.session.compactCollapse': 'Collapse compacted sessions',
+    'chat.session.compactExpand': 'Expand compacted sessions',
+    'chat.session.compactGen': '↻ Compact #{gen}',
+    'chat.session.compactChildren': '{count} sessions continued via compaction',
     // Tool calls
     'chat.toolUsed': '{count} tool calls',
     // Choices
