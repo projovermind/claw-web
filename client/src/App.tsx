@@ -27,6 +27,7 @@ const TerminalPage = lazy(() => import('./pages/TerminalPage'));
 const FilesPage = lazy(() => import('./pages/FilesPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const SkillsPage = lazy(() => import('./pages/SkillsPage'));
+const CalendarPage = lazy(() => import('./pages/CalendarPage'));
 const SetupWizard = lazy(() => import('./pages/SetupWizard'));
 
 function PageFallback() {
@@ -151,6 +152,14 @@ export default function App() {
             element={
               <Suspense fallback={<PageFallback />}>
                 <FilesPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/calendar"
+            element={
+              <Suspense fallback={<PageFallback />}>
+                <CalendarPage />
               </Suspense>
             }
           />

@@ -16,6 +16,7 @@ import {
   ChevronRight,
   TerminalSquare,
   FolderTree,
+  CalendarDays,
   LogOut
 } from 'lucide-react';
 import { useI18nStore, useT } from '../../lib/i18n';
@@ -104,7 +105,8 @@ export default function Sidebar() {
         { to: '/', icon: LayoutDashboard, label: t('nav.dashboard') },
         { to: '/chat', icon: MessageSquare, label: t('nav.chat') },
         { to: '/terminal', icon: TerminalSquare, label: '터미널' },
-        { to: '/files', icon: FolderTree, label: '파일' }
+        { to: '/files', icon: FolderTree, label: '파일' },
+        { to: '/calendar', icon: CalendarDays, label: '캘린더' }
       ]
     },
     {

@@ -403,3 +403,27 @@ export interface UsageBudget {
   tokens5h: number;
   tokens7d: number;
 }
+
+/** data/user/calendar.json 의 이벤트 한 건 (docs/calendar-spec.md §1). */
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  /** allDay=true 면 'YYYY-MM-DD', 아니면 ISO8601(+09:00). */
+  start: string;
+  end: string | null;
+  allDay: boolean;
+  notes: string;
+  location: string;
+  color: string | null;
+  tags: string[];
+  projectId: string | null;
+  agentId: string | null;
+  source: 'user' | 'agent';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** POST/PATCH /api/calendar 에 보낼 수 있는 필드들. */
+export type CalendarEventInput = Partial<
+  Pick<CalendarEvent, 'title' | 'start' | 'end' | 'allDay' | 'notes' | 'location' | 'color' | 'tags' | 'projectId' | 'source'>
+>;

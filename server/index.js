@@ -65,6 +65,8 @@ import { createBridgeRouter } from './routes/bridge.js';
 import { createWorkspaceLayoutRouter } from './routes/workspace-layout.js';
 import { createDelegationsRouter } from './routes/delegations.js';
 import { createHooksStore } from './lib/hooks-store.js';
+import { createCalendarStore } from './lib/calendar-store.js';
+import { createCalendarRouter } from './routes/calendar.js';
 import { createScheduler } from './lib/scheduler.js';
 import { createDelegationTracker } from './lib/delegation-tracker.js';
 import { createPushStore } from './lib/push-store.js';
@@ -564,6 +566,7 @@ async function main() {
   pushStore.setRunnerRef(runner); // 작업 중 알림 억제
   const eventBus = createEventBus();
   const hooksStore = await createHooksStore(path.join(USER_DIR, 'hooks.json'));
+  const calendarStore = createCalendarStore(path.join(USER_DIR, 'calendar.json'));
   const scheduler = createScheduler({
     filePath: path.join(USER_DIR, 'schedules.json'),
     eventBus
@@ -677,6 +680,7 @@ async function main() {
   app.use('/api/stats', createStatsRouter({ sessionsStore, configStore, webConfig }));
   app.use('/api/tasks', createTasksRouter({ eventBus }));
   app.use('/api/hooks', createHooksRouter({ hooksStore, eventBus }));
+  app.use('/api/calendar', createCalendarRouter({ calendarStore, eventBus }));
   app.use('/api/mcp', createMcpRouter({ projectsStore }));
   app.use('/api/worktree', createWorktreeRouter({ projectsStore }));
   app.use('/api/schedules', createSchedulesRouter({ scheduler, eventBus }));

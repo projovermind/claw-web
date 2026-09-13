@@ -15,10 +15,38 @@ import { buildRoster, listProjectAgentIds } from '../../lib/agent-roster.js';
 import { writeHookSettingsFile, removeHookSettingsFile } from '../../lib/hook-settings.js';
 import { sessionContextUsage } from '../../lib/context-window.js';
 import { compactSession, shouldAutoCompact } from '../../lib/compact.js';
+import { readUpcomingSync, formatEventLine } from '../../lib/calendar-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // server/routes/chat/ → ../../mcp/permission-bridge.js
 const PERMISSION_BRIDGE_PATH = path.resolve(__dirname, '../../mcp/permission-bridge.js');
+
+// 캘린더 주입 블록의 토큰 예산. 넘으면 일정 줄부터 잘라낸다.
+const CALENDAR_HINT_MAX = 1200;
+
+/**
+ * 모든 에이전트에게 팀 캘린더의 다가오는 7일 + API 사용법을 주입한다.
+ * @param {string} authHeader dashboardHint 와 동일한 ` -H "Authorization: ..."` 조각
+ * @param {string} [filePath] 기본 캘린더 파일 대신 읽을 경로 (테스트용)
+ */
+export function buildCalendarHint(authHeader, filePath) {
+  const api = [
+    `- 조회: curl -s "http://localhost:3838/api/calendar/upcoming?days=7"${authHeader}`,
+    `- 추가: curl -s -X POST http://localhost:3838/api/calendar${authHeader} -H "Content-Type: application/json" -d '{"title":"제목","start":"2026-09-20T14:00:00+09:00","location":"장소"}'`,
+    `- 수정: curl -s -X PATCH http://localhost:3838/api/calendar/EVENT_ID${authHeader} -H "Content-Type: application/json" -d '{"start":"2026-09-21T10:00:00+09:00"}'`,
+    '',
+    '일정 관련 요청은 전용 에이전트 `cw_calendar` 에게 위임하거나 직접 API 를 호출하세요. 사용자가 직접 만든 일정(source:user)은 임의로 수정/삭제하지 말 것.',
+  ].join('\n');
+
+  const lines = readUpcomingSync({ days: 7, limit: 8, filePath }).map((ev) => `- ${formatEventLine(ev)}`);
+  let block;
+  for (;;) {
+    const summary = lines.length ? lines.join('\n') : '예정된 일정 없음';
+    block = `\n<calendar>\n다가오는 7일 일정:\n${summary}\n\n${api}\n</calendar>`;
+    if (block.length <= CALENDAR_HINT_MAX || lines.length === 0) return block;
+    lines.pop();
+  }
+}
 
 /**
  * Extract a concise summary from a delegation worker's response.
@@ -282,16 +310,20 @@ export function createMessageSender(ctx) {
 
       // 리드(project tier) 여부 — 대시보드·위임 힌트 양쪽에서 사용하므로 상위 스코프로 hoist
       const isLead = meta?.tier === 'project';
+      // 대시보드·캘린더 양쪽 curl 예시가 공유하는 인증 헤더 조각
+      const authHeader = webConfig?.auth?.enabled && webConfig?.auth?.token
+        ? ` -H "Authorization: Bearer ${webConfig.auth.token}"`
+        : '';
       // 대시보드 API 안내: 프로젝트 소속 에이전트에게 대시보드 조작 방법 주입
       if (!isWorkerSession && meta?.projectId) {
         const leadPrefix = isLead
           ? `당신은 이 프로젝트의 리드 에이전트입니다. 작업 시작/완료/진행 상황을 반드시 대시보드에 기록하세요. 목표는 시작 시 todo로 추가하고, 완료 시 done으로 갱신하세요. 위젯/메모도 적극 활용하세요. 이 프로젝트의 프로덕션 배포(라이브 반영)는 리드인 당신이 최종 책임지고 총괄합니다.\n`
           : `작업 완료 시 반드시 프로젝트 대시보드를 업데이트하세요. 작업 시작 시 goal을 todo로 추가하고, 완료 시 done으로 갱신하세요. 프로덕션 배포는 프로젝트 리드가 총괄합니다 — 배포가 필요하면 직접 라이브에 올리지 말고 리드에게 위임하거나 사용자 확인 후 진행하세요.\n`;
-        const authHeader = webConfig?.auth?.enabled && webConfig?.auth?.token
-          ? ` -H "Authorization: Bearer ${webConfig.auth.token}"`
-          : '';
         agent.dashboardHint = `\n<dashboard-api>\n${leadPrefix}- 목표 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/goals${authHeader} -H "Content-Type: application/json" -d '{"title":"목표","status":"todo"}'\n- 목표 완료: curl -s -X PATCH http://localhost:3838/api/projects/${meta.projectId}/goals/GOAL_ID${authHeader} -H "Content-Type: application/json" -d '{"status":"done"}'\n- 위젯 추가: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/widgets${authHeader} -H "Content-Type: application/json" -d '{"type":"link","title":"제목","value":"URL"}'\n- 메모 수정: curl -s -X PUT http://localhost:3838/api/projects/${meta.projectId}/notes${authHeader} -H "Content-Type: application/json" -d '{"notes":"내용"}'\n- 프로젝트 메모리 업데이트: curl -s -X PUT http://localhost:3838/api/projects/${meta.projectId}/memory${authHeader} -H "Content-Type: application/json" -d '{"memory":"내용"}'\n- 배포 이력 기록: curl -s -X POST http://localhost:3838/api/projects/${meta.projectId}/deploy-log${authHeader} -H "Content-Type: application/json" -d '{"target":"배포대상 URL","note":"무엇을 배포했는지"}'\n\n프로젝트 메모리는 모든 에이전트가 세션 시작 시 읽는 운영 컨텍스트입니다. 작업 완료 시 핵심 경로/배포 방식/최근 작업 내역을 반드시 업데이트하세요. 1500자 이하로 유지하세요.\n\n⚠️ 같은 프로젝트의 여러 세션이 동일한 워킹트리를 공유합니다. 배포 직후 반드시 위 '배포 이력 기록' 을 호출해 다른 세션이 무엇이 라이브에 올라갔는지 알 수 있게 하세요. 그래야 다른 세션이 실수로 이전 상태를 재배포해 롤백하는 사고를 막습니다.\n</dashboard-api>`;
       }
+
+      // 팀 캘린더: 프로젝트 소속 여부와 무관하게 모든 에이전트에게 주입한다.
+      agent.calendarHint = buildCalendarHint(authHeader);
 
       agent.choicesHint = `\n<ui-hints>\n이 세션은 비대화형(-p) 모드 입니다. AskUserQuestion / ExitPlanMode 같은 대화형 툴은 호출하지 마세요 — 응답이 '취소됨' 으로 돌아와 작업이 애매하게 종료됩니다.\n\n사용자에게 질문하거나 선택지를 주고 싶을 때는 반드시 응답 끝에 <choices> 태그로 감싸서 제공하세요. UI 에서 버튼으로 렌더링됩니다.\n가장 추천하는 옵션 하나에 ⭐ 마커를 앞에 붙이면 추천 배지로 강조됩니다. (또는 [추천] / (추천) 태그도 가능)\n예시:\n<choices>\n- ⭐ 옵션 A (가장 추천)\n- 옵션 B\n- 옵션 C\n</choices>\n\n사용자 승인이 필요한 플랜을 세운 경우에도 ExitPlanMode 대신: (1) 플랜 본문 마크다운으로 작성 → (2) 끝에 <choices> 로 "바로 실행" / "수정 필요" / "보류" 제시.\n</ui-hints>`;
 
@@ -331,6 +363,7 @@ export function createMessageSender(ctx) {
       agent.paulContext = null;
       agent.projectMemory = null;
       agent.dashboardHint = null;
+      agent.calendarHint = null;
       agent.choicesHint = null;
       agent.wakeupHint = null;
       agent.downloadHint = null;

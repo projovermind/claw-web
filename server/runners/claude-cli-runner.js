@@ -328,6 +328,7 @@ export function startClaudeRun({
   if (agent.projectMemory) parts.push(`\n<project-memory>\n${agent.projectMemory}\n</project-memory>`);
   if (agent.pinnedFilesContext) parts.push(agent.pinnedFilesContext);
   if (agent.dashboardHint) parts.push(agent.dashboardHint);
+  if (agent.calendarHint) parts.push(agent.calendarHint);
   if (agent.choicesHint) parts.push(agent.choicesHint);
   if (agent.wakeupHint) parts.push(agent.wakeupHint);
   if (agent.downloadHint) parts.push(agent.downloadHint);

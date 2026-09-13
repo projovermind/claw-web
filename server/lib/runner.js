@@ -114,6 +114,7 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
       if (agent.systemPrompt) parts.push(agent.systemPrompt);
       // dashboardHint 는 systemPrompt 뒤에 위치 → 에이전트 MD보다 높은 우선순위로 강제 적용
       if (agent.dashboardHint) parts.push(agent.dashboardHint);
+      if (agent.calendarHint) parts.push(agent.calendarHint);
       const systemPrompt = parts.join('\n').trim() || 'You are a helpful assistant.';
 
       const backendName = backendConfig?.backendName || 'zai';

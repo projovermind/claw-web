@@ -41,7 +41,9 @@ const TOPICS_TO_INVALIDATE: Record<string, string[]> = {
   'session.loop.stopped': ['sessions'],
   // Delegation events
   'delegation.started': ['sessions'],
-  'delegation.completed': ['sessions']
+  'delegation.completed': ['sessions'],
+  // Calendar — 다른 세션/에이전트가 일정을 바꾸면 열려 있는 캘린더도 갱신
+  'calendar.changed': ['calendar', 'calendar-upcoming']
 };
 
 export function useWebSocket() {

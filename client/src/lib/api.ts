@@ -17,7 +17,9 @@ import type {
   HookConfig,
   McpPreset,
   ClaudeMemoryList,
-  UsageBudget
+  UsageBudget,
+  CalendarEvent,
+  CalendarEventInput
 } from './types';
 
 const BASE = '/api';
@@ -88,6 +90,19 @@ const del = <T>(p: string) => req<T>(p, { method: 'DELETE' });
 
 export const api = {
   health: () => get<HealthStatus>('/health'),
+  calendar: (from?: string, to?: string) => {
+    const q = new URLSearchParams();
+    if (from) q.set('from', from);
+    if (to) q.set('to', to);
+    const qs = q.toString();
+    return get<{ events: CalendarEvent[] }>(`/calendar${qs ? `?${qs}` : ''}`).then((r) => r.events);
+  },
+  calendarUpcoming: (days = 7) =>
+    get<{ events: CalendarEvent[] }>(`/calendar/upcoming?days=${days}`).then((r) => r.events),
+  createCalendarEvent: (data: CalendarEventInput) => post<{ event: CalendarEvent }>('/calendar', data).then((r) => r.event),
+  patchCalendarEvent: (id: string, data: CalendarEventInput) =>
+    patch<{ event: CalendarEvent }>(`/calendar/${id}`, data).then((r) => r.event),
+  deleteCalendarEvent: (id: string) => del<{ ok: true }>(`/calendar/${id}`),
   agents: () => get<{ agents: Agent[] }>('/agents').then((r) => r.agents),
   agent: (id: string) => get<Agent>(`/agents/${id}`),
   createAgent: (data: Partial<Agent> & { id: string; name: string }) => post<Agent>('/agents', data),
