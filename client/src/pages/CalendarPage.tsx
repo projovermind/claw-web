@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { CalendarDays, ChevronLeft, ChevronRight, MapPin, Plus } from 'lucide-react';
+import { Bell, CalendarDays, ChevronLeft, ChevronRight, MapPin, Plus, Repeat } from 'lucide-react';
 import { api } from '../lib/api';
-import type { CalendarEvent } from '../lib/types';
+import type { CalendarEvent, Holiday } from '../lib/types';
 import EventModal from '../components/calendar/EventModal';
+import CalendarChatPanel from '../components/calendar/CalendarChatPanel';
 import {
   addDays,
   addMonths,
@@ -17,7 +18,10 @@ import {
 
 const DEFAULT_COLOR = '#60a5fa';
 const UPCOMING_DAYS = 14;
-const WEEK_HEADS = ['월', '화', '수', '목', '금', '토', '일'];
+const WEEK_HEADS = ['일', '월', '화', '수', '목', '금', '토'];
+
+/** 공휴일 조회 범위 — 그리드가 앞뒤 달로 넘칠 수 있어 연도 양옆을 한 달씩 넉넉히 잡는다. */
+const holidayRange = (year: number) => ({ from: `${year - 1}-12-01`, to: `${year + 1}-01-31` });
 
 /** 이벤트를 걸쳐 있는 모든 날짜 칸에 배치한다 (다중일 일정 대응). */
 function bucketByDay(events: CalendarEvent[]): Map<string, CalendarEvent[]> {
@@ -58,8 +62,21 @@ export default function CalendarPage() {
     queryKey: ['calendar-upcoming', UPCOMING_DAYS],
     queryFn: () => api.calendarUpcoming(UPCOMING_DAYS)
   });
+  const year = month.getFullYear();
+  const { data: holidays } = useQuery({
+    queryKey: ['calendar-holidays', year],
+    queryFn: () => {
+      const { from: hFrom, to: hTo } = holidayRange(year);
+      return api.calendarHolidays(hFrom, hTo);
+    },
+    staleTime: 12 * 60 * 60 * 1000
+  });
 
   const byDay = useMemo(() => bucketByDay(events ?? []), [events]);
+  const holidayByDay = useMemo(
+    () => new Map((holidays ?? []).map((h) => [h.date, h])),
+    [holidays]
+  );
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-5">
@@ -95,10 +112,10 @@ export default function CalendarPage() {
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-5">
         <div className="rounded-lg border border-zinc-800 overflow-hidden">
           <div className="grid grid-cols-7 border-b border-zinc-800 bg-zinc-900/60">
-            {WEEK_HEADS.map((w) => (
+            {WEEK_HEADS.map((w, i) => (
               <div
                 key={w}
-                className={`py-2 text-center text-xs ${w === '일' ? 'text-red-400' : w === '토' ? 'text-sky-400' : 'text-zinc-500'}`}
+                className={`py-2 text-center text-xs ${i === 0 ? 'text-red-400' : i === 6 ? 'text-sky-400' : 'text-zinc-500'}`}
               >
                 {w}
               </div>
@@ -113,6 +130,7 @@ export default function CalendarPage() {
                   day={day}
                   inMonth={day.getMonth() === month.getMonth()}
                   isToday={key === todayKey}
+                  holiday={holidayByDay.get(key) ?? null}
                   events={byDay.get(key) ?? []}
                   onAdd={() => setModal({ event: null, date: key })}
                   onOpen={(ev) => setModal({ event: ev, date: key })}
@@ -163,6 +181,8 @@ export default function CalendarPage() {
         </div>
       </div>
 
+      <CalendarChatPanel />
+
       {modal && (
         <EventModal event={modal.event} defaultDate={modal.date} onClose={() => setModal(null)} />
       )}
@@ -197,17 +217,18 @@ interface DayCellProps {
   day: Date;
   inMonth: boolean;
   isToday: boolean;
+  holiday: Holiday | null;
   events: CalendarEvent[];
   onAdd: () => void;
   onOpen: (ev: CalendarEvent) => void;
 }
 
 /** 칸 하나 — 빈 영역 클릭은 추가, 일정 클릭은 수정. */
-function DayCell({ day, inMonth, isToday, events, onAdd, onOpen }: DayCellProps) {
+function DayCell({ day, inMonth, isToday, holiday, events, onAdd, onOpen }: DayCellProps) {
   const weekday = day.getDay();
   const dateColor = !inMonth
     ? 'text-zinc-700'
-    : weekday === 0
+    : holiday || weekday === 0
       ? 'text-red-400'
       : weekday === 6
         ? 'text-sky-400'
@@ -220,14 +241,23 @@ function DayCell({ day, inMonth, isToday, events, onAdd, onOpen }: DayCellProps)
         inMonth ? '' : 'bg-zinc-950/40'
       }`}
     >
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-center gap-1 mb-1 min-w-0">
         <span
-          className={`text-xs w-5 h-5 flex items-center justify-center rounded-full ${
+          className={`text-xs w-5 h-5 shrink-0 flex items-center justify-center rounded-full ${
             isToday ? 'bg-sky-600 text-white' : dateColor
           }`}
         >
           {day.getDate()}
         </span>
+        {holiday && (
+          <span
+            title={holiday.substitute ? `${holiday.name} (대체)` : holiday.name}
+            className={`truncate text-[10px] ${inMonth ? 'text-red-400/90' : 'text-red-400/40'}`}
+          >
+            {holiday.name}
+            {holiday.substitute && ' (대체)'}
+          </span>
+        )}
       </div>
       <div className="space-y-0.5">
         {events.slice(0, 3).map((ev) => (
@@ -246,6 +276,8 @@ function DayCell({ day, inMonth, isToday, events, onAdd, onOpen }: DayCellProps)
           >
             {!ev.allDay && <span className="text-zinc-500 shrink-0">{formatTime(ev.start)}</span>}
             <span className="truncate">{ev.title}</span>
+            {ev.recurrence && <Repeat size={9} className="shrink-0 text-zinc-400" />}
+            {ev.remindMinutes?.length > 0 && <Bell size={9} className="shrink-0 text-amber-400" />}
             {ev.source === 'agent' && <span className="shrink-0 text-violet-400">•</span>}
           </button>
         ))}

@@ -2,11 +2,27 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X, Trash2, Loader2 } from 'lucide-react';
 import { api } from '../../lib/api';
-import type { CalendarEvent, CalendarEventInput } from '../../lib/types';
+import type { CalendarEvent, CalendarEventInput, RecurrenceFreq } from '../../lib/types';
 import { dateKey, isDateOnly, localInputToIso, parseEventDate, toLocalInput } from '../../lib/calendar-date';
 
 /** 색상 팔레트 — 다크 테마에서 읽히는 채도만 골랐다. null = 기본색. */
 const COLORS = ['#60a5fa', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#f472b6', '#22d3ee'];
+
+const FREQ_OPTIONS: { value: '' | RecurrenceFreq; label: string }[] = [
+  { value: '', label: '반복 없음' },
+  { value: 'daily', label: '매일' },
+  { value: 'weekly', label: '매주' },
+  { value: 'monthly', label: '매월' },
+  { value: 'yearly', label: '매년' }
+];
+
+const REMIND_OPTIONS: { value: number; label: string }[] = [
+  { value: 0, label: '정시' },
+  { value: 10, label: '10분 전' },
+  { value: 30, label: '30분 전' },
+  { value: 60, label: '1시간 전' },
+  { value: 1440, label: '하루 전' }
+];
 
 interface FormState {
   title: string;
@@ -18,6 +34,13 @@ interface FormState {
   notes: string;
   color: string | null;
   projectId: string;
+  /** '' = 반복 없음. */
+  freq: '' | RecurrenceFreq;
+  /** 반복 간격 — UI 로는 노출하지 않지만 에이전트가 만든 값(2주마다 등)을 보존한다. */
+  interval: number;
+  /** 반복 종료일 'YYYY-MM-DD'. '' 면 무한. */
+  until: string;
+  remindMinutes: number[];
 }
 
 /** 이벤트의 start/end 를 폼이 쓰는 입력 포맷으로 변환. */
@@ -37,7 +60,11 @@ function initialForm(event: CalendarEvent | null, defaultDate: string): FormStat
       location: '',
       notes: '',
       color: null,
-      projectId: ''
+      projectId: '',
+      freq: '',
+      interval: 1,
+      until: '',
+      remindMinutes: []
     };
   }
   return {
@@ -48,7 +75,11 @@ function initialForm(event: CalendarEvent | null, defaultDate: string): FormStat
     location: event.location ?? '',
     notes: event.notes ?? '',
     color: event.color,
-    projectId: event.projectId ?? ''
+    projectId: event.projectId ?? '',
+    freq: event.recurrence?.freq ?? '',
+    interval: event.recurrence?.interval ?? 1,
+    until: event.recurrence?.until ?? '',
+    remindMinutes: event.remindMinutes ?? []
   };
 }
 
@@ -94,13 +125,17 @@ export default function EventModal({ event, defaultDate, onClose }: Props) {
   });
 
   const remove = useMutation({
-    mutationFn: () => api.deleteCalendarEvent(event!.id),
+    mutationFn: (scope: 'occurrence' | 'series') => api.deleteCalendarEvent(event!.id, scope),
     onSuccess: () => {
       invalidate();
       onClose();
     },
     onError: fail
   });
+
+  /** 반복 발생분 삭제 시 '이 일정만 / 전체 시리즈' 를 고르게 하는 확인 단계. */
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const isOccurrence = !!event?.isOccurrence;
 
   const busy = save.isPending || remove.isPending;
   const valid = form.title.trim().length > 0 && form.start.length > 0;
@@ -117,6 +152,10 @@ export default function EventModal({ event, defaultDate, onClose }: Props) {
       notes: form.notes.trim(),
       color: form.color,
       projectId: form.projectId || null,
+      recurrence: form.freq
+        ? { freq: form.freq, interval: form.interval, until: form.until || null }
+        : null,
+      remindMinutes: form.remindMinutes,
       ...(event ? {} : { source: 'user' as const })
     });
   };
@@ -127,6 +166,14 @@ export default function EventModal({ event, defaultDate, onClose }: Props) {
       allDay,
       start: convertForAllDay(f.start, allDay),
       end: convertForAllDay(f.end, allDay)
+    }));
+
+  const toggleRemind = (minutes: number) =>
+    setForm((f) => ({
+      ...f,
+      remindMinutes: f.remindMinutes.includes(minutes)
+        ? f.remindMinutes.filter((m) => m !== minutes)
+        : [...f.remindMinutes, minutes].sort((a, b) => a - b)
     }));
 
   const dateType = form.allDay ? 'date' : 'datetime-local';
@@ -149,6 +196,12 @@ export default function EventModal({ event, defaultDate, onClose }: Props) {
         </div>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {isOccurrence && (
+            <p className="rounded border border-amber-900/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+              반복 일정의 한 회차입니다. 저장하면 시리즈 전체에 적용됩니다.
+            </p>
+          )}
+
           <Field label="제목">
             <input
               autoFocus
@@ -208,6 +261,59 @@ export default function EventModal({ event, defaultDate, onClose }: Props) {
           </Field>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="반복">
+              <select
+                value={form.freq}
+                onChange={(e) =>
+                  setForm({ ...form, freq: e.target.value as FormState['freq'], interval: 1 })
+                }
+                className={inputCls}
+              >
+                {FREQ_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {form.freq && (
+              <Field label="반복 종료일 (선택)">
+                <input
+                  type="date"
+                  value={form.until}
+                  min={form.start.slice(0, 10)}
+                  onChange={(e) => setForm({ ...form, until: e.target.value })}
+                  className={inputCls}
+                />
+              </Field>
+            )}
+          </div>
+
+          <Field label="알림">
+            <div className="flex items-center gap-1.5 flex-wrap pt-1">
+              {REMIND_OPTIONS.map((o) => {
+                const on = form.remindMinutes.includes(o.value);
+                return (
+                  <button
+                    key={o.value}
+                    onClick={() => toggleRemind(o.value)}
+                    className={`px-2.5 py-1 rounded-full border text-xs transition-colors ${
+                      on
+                        ? 'border-sky-500 bg-sky-950/60 text-sky-300'
+                        : 'border-zinc-800 text-zinc-500 hover:border-zinc-700'
+                    }`}
+                  >
+                    {o.label}
+                  </button>
+                );
+              })}
+              {form.remindMinutes.length === 0 && (
+                <span className="text-xs text-zinc-600 pl-1">없음</span>
+              )}
+            </div>
+          </Field>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="색상">
               <div className="flex items-center gap-2 flex-wrap pt-1">
                 <button
@@ -246,17 +352,44 @@ export default function EventModal({ event, defaultDate, onClose }: Props) {
 
         <div className="flex items-center justify-between px-5 py-3 border-t border-zinc-800">
           <div>
-            {event && (
+            {event && !confirmDelete && (
               <button
                 disabled={busy}
                 onClick={() => {
-                  if (confirm(`'${event.title}' 일정을 삭제할까요?`)) remove.mutate();
+                  // 반복 발생분은 범위를 골라야 하므로 확인 UI 로, 단발 일정은 기존대로 confirm.
+                  if (isOccurrence) setConfirmDelete(true);
+                  else if (confirm(`'${event.title}' 일정을 삭제할까요?`)) remove.mutate('series');
                 }}
                 className="flex items-center gap-1.5 px-3 py-2 rounded text-sm text-red-400 hover:bg-red-950/40 disabled:opacity-50"
               >
                 <Trash2 size={15} />
                 삭제
               </button>
+            )}
+            {confirmDelete && (
+              <div className="flex items-center gap-1.5 text-xs">
+                <span className="text-zinc-400">반복 일정 —</span>
+                <button
+                  disabled={busy}
+                  onClick={() => remove.mutate('occurrence')}
+                  className="px-2 py-1.5 rounded border border-zinc-700 text-zinc-300 hover:bg-zinc-800 disabled:opacity-50"
+                >
+                  이 일정만
+                </button>
+                <button
+                  disabled={busy}
+                  onClick={() => remove.mutate('series')}
+                  className="px-2 py-1.5 rounded bg-red-900/60 border border-red-800 text-red-200 hover:bg-red-900 disabled:opacity-50"
+                >
+                  전체 시리즈
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  className="px-2 py-1.5 rounded text-zinc-500 hover:text-zinc-300"
+                >
+                  취소
+                </button>
+              </div>
             )}
           </div>
           <div className="flex items-center gap-2">

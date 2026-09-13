@@ -43,10 +43,10 @@ export const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(),
 
 export const addMonths = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth() + n, 1);
 
-/** 월간 그리드(월요일 시작) 42칸. */
+/** 월간 그리드(일요일 시작) 42칸. */
 export function monthGrid(month: Date): Date[] {
   const first = startOfMonth(month);
-  const shift = (first.getDay() + 6) % 7; // 0=월 … 6=일
+  const shift = first.getDay(); // 0=일 … 6=토
   const gridStart = addDays(first, -shift);
   return Array.from({ length: 42 }, (_, i) => addDays(gridStart, i));
 }

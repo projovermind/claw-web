@@ -4,8 +4,9 @@
  * 웹 UI(사용자)와 모든 세션(에이전트)이 같은 파일을 동시에 건드리므로,
  * 쓰기는 deploy-log-store 와 동일하게 lockfile + atomic rename 으로 직렬화한다.
  *
- * 시간대 기준은 KST(+09:00). 시각 있는 일정은 `YYYY-MM-DDTHH:mm:ss+09:00` 로
- * 정규화해 저장하고, 종일 일정은 `YYYY-MM-DD` 로 저장한다.
+ * 시간대 기준은 KST(+09:00) — 규칙은 calendar-time.js 참고.
+ * 반복 일정은 마스터 1건만 저장하고, list/upcoming 이 조회 범위 안에서
+ * 발생분을 전개해서 돌려준다 (calendar-recurrence.js).
  */
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -14,16 +15,22 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import lockfile from 'proper-lockfile';
 import { logger } from './logger.js';
+import { DAY_MS, eventRange, formatKst, formatKstDate, toEpoch } from './calendar-time.js';
+import {
+  expandOccurrences,
+  normalizeExdates,
+  normalizeRecurrence,
+  normalizeRemindMinutes,
+  parseOccurrenceId,
+  toMasterId,
+} from './calendar-recurrence.js';
+
+export { toEpoch, eventRange, formatEventLine, formatEventWhen } from './calendar-time.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 export const CALENDAR_FILE = path.join(REPO_ROOT, 'data', 'user', 'calendar.json');
-
-const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
-const DAY_MS = 24 * 60 * 60 * 1000;
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
-const HAS_ZONE = /(?:Z|[+-]\d{2}:?\d{2})$/i;
 
 export const MAX_UPCOMING_DAYS = 90;
 
@@ -35,34 +42,6 @@ class CalendarError extends Error {
 }
 
 const invalid = (msg) => { throw new CalendarError(msg); };
-
-/** 'YYYY-MM-DD' → KST 자정(또는 endOfDay 시 23:59:59.999) epoch. 그 외는 Date.parse. */
-export function toEpoch(value, { endOfDay = false } = {}) {
-  if (value == null || value === '') return null;
-  const s = String(value).trim();
-  if (DATE_ONLY.test(s)) {
-    const base = Date.parse(`${s}T00:00:00+09:00`);
-    if (Number.isNaN(base)) return null;
-    return endOfDay ? base + DAY_MS - 1 : base;
-  }
-  const t = Date.parse(HAS_ZONE.test(s) ? s : `${s}+09:00`);
-  return Number.isNaN(t) ? null : t;
-}
-
-const pad = (n) => String(n).padStart(2, '0');
-
-/** epoch → 'YYYY-MM-DDTHH:mm:ss+09:00' */
-function formatKst(epoch) {
-  const d = new Date(epoch + KST_OFFSET_MS);
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}` +
-    `T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}+09:00`;
-}
-
-/** epoch → 'YYYY-MM-DD' (KST 기준) */
-function formatKstDate(epoch) {
-  const d = new Date(epoch + KST_OFFSET_MS);
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-}
 
 function normalizeMoment(value, { allDay, field }) {
   const s = String(value ?? '').trim();
@@ -98,15 +77,6 @@ function normalizeTags(value) {
 function normalizeId(value) {
   if (value == null || value === '') return null;
   return String(value).slice(0, 64);
-}
-
-/** 이벤트의 시작/끝 epoch. end 가 없으면 종일 일정은 그날 끝, 시각 일정은 시작과 동일. */
-export function eventRange(event) {
-  const start = toEpoch(event.start, { endOfDay: false });
-  const rawEnd = event.end
-    ? toEpoch(event.end, { endOfDay: event.allDay === true })
-    : (event.allDay === true ? toEpoch(event.start, { endOfDay: true }) : start);
-  return { start, end: rawEnd == null ? start : Math.max(start ?? 0, rawEnd) };
 }
 
 function byStart(a, b) {
@@ -151,6 +121,9 @@ function buildEvent(input, base = null) {
     projectId: normalizeId(src.projectId),
     agentId: normalizeId(src.agentId),
     source: src.source === 'user' ? 'user' : 'agent',
+    recurrence: normalizeRecurrence(src.recurrence ?? null),
+    exdates: normalizeExdates(src.exdates),
+    remindMinutes: normalizeRemindMinutes(src.remindMinutes),
     createdAt: base?.createdAt ?? now,
     updatedAt: now,
   };
@@ -200,45 +173,45 @@ export function createCalendarStore(filePath = CALENDAR_FILE) {
     }
   }
 
+  /** 마스터 목록을 [from, to] epoch 범위의 발생분으로 펼친다. */
+  function expandAll(masters, from, to) {
+    const out = [];
+    for (const master of masters) out.push(...expandOccurrences(master, { from, to }));
+    return out.sort(byStart);
+  }
+
   return {
     filePath,
 
-    /** 전체 이벤트 (start 오름차순). */
+    /** 저장된 마스터 이벤트 전체 (start 오름차순). 반복 전개는 하지 않는다. */
     all() {
       return readFileSync(filePath).events.slice().sort(byStart);
     },
 
     /**
      * 범위 조회. from/to 는 'YYYY-MM-DD' 또는 ISO. 생략 시 제한 없음.
-     * 시작~끝이 [from, to] 와 겹치면 포함한다.
+     * 시작~끝이 [from, to] 와 겹치면 포함하고, 반복 일정은 회차별로 펼쳐진다.
      */
     list({ from, to } = {}) {
-      const fromEpoch = from ? toEpoch(from) : null;
-      const toEpochVal = to ? toEpoch(to, { endOfDay: true }) : null;
-      return this.all().filter((ev) => {
-        const r = eventRange(ev);
-        if (r.start == null) return false;
-        if (fromEpoch != null && r.end < fromEpoch) return false;
-        if (toEpochVal != null && r.start > toEpochVal) return false;
-        return true;
-      });
+      return expandAll(
+        this.all(),
+        from ? toEpoch(from) : null,
+        to ? toEpoch(to, { endOfDay: true }) : null
+      );
     },
 
     /** 지금부터 N일(기본 7, 최대 90) 내 일정. 진행 중인 일정도 포함. */
     upcoming({ days = 7, now = Date.now(), limit = null } = {}) {
       const n = Number(days);
       const span = Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), MAX_UPCOMING_DAYS) : 7;
-      const cutoff = now + span * DAY_MS;
-      const found = this.all().filter((ev) => {
-        const r = eventRange(ev);
-        if (r.start == null) return false;
-        return r.end >= now && r.start <= cutoff;
-      });
+      const found = expandAll(this.all(), now, now + span * DAY_MS);
       return limit ? found.slice(0, limit) : found;
     },
 
+    /** 발생분 id(`xxx@YYYY-MM-DD`) 를 주면 그 마스터를 돌려준다. */
     get(id) {
-      return readFileSync(filePath).events.find((e) => e.id === id) ?? null;
+      const masterId = toMasterId(id);
+      return readFileSync(filePath).events.find((e) => e.id === masterId) ?? null;
     },
 
     /** @throws {CalendarError} 잘못된 입력 */
@@ -248,10 +221,11 @@ export function createCalendarStore(filePath = CALENDAR_FILE) {
       return event;
     },
 
-    /** @returns {Promise<object|null>} 없으면 null */
+    /** 시리즈 전체에 적용된다. 발생분 id 는 마스터 id 로 정규화. @returns {Promise<object|null>} */
     async update(id, patch = {}) {
+      const masterId = toMasterId(id);
       return mutate((events) => {
-        const idx = events.findIndex((e) => e.id === id);
+        const idx = events.findIndex((e) => e.id === masterId);
         if (idx === -1) return { write: false, value: null };
         const next = buildEvent(patch, events[idx]);
         events[idx] = next;
@@ -259,13 +233,32 @@ export function createCalendarStore(filePath = CALENDAR_FILE) {
       });
     },
 
-    /** @returns {Promise<boolean>} 삭제 여부 */
+    /** 시리즈 전체 삭제. @returns {Promise<boolean>} */
     async remove(id) {
+      const masterId = toMasterId(id);
       return mutate((events) => {
-        const idx = events.findIndex((e) => e.id === id);
+        const idx = events.findIndex((e) => e.id === masterId);
         if (idx === -1) return { write: false, value: false };
         events.splice(idx, 1);
         return { value: true };
+      });
+    },
+
+    /**
+     * 반복 일정에서 한 회차만 뺀다 — 마스터의 exdates 에 그 날짜를 추가.
+     * @param {string} occurrenceId `cal_xxxx@YYYY-MM-DD`
+     * @returns {Promise<object|null>} 갱신된 마스터. 대상이 없으면 null.
+     */
+    async excludeOccurrence(occurrenceId) {
+      const parsed = parseOccurrenceId(occurrenceId);
+      if (!parsed) return null;
+      return mutate((events) => {
+        const idx = events.findIndex((e) => e.id === parsed.masterId);
+        if (idx === -1) return { write: false, value: null };
+        const exdates = normalizeExdates([...(events[idx].exdates ?? []), parsed.date]);
+        const next = { ...events[idx], exdates, updatedAt: new Date().toISOString() };
+        events[idx] = next;
+        return { value: next };
       });
     },
   };
@@ -279,16 +272,4 @@ export function readUpcomingSync({ days = 7, limit = 8, now = Date.now(), filePa
     logger.warn({ err: err.message }, 'calendar: upcoming read failed');
     return [];
   }
-}
-
-const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
-
-/** '9/20(토) 14:00 제목' / 종일이면 '9/20(토) 종일 제목' */
-export function formatEventLine(event) {
-  const epoch = toEpoch(event.start);
-  if (epoch == null) return event.title;
-  const d = new Date(epoch + KST_OFFSET_MS);
-  const head = `${d.getUTCMonth() + 1}/${d.getUTCDate()}(${WEEKDAYS[d.getUTCDay()]})`;
-  const when = event.allDay ? '종일' : `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
-  return `${head} ${when} ${event.title}`;
 }

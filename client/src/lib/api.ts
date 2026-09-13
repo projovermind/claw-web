@@ -19,7 +19,8 @@ import type {
   ClaudeMemoryList,
   UsageBudget,
   CalendarEvent,
-  CalendarEventInput
+  CalendarEventInput,
+  Holiday
 } from './types';
 
 const BASE = '/api';
@@ -101,8 +102,18 @@ export const api = {
     get<{ events: CalendarEvent[] }>(`/calendar/upcoming?days=${days}`).then((r) => r.events),
   createCalendarEvent: (data: CalendarEventInput) => post<{ event: CalendarEvent }>('/calendar', data).then((r) => r.event),
   patchCalendarEvent: (id: string, data: CalendarEventInput) =>
-    patch<{ event: CalendarEvent }>(`/calendar/${id}`, data).then((r) => r.event),
-  deleteCalendarEvent: (id: string) => del<{ ok: true }>(`/calendar/${id}`),
+    patch<{ event: CalendarEvent }>(`/calendar/${encodeURIComponent(id)}`, data).then((r) => r.event),
+  /** scope='occurrence' 면 반복 발생분 1회차만 제외(마스터의 exdates 에 추가). */
+  deleteCalendarEvent: (id: string, scope?: 'occurrence' | 'series') =>
+    del<{ ok: true }>(`/calendar/${encodeURIComponent(id)}${scope ? `?scope=${scope}` : ''}`),
+  calendarHolidays: (from?: string, to?: string) => {
+    const q = new URLSearchParams();
+    if (from) q.set('from', from);
+    if (to) q.set('to', to);
+    const qs = q.toString();
+    return get<{ holidays: Holiday[] }>(`/calendar/holidays${qs ? `?${qs}` : ''}`).then((r) => r.holidays);
+  },
+  calendarChatSession: () => get<{ sessionId: string }>('/calendar/chat-session'),
   agents: () => get<{ agents: Agent[] }>('/agents').then((r) => r.agents),
   agent: (id: string) => get<Agent>(`/agents/${id}`),
   createAgent: (data: Partial<Agent> & { id: string; name: string }) => post<Agent>('/agents', data),

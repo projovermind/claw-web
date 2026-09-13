@@ -66,6 +66,8 @@ import { createWorkspaceLayoutRouter } from './routes/workspace-layout.js';
 import { createDelegationsRouter } from './routes/delegations.js';
 import { createHooksStore } from './lib/hooks-store.js';
 import { createCalendarStore } from './lib/calendar-store.js';
+import { createHolidaysKr } from './lib/holidays-kr.js';
+import { createCalendarReminders } from './lib/calendar-reminders.js';
 import { createCalendarRouter } from './routes/calendar.js';
 import { createScheduler } from './lib/scheduler.js';
 import { createDelegationTracker } from './lib/delegation-tracker.js';
@@ -567,6 +569,15 @@ async function main() {
   const eventBus = createEventBus();
   const hooksStore = await createHooksStore(path.join(USER_DIR, 'hooks.json'));
   const calendarStore = createCalendarStore(path.join(USER_DIR, 'calendar.json'));
+  const holidaysKr = createHolidaysKr({ filePath: path.join(USER_DIR, 'holidays-kr.json') });
+  holidaysKr.ensureFresh(); // 백그라운드 — 실패해도 폴백 테이블로 뜬다
+  const calendarReminders = createCalendarReminders({
+    calendarStore,
+    pushStore,
+    eventBus,
+    filePath: path.join(USER_DIR, 'calendar-fired.json')
+  });
+  calendarReminders.start();
   const scheduler = createScheduler({
     filePath: path.join(USER_DIR, 'schedules.json'),
     eventBus
@@ -680,7 +691,7 @@ async function main() {
   app.use('/api/stats', createStatsRouter({ sessionsStore, configStore, webConfig }));
   app.use('/api/tasks', createTasksRouter({ eventBus }));
   app.use('/api/hooks', createHooksRouter({ hooksStore, eventBus }));
-  app.use('/api/calendar', createCalendarRouter({ calendarStore, eventBus }));
+  app.use('/api/calendar', createCalendarRouter({ calendarStore, eventBus, holidaysKr, sessionsStore, configStore }));
   app.use('/api/mcp', createMcpRouter({ projectsStore }));
   app.use('/api/worktree', createWorktreeRouter({ projectsStore }));
   app.use('/api/schedules', createSchedulesRouter({ scheduler, eventBus }));
@@ -915,6 +926,7 @@ async function main() {
         scheduler.stop();
         autoBackup.stop();
         uploadsCleanup.stop();
+        calendarReminders.stop();
         try { wsHub.close(); } catch { /* ignore */ }
         // server.close 는 callback-based — WebSocket 연결 있으면 안 끝남 → closeAllConnections 로 강제
         try {

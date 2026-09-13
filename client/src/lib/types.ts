@@ -405,6 +405,15 @@ export interface UsageBudget {
 }
 
 /** data/user/calendar.json 의 이벤트 한 건 (docs/calendar-spec.md §1). */
+export type RecurrenceFreq = 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+export interface Recurrence {
+  freq: RecurrenceFreq;
+  interval: number;
+  /** 'YYYY-MM-DD', null 이면 무한 반복. */
+  until: string | null;
+}
+
 export interface CalendarEvent {
   id: string;
   title: string;
@@ -419,11 +428,31 @@ export interface CalendarEvent {
   projectId: string | null;
   agentId: string | null;
   source: 'user' | 'agent';
+  recurrence: Recurrence | null;
+  /** 반복에서 제외할 발생일 'YYYY-MM-DD'. */
+  exdates: string[];
+  /** 알림을 보낼 '시작 N분 전' 목록. 0 = 정시. */
+  remindMinutes: number[];
+  /** 서버가 전개한 반복 발생분이면 붙는다 — id 는 `masterId@YYYY-MM-DD`. */
+  masterId?: string;
+  isOccurrence?: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
 /** POST/PATCH /api/calendar 에 보낼 수 있는 필드들. */
 export type CalendarEventInput = Partial<
-  Pick<CalendarEvent, 'title' | 'start' | 'end' | 'allDay' | 'notes' | 'location' | 'color' | 'tags' | 'projectId' | 'source'>
+  Pick<
+    CalendarEvent,
+    | 'title' | 'start' | 'end' | 'allDay' | 'notes' | 'location' | 'color'
+    | 'tags' | 'projectId' | 'source' | 'recurrence' | 'remindMinutes'
+  >
 >;
+
+export interface Holiday {
+  /** 'YYYY-MM-DD' */
+  date: string;
+  name: string;
+  /** 대체공휴일 여부. */
+  substitute: boolean;
+}
