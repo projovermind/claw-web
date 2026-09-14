@@ -37,6 +37,8 @@ export const agentPatchSchema = z.object({
   backendId: z.string().max(64).nullable().optional(),
   accountId: z.string().max(64).nullable().optional(), // deprecated: use backendId
   thinkingEffort: z.enum(['auto', 'low', 'medium', 'high', 'max']).optional(),
+  // 이 에이전트가 동시에 받을 수 있는 위임 수. 초과분은 agentQueue 에서 대기한다.
+  maxConcurrent: z.number().int().min(1).max(10).optional(),
   // Phase 1: auto-injected working context
   pinnedFiles: z.array(z.string().max(500)).max(20).optional(),
   gitDiffAutoAttach: z.boolean().optional(),
@@ -48,6 +50,7 @@ export const agentPatchSchema = z.object({
 export const CONFIG_FIELDS = new Set([
   'name', 'avatar', 'systemPrompt', 'model', 'workingDir',
   'allowedTools', 'disallowedTools', 'planMode', 'permissionMode', 'env', 'backendId', 'thinkingEffort',
+  'maxConcurrent',
   'pinnedFiles', 'gitDiffAutoAttach', 'bridgeAutoAttach'
 ]);
 export const METADATA_FIELDS = new Set([

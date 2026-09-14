@@ -46,6 +46,24 @@ describe('delegation tracker persistence', () => {
     expect(second.isAgentBusy('cw_ui')).toBe(false);
   });
 
+  it('counts concurrent delegations per agent and unwinds them one at a time', () => {
+    const t = createDelegationTracker(opts());
+    expect(t.activeCountForAgent('cw_server')).toBe(0);
+    t.create({ originSessionId: 'lead', targetSessionId: 'w1', targetAgentId: 'cw_server', task: 'A' });
+    t.create({ originSessionId: 'lead', targetSessionId: 'w2', targetAgentId: 'cw_server', task: 'B' });
+    t.create({ originSessionId: 'lead', targetSessionId: 'w3', targetAgentId: 'cw_ui', task: 'C' });
+    expect(t.activeCountForAgent('cw_server')).toBe(2);
+    expect(t.activeCountForAgent('cw_ui')).toBe(1);
+
+    t.complete('w1', 'done');
+    expect(t.activeCountForAgent('cw_server')).toBe(1);
+    expect(t.isAgentBusy('cw_server')).toBe(true);
+
+    t.fail('w2', 'boom');
+    expect(t.activeCountForAgent('cw_server')).toBe(0);
+    expect(t.isAgentBusy('cw_server')).toBe(false);
+  });
+
   it('releases the agent slot on failure', () => {
     const t = createDelegationTracker(opts());
     t.create({ originSessionId: 'lead', targetSessionId: 'w1', targetAgentId: 'cw_server', task: 'C' });

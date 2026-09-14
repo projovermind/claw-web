@@ -151,6 +151,31 @@ export function createDelegation(ctx) {
     }
   }
 
+  /**
+   * 에이전트가 동시에 소화할 수 있는 위임 수. config 의 maxConcurrent 가 없거나
+   * 이상한 값이면 1 — 기존(한 번에 하나) 동작을 그대로 유지한다.
+   */
+  const MAX_CONCURRENT_CEILING = 10;
+  function getMaxConcurrent(agentId) {
+    const raw = configStore?.getAgent?.(agentId)?.maxConcurrent;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return 1;
+    return Math.min(MAX_CONCURRENT_CEILING, Math.max(1, Math.floor(n)));
+  }
+
+  /**
+   * 지금 이 에이전트에게 위임을 하나 더 밀어 넣어도 되는가.
+   * reserved — 대기열에서 이미 꺼냈지만 아직 트래커에 등록되지 않은 작업 수.
+   * 드레인 중에는 이 예약분을 함께 세야 같은 슬롯을 두 번 꺼내지 않는다.
+   */
+  function hasAgentCapacity(agentId, reserved = 0) {
+    if (!delegationTracker) return true;
+    const activeNow = delegationTracker.activeCountForAgent
+      ? delegationTracker.activeCountForAgent(agentId)
+      : (delegationTracker.isAgentBusy(agentId) ? 1 : 0);
+    return activeNow + reserved < getMaxConcurrent(agentId);
+  }
+
   /** Normalize agent ID (cf.router → cf_router, case-insensitive). */
   function resolveAgentId(raw) {
     if (!raw || typeof raw !== 'string') return null;
@@ -192,17 +217,18 @@ export function createDelegation(ctx) {
         return { depthExceeded: true, task, targetAgentId, depth };
       }
 
-      if (delegationTracker && delegationTracker.isAgentBusy(targetAgentId)) {
+      if (!hasAgentCapacity(targetAgentId)) {
+        const max = getMaxConcurrent(targetAgentId);
         const agentQueue = ctx.agentQueue;
         if (!agentQueue.has(targetAgentId)) agentQueue.set(targetAgentId, []);
         const queue = agentQueue.get(targetAgentId);
         queue.push({ originSessionId, targetAgentId, task, rawText });
         delegationTracker.setPendingQueue?.(agentQueue);
         const pos = queue.length;
-        logger.info({ targetAgentId, queueLength: pos }, 'delegation: queued (agent busy)');
+        logger.info({ targetAgentId, queueLength: pos, max }, 'delegation: queued (agent at capacity)');
         await sessionsStore.appendMessage(originSessionId, {
           role: 'assistant',
-          content: `⏳ **위임 대기** — \`${targetAgentId}\`가 다른 작업을 처리 중입니다. 대기열 ${pos}번째에 추가됐습니다.\n\n**작업**: ${task}`
+          content: `⏳ **위임 대기** — \`${targetAgentId}\`가 동시 처리 한도(${max})에 도달했습니다. 대기열 ${pos}번째에 추가됐습니다.\n\n**작업**: ${task}`
         });
         return;
       }
@@ -481,6 +507,8 @@ export function createDelegation(ctx) {
     extractDelegateJson,
     handleDelegation,
     resolveAgentId,
+    getMaxConcurrent,
+    hasAgentCapacity,
     executeDelegation,
     abandonDelegation,
     sweepStalledDelegations,

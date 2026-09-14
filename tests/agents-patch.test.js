@@ -37,6 +37,18 @@ describe('PATCH /api/agents/:id', () => {
     try { fs.unlinkSync(metaFile); } catch {}
   });
 
+  it('stores maxConcurrent in config.json and rejects out-of-range values', async () => {
+    for (const bad of [0, -1, 11, 2.5, '3', null]) {
+      const res = await request(app).patch('/api/agents/hivemind').send({ maxConcurrent: bad });
+      expect(res.status, JSON.stringify(bad)).toBe(400);
+    }
+
+    const ok = await request(app).patch('/api/agents/hivemind').send({ maxConcurrent: 3 });
+    expect(ok.status).toBe(200);
+    expect(ok.body.maxConcurrent).toBe(3);
+    expect(JSON.parse(fs.readFileSync(cfgFile, 'utf8')).agents.hivemind.maxConcurrent).toBe(3);
+  });
+
   it('rejects env with a forbidden key (400) and persists valid env to config.json', async () => {
     for (const key of ['PATH', 'HOME', 'NODE_OPTIONS', 'CLAUDE_CONFIG_DIR']) {
       const res = await request(app).patch('/api/agents/hivemind').send({ env: { [key]: 'x' } });

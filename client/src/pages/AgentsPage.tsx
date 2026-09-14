@@ -41,6 +41,7 @@ export default function AgentsPage() {
       if (form.gitDiffAutoAttach) patch.gitDiffAutoAttach = true;
       if (form.bridgeAutoAttach) patch.bridgeAutoAttach = true;
       if (form.permissionMode !== 'default') patch.permissionMode = form.permissionMode;
+      if (form.maxConcurrent !== 1) patch.maxConcurrent = form.maxConcurrent;
       const env = envRowsToRecord(form.env);
       if (Object.keys(env).length > 0) patch.env = env;
       if (Object.keys(patch).length > 0) {
@@ -77,6 +78,7 @@ export default function AgentsPage() {
           gitDiffAutoAttach: form.gitDiffAutoAttach,
           bridgeAutoAttach: form.bridgeAutoAttach,
           permissionMode: form.permissionMode,
+          maxConcurrent: form.maxConcurrent,
           env: envRowsToRecord(form.env)
         },
         { ifMatchUpdatedAt }

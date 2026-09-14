@@ -22,6 +22,8 @@ export interface AgentFormState {
   gitDiffAutoAttach: boolean;
   bridgeAutoAttach: boolean;
   permissionMode: PermissionMode;
+  /** 이 에이전트가 동시에 받을 수 있는 위임 수 (1~5). */
+  maxConcurrent: number;
   /** 순서 보존을 위해 배열로 편집하고 제출 시 객체로 변환. */
   env: { key: string; value: string }[];
 }
@@ -39,6 +41,15 @@ const ENV_KEY_RE = /^[A-Z_][A-Z0-9_]*$/;
 const ENV_RESERVED = ['PATH', 'HOME', 'NODE_OPTIONS', 'CLAUDE_CONFIG_DIR'];
 const ENV_MAX = 32;
 const ENV_VALUE_MAX = 2000;
+const MAX_CONCURRENT_MIN = 1;
+const MAX_CONCURRENT_MAX = 5;
+
+/** 빈 값·문자열·범위 밖 입력을 1~5 정수로 고정. */
+export function clampMaxConcurrent(raw: string | number): number {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n)) return MAX_CONCURRENT_MIN;
+  return Math.min(MAX_CONCURRENT_MAX, Math.max(MAX_CONCURRENT_MIN, n));
+}
 
 /** 빈 키는 무시. 반환값이 null 이면 저장 불가. */
 export function envRowError(row: { key: string; value: string }): string | null {
@@ -72,6 +83,7 @@ export const emptyAgentForm = (): AgentFormState => ({
   gitDiffAutoAttach: false,
   bridgeAutoAttach: false,
   permissionMode: 'default',
+  maxConcurrent: 1,
   env: []
 });
 
@@ -141,6 +153,7 @@ export function AgentModal({
           gitDiffAutoAttach: agent.gitDiffAutoAttach ?? false,
           bridgeAutoAttach: agent.bridgeAutoAttach ?? false,
           permissionMode: agent.permissionMode ?? 'default',
+          maxConcurrent: agent.maxConcurrent ?? 1,
           env: Object.entries(agent.env ?? {}).map(([key, value]) => ({ key, value }))
         }
       : emptyAgentForm()
@@ -419,6 +432,20 @@ export function AgentModal({
                   <option key={m.value} value={m.value}>{m.label}</option>
                 ))}
               </select>
+            </Field>
+
+            <Field label="동시 위임 수" help="같은 워킹트리를 쓰는 에이전트는 1 권장">
+              <input
+                type="number"
+                min={MAX_CONCURRENT_MIN}
+                max={MAX_CONCURRENT_MAX}
+                step={1}
+                value={form.maxConcurrent}
+                onChange={(e) =>
+                  setForm({ ...form, maxConcurrent: clampMaxConcurrent(e.target.value) })
+                }
+                className="w-24 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
+              />
             </Field>
 
             <div>

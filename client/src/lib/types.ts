@@ -26,6 +26,8 @@ export interface Agent {
   bridgeAutoAttach?: boolean;
   /** CLI --permission-mode 로 그대로 전달. */
   permissionMode?: PermissionMode;
+  /** 동시에 처리할 수 있는 위임 수 (1~5, 기본 1). */
+  maxConcurrent?: number;
   /** 러너 spawn 시 프로세스 env 에 병합 (에이전트 값이 우선). */
   env?: Record<string, string>;
   createdAt?: string;

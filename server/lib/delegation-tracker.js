@@ -272,6 +272,14 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
     },
 
     /**
+     * How many delegations are running for this agent right now. Callers compare
+     * it against the agent's maxConcurrent to decide between dispatch and queue.
+     */
+    activeCountForAgent(agentId) {
+      return activeByAgent.get(agentId) ?? 0;
+    },
+
+    /**
      * Get all delegations (active + finished) for a given origin session.
      */
     getByOrigin(originSessionId) {
