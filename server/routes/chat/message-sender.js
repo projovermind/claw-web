@@ -251,6 +251,22 @@ export function createMessageSender(ctx) {
     if (!resolved) return { started: false, reason: `에이전트 ${session.agentId} 설정을 불러올 수 없습니다` };
     const { agent, envOverrides, backendType, backendConfig } = resolved;
 
+    // ── 슬롯 격리 cwd ──
+    // 이 세션이 전용 worktree 를 배정받았으면 러너 cwd 를 그쪽으로 돌린다.
+    // 아래 findClaudeSessionFile(resume 대상 탐색)도 이 cwd 를 인코딩해 찾으므로
+    // 반드시 그 전에 덮어써야 한다. 디렉토리가 사라졌으면 원본 트리로 폴백한다
+    // (resume 은 실패하고 persona 가 재주입된다 — 조용한 오작동보다 낫다).
+    if (session.worktreePath) {
+      if (fs.existsSync(session.worktreePath)) {
+        agent.workingDir = session.worktreePath;
+      } else {
+        logger.warn(
+          { sessionId, worktreePath: session.worktreePath, primary: agent.workingDir },
+          'chat: leased worktree is gone — falling back to primary working tree'
+        );
+      }
+    }
+
     // ── Resume target 검증 ──
     // Claude CLI 세션 파일이 사라졌거나 손상된 경우 --resume 실패로 silent fallback 발생.
     // 이 시점에 session.claudeSessionId 를 clear 해야 아래 isFirstMsg 가 true 로 잡혀

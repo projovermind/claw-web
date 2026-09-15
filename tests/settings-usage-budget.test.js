@@ -39,7 +39,11 @@ describe('chat.autoCompactPct + usage budget settings', () => {
       delegationRetentionDryRun: true,
       delegationReuse: true,
       delegationReuseTtlMin: 30,
-      delegationReuseMaxUses: 5
+      delegationReuseMaxUses: 5,
+      worktreeIsolation: false,
+      worktreeRoot: null,
+      worktreeLinks: ['node_modules'],
+      worktreeIncludePrimary: true
     });
     expect(webConfig.usage).toEqual({ budget5h: 0, budget7d: 0 });
   });

@@ -265,6 +265,24 @@ export function createDelegation(ctx) {
         if (!wantsLoop) ctx.registerWorkerSession?.(originSessionId, targetAgentId, targetSession.id);
       }
 
+      // 슬롯 격리: 워커의 cwd 를 전용 worktree 로 준다. 경로는 세션에 박아 둔다 —
+      // 다음 턴은 --resume 이고 CLI 세션 파일 경로가 cwd 로 인코딩되므로, 경로가
+      // 바뀌면 resume 대상을 못 찾아 콜드스타트가 된다.
+      const lease = await ctx.leaseWorktree?.(targetAgentId, targetSession.id, {
+        preferred: targetSession.worktreePath ?? null
+      });
+      // 원본 트리를 받은 슬롯(slot 0)은 기록하지 않는다 — cwd 오버라이드가 필요 없고,
+      // 지난번 worktree 경로가 남아 있으면 사라진 디렉토리를 가리키게 된다.
+      if (lease) {
+        const cwd = lease.isolated ? lease.path : null;
+        if ((targetSession.worktreePath ?? null) !== cwd) {
+          await sessionsStore.update(targetSession.id, {
+            worktreePath: cwd,
+            worktreeSlot: lease.slot
+          });
+        }
+      }
+
       const entry = delegationTracker.create({
         originSessionId,
         targetSessionId: targetSession.id,
@@ -351,6 +369,8 @@ export function createDelegation(ctx) {
       const failed = delegationTracker.fail(targetSessionId, reason);
       // 중단된 워커 세션은 재사용 후보에서 제외 — resume 대상이 깨져 있을 수 있다.
       ctx.forgetWorkerSession?.(targetSessionId);
+      // 쥐고 있던 슬롯도 놓는다. 워커가 남긴 변경은 패치로 보존된 뒤 정리된다.
+      await ctx.releaseWorktree?.(targetSessionId, `abandoned: ${reason}`);
       if (!failed) return null;
       ctx.dequeueNextAgent(failed.targetAgentId);
 

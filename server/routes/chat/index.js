@@ -6,6 +6,7 @@ import { createQueue } from './queue.js';
 import { createDelegation } from './delegation.js';
 import { createDelegationGroups } from './delegation-group.js';
 import { createWorkerPool } from './worker-pool.js';
+import { createWorktreePool } from './worktree-pool.js';
 import { createWakeup } from './wakeup.js';
 import { createMessageSender } from './message-sender.js';
 import { createDispatcher } from './dispatch.js';
@@ -92,6 +93,11 @@ export function createChatRouter({
   // Wire the worker-session pool before delegation: executeDelegation asks it
   // for a reusable worker session before creating a new one.
   Object.assign(ctx, createWorkerPool(ctx));
+
+  // Wire the worktree pool before delegation: executeDelegation leases a slot
+  // cwd for each new worker session. (getMaxConcurrent is read lazily off ctx,
+  // so wiring it ahead of createDelegation is fine.)
+  Object.assign(ctx, createWorktreePool(ctx));
 
   // Wire delegation (needs ctx.dispatch, ctx.agentQueue — resolved later)
   const delegation = createDelegation(ctx);

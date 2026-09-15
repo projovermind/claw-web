@@ -26,13 +26,28 @@ const DEFAULTS = {
   // delegationReuseTtlMin: 마지막으로 쓴 지 이 분(分) 을 넘긴 워커 세션은 재사용하지 않는다.
   // delegationReuseMaxUses: 한 워커 세션에 밀어 넣을 수 있는 위임 수(최초 1건 포함).
   //   넘으면 새 세션으로 로테이션한다 — 무한 재사용은 컨텍스트가 쌓여 압축을 부른다.
+  // worktreeIsolation: maxConcurrent>1 인 에이전트의 워커마다 전용 git worktree 를
+  //   붙여 동시 편집 충돌을 없앤다. false(기본) 면 지금까지처럼 모든 워커가 원본
+  //   workingDir 을 공유한다 — 쓰기 작업 에이전트는 maxConcurrent 1 로 둘 것.
+  // worktreeRoot: 슬롯 디렉토리를 만들 위치. 기본 ~/.claw-web/worktrees.
+  //   레포 안에 두면 main 트리의 glob(테스트 탐색 등)이 슬롯 사본까지 집어삼킨다.
+  // worktreeLinks: 새 worktree 에 primary 에서 symlink 로 끌어올 gitignore 된
+  //   디렉토리. worktree 는 tracked 파일만 체크아웃하므로 이것 없이는 워커가
+  //   빌드/테스트를 못 돈다.
+  // worktreeIncludePrimary: true(기본) 면 slot 0 = 원본 workingDir — 워커 한 명은
+  //   지금처럼 공유 트리에서 일한다(변경이 바로 보인다). false 면 모든 워커가
+  //   worktree 로 빠져 공유 트리는 사람/리드 세션 전용이 된다.
   chat: {
     autoCompactPct: 0,
     delegationRetentionDays: 30,
     delegationRetentionDryRun: true,
     delegationReuse: true,
     delegationReuseTtlMin: 30,
-    delegationReuseMaxUses: 5
+    delegationReuseMaxUses: 5,
+    worktreeIsolation: false,
+    worktreeRoot: null,
+    worktreeLinks: ['node_modules'],
+    worktreeIncludePrimary: true
   },
   // 토큰 예산 (0 = 미설정). GET /api/stats/usage 가 budget 으로 되돌려 준다.
   usage: { budget5h: 0, budget7d: 0 }
