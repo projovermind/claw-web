@@ -726,6 +726,8 @@ export function createMessageSender(ctx) {
               const del = delegationTracker.getByTarget(sessionId);
               if (del) {
                 const failed = delegationTracker.fail(sessionId, err.message);
+                // 실패한 워커 세션은 CLI 세션이 깨졌을 수 있다 — 재사용 풀에서 뺀다.
+                ctx.forgetWorkerSession?.(sessionId);
                 if (failed) {
                   ctx.dequeueNextAgent(failed.targetAgentId);
                   ctx.collectGroupReport?.(failed, { status: 'failed', body: `**작업**: ${failed.task}\n**오류**: ${err.message}` });
@@ -788,6 +790,7 @@ export function createMessageSender(ctx) {
             const del = delegationTracker.getByTarget(sessionId);
             if (del) {
               const failed = delegationTracker.fail(sessionId, err.message);
+              ctx.forgetWorkerSession?.(sessionId);
               if (failed) {
                 ctx.dequeueNextAgent(failed.targetAgentId);
                 ctx.collectGroupReport?.(failed, { status: 'failed', body: `**작업**: ${failed.task}\n**오류**: ${err.message}` });

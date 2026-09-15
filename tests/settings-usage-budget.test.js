@@ -33,7 +33,14 @@ describe('chat.autoCompactPct + usage budget settings', () => {
   });
 
   it('defaults to auto-compact off and no budget', () => {
-    expect(webConfig.chat).toEqual({ autoCompactPct: 0, delegationRetentionDays: 30, delegationRetentionDryRun: true });
+    expect(webConfig.chat).toEqual({
+      autoCompactPct: 0,
+      delegationRetentionDays: 30,
+      delegationRetentionDryRun: true,
+      delegationReuse: true,
+      delegationReuseTtlMin: 30,
+      delegationReuseMaxUses: 5
+    });
     expect(webConfig.usage).toEqual({ budget5h: 0, budget7d: 0 });
   });
 

@@ -1,5 +1,6 @@
 import { logger } from '../../lib/logger.js';
 import { buildRoster, listProjectAgentIds } from '../../lib/agent-roster.js';
+import { REUSE_TASK_PREFIX } from './worker-pool.js';
 
 /**
  * Hard ceiling on delegation chain length (planner → worker → sub-worker).
@@ -246,12 +247,23 @@ export function createDelegation(ctx) {
 
       const wantsLoop = /"loop"\s*:\s*true/.test(rawText);
 
-      const targetSession = await sessionsStore.create({
-        agentId: targetAgentId,
-        title: `[위임] ${task.slice(0, 40)}`,
-        isDelegation: true
-      });
-      eventBus.publish('session.created', { session: targetSession });
+      // 같은 플래너가 같은 에이전트에게 다시 위임하는 경우 직전 워커 세션을
+      // --resume 으로 재사용해 콜드스타트(페르소나 재주입 + 코드베이스 재탐색)를
+      // 없앤다. loop 위임은 세션에 loop 상태가 붙으므로 항상 새 세션.
+      const reuse = wantsLoop ? null : ctx.acquireWorkerSession?.(originSessionId, targetAgentId) ?? null;
+      let targetSession;
+      if (reuse) {
+        targetSession = reuse.session;
+        await sessionsStore.update(targetSession.id, { title: `[위임] ${task.slice(0, 40)}` });
+      } else {
+        targetSession = await sessionsStore.create({
+          agentId: targetAgentId,
+          title: `[위임] ${task.slice(0, 40)}`,
+          isDelegation: true
+        });
+        eventBus.publish('session.created', { session: targetSession });
+        if (!wantsLoop) ctx.registerWorkerSession?.(originSessionId, targetAgentId, targetSession.id);
+      }
 
       const entry = delegationTracker.create({
         originSessionId,
@@ -267,7 +279,7 @@ export function createDelegation(ctx) {
 
       await sessionsStore.appendMessage(originSessionId, {
         role: 'assistant',
-        content: `🔄 **위임 시작** — ${targetAgentId}에게 작업을 전달했습니다.\n\n**작업**: ${task}\n**세션**: ${targetSession.id}${wantsLoop ? '\n**모드**: Ralph Loop (자동 반복)' : ''}`
+        content: `🔄 **위임 시작** — ${targetAgentId}에게 작업을 전달했습니다.\n\n**작업**: ${task}\n**세션**: ${targetSession.id}${reuse ? ` (재사용 ${reuse.uses}회차 — 콜드스타트 없음)` : ''}${wantsLoop ? '\n**모드**: Ralph Loop (자동 반복)' : ''}`
       });
       eventBus.publish('delegation.started', {
         id: entry.id,
@@ -278,7 +290,8 @@ export function createDelegation(ctx) {
         groupId,
         queuedAt: entry.queuedAt,
         startedAt: entry.startedAt,
-        queueMs: entry.queueMs
+        queueMs: entry.queueMs,
+        reusedSession: !!reuse
       });
 
       if (wantsLoop) {
@@ -294,9 +307,11 @@ export function createDelegation(ctx) {
         });
       }
 
+      // 재사용 세션에는 앞 작업의 대화가 그대로 남아 있다. 경계선을 붙이지 않으면
+      // 워커가 이전 작업을 이어서 하거나 그 결과를 다시 보고한다.
       const fullTask = wantsLoop
         ? `${task}\n\n완료되면 <promise>DONE</promise>을 출력하세요. 도움이 필요하면 <escalate>이유</escalate>를 출력하세요.`
-        : task;
+        : reuse ? `${REUSE_TASK_PREFIX}\n\n${task}` : task;
       await sessionsStore.appendMessage(targetSession.id, { role: 'user', content: fullTask });
       ctx.dispatch(targetSession.id, { kind: 'task', content: fullTask });
 
@@ -308,7 +323,8 @@ export function createDelegation(ctx) {
         loop: wantsLoop,
         taskLength: task.length,
         depth,
-        queueMs: entry.queueMs
+        queueMs: entry.queueMs,
+        reused: reuse ? reuse.uses : 0
       }, 'delegation: task sent');
     } catch (err) {
       // 등록까지 마친 뒤 터졌다면 멤버는 이미 트래커에 있다 — 스톨 스윕이
@@ -333,6 +349,8 @@ export function createDelegation(ctx) {
     try {
       if (!delegationTracker.getByTarget(targetSessionId)) return null;
       const failed = delegationTracker.fail(targetSessionId, reason);
+      // 중단된 워커 세션은 재사용 후보에서 제외 — resume 대상이 깨져 있을 수 있다.
+      ctx.forgetWorkerSession?.(targetSessionId);
       if (!failed) return null;
       ctx.dequeueNextAgent(failed.targetAgentId);
 
