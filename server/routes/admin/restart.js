@@ -13,15 +13,20 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 export function registerRestartRoute(router, { runner }) {
   router.post('/restart', (req, res) => {
     const force = req.body?.force === true;
+    // 재시작 이유 힌트. index.js 가 부팅 때 읽어 delegation-cli/agent-triggered 면
+    // autoResume 를 억제한다(재시작 루프 방지). scripts/soft-restart.sh 가 먼저 써 둔
+    // 플래그는 아래에서 덮어쓰므로, source 는 여기로 받아 다시 넣어야 살아남는다.
+    const source = String(req.body?.source ?? '').slice(0, 64);
     const activeCount = runner.activeIds().length;
-    logger.warn({ force, activeCount }, 'admin: restart requested via API');
+    logger.warn({ force, source, activeCount }, 'admin: restart requested via API');
 
     let warning;
     if (!force) {
       const launchAgentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
       try {
         const files = fssync.readdirSync(launchAgentsDir);
-        const found = files.some(f => /^com\.claw-web\..*\.plist$/.test(f));
+        // 실제 레이블은 cc.subinggrae.claw-web — com.claw-web.* 만 보면 항상 오탐이었다.
+        const found = files.some(f => /claw-web.*\.plist$/.test(f) && !f.endsWith('.bak'));
         if (!found) warning = 'LaunchAgent 미감지 — 재시작 후 수동 기동 필요';
       } catch {
         warning = 'LaunchAgent 미감지 — 재시작 후 수동 기동 필요';
@@ -58,7 +63,7 @@ export function registerRestartRoute(router, { runner }) {
         try {
           fssync.writeFileSync(
             path.join(logsDir, '.soft-restart'),
-            JSON.stringify({ at: new Date().toISOString(), activeCount }),
+            JSON.stringify({ at: new Date().toISOString(), activeCount, source }),
             'utf8'
           );
         } catch (err) {
