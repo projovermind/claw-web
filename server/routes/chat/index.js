@@ -4,6 +4,7 @@ import { HttpError } from '../../middleware/error-handler.js';
 import { logger } from '../../lib/logger.js';
 import { createQueue } from './queue.js';
 import { createDelegation } from './delegation.js';
+import { createDelegationGroups } from './delegation-group.js';
 import { createWakeup } from './wakeup.js';
 import { createMessageSender } from './message-sender.js';
 import { createDispatcher } from './dispatch.js';
@@ -81,6 +82,11 @@ export function createChatRouter({
   const queue = createQueue(ctx);
   Object.assign(ctx, queue);
   delegationTracker?.setPendingQueue?.(queue.agentQueue);
+
+  // Wire the group barrier before delegation: executeDelegation calls into it
+  // (openDelegationGroup / attachGroupMember / dropGroupSlot) on every dispatch.
+  const groups = createDelegationGroups(ctx);
+  Object.assign(ctx, groups);
 
   // Wire delegation (needs ctx.dispatch, ctx.agentQueue — resolved later)
   const delegation = createDelegation(ctx);

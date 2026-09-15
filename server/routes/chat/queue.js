@@ -31,7 +31,7 @@ export function createQueue(ctx) {
     setTimeout(() => {
       // executeDelegation 은 async — 타이머 콜백에서 reject 되면 unhandledRejection 이다.
       Promise.resolve(
-        ctx.executeDelegation(next.originSessionId, next.targetAgentId, next.task, next.rawText)
+        ctx.executeDelegation(next.originSessionId, next.targetAgentId, next.task, next.rawText, next.groupId ?? null)
       )
         .catch((err) =>
           logger.warn({ err: err?.message, agentId }, 'delegation: dequeued execution failed')

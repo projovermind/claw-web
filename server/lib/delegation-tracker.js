@@ -19,6 +19,7 @@ import { logger } from './logger.js';
  *     task: "로그인 UI 구현",
  *     loop: false,
  *     depth: 1,
+ *     groupId: "grp_1_..." | null,   // 같은 턴에 함께 발주된 위임 묶음
  *     status: "running" | "completed" | "failed" | "orphaned",
  *     createdAt: ISO string,
  *     completedAt: ISO string | null,
@@ -86,7 +87,8 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
     return [...pendingQueueRef.values()].flat().map((item) => ({
       originSessionId: item.originSessionId,
       targetAgentId: item.targetAgentId,
-      task: item.task
+      task: item.task,
+      groupId: item.groupId ?? null
     }));
   }
 
@@ -163,7 +165,7 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
     /**
      * Register a new delegation. Returns the entry.
      */
-    create({ originSessionId, targetSessionId, targetAgentId, task, loop = false, depth = 1 }) {
+    create({ originSessionId, targetSessionId, targetAgentId, task, loop = false, depth = 1, groupId = null }) {
       const id = `del_${++idCounter}_${Date.now().toString(36)}`;
       const entry = {
         id,
@@ -173,6 +175,7 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
         task,
         loop,
         depth,
+        groupId,
         status: 'running',
         createdAt: new Date().toISOString(),
         completedAt: null,

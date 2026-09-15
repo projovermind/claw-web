@@ -81,8 +81,11 @@ export function createDelegation(ctx) {
     if (!parsed.length) return;
     const badIds = [];
     const depthBlocked = [];
+    // 같은 턴에서 나온 위임 N(≥2)건은 하나의 그룹으로 묶어, 전원이 끝난 뒤
+    // 한 턴으로 합쳐 보고한다. 단건이면 그룹 없이 기존대로 즉시 보고.
+    const groupId = ctx.openDelegationGroup?.(originSessionId, parsed.length) ?? null;
     for (const p of parsed) {
-      const res = await executeDelegation(originSessionId, p.delegate.agent, p.delegate.task, JSON.stringify(p));
+      const res = await executeDelegation(originSessionId, p.delegate.agent, p.delegate.task, JSON.stringify(p), groupId);
       if (res?.badId) badIds.push(res);
       else if (res?.depthExceeded) depthBlocked.push(res);
     }
@@ -194,7 +197,10 @@ export function createDelegation(ctx) {
     return null;
   }
 
-  async function executeDelegation(originSessionId, targetAgentIdRaw, task, rawText) {
+  async function executeDelegation(originSessionId, targetAgentIdRaw, task, rawText, groupId = null) {
+    // 그룹 슬롯은 정확히 한 번만 소비돼야 한다 — 등록(attach) 뒤에 예외가 나면
+    // 취소(drop)까지 겹쳐 배리어가 형제들을 기다리지 않고 먼저 닫힌다.
+    let attached = false;
     try {
       const targetAgentId = resolveAgentId(targetAgentIdRaw);
       if (!targetAgentId) {
@@ -204,6 +210,7 @@ export function createDelegation(ctx) {
           role: 'assistant',
           content: `⚠️ 위임 실패 — 에이전트 \`${targetAgentIdRaw}\` 는 존재하지 않습니다. 올바른 ID 로 재시도합니다.\n\n**사용 가능한 에이전트**\n${formatTargets(targets)}`
         });
+        ctx.dropGroupSlot?.(groupId, 'unknown-agent');
         return { badId: targetAgentIdRaw, task, targets };
       }
 
@@ -214,6 +221,7 @@ export function createDelegation(ctx) {
           role: 'assistant',
           content: `⛔ **위임 거부 — 체인 깊이 한계** (${depth}/${MAX_DELEGATION_DEPTH}단계)\n\n**대상**: \`${targetAgentId}\`\n**작업**: ${task}\n\n이 작업은 전달되지 않았습니다. 직접 처리해야 합니다.`
         });
+        ctx.dropGroupSlot?.(groupId, 'depth-exceeded');
         return { depthExceeded: true, task, targetAgentId, depth };
       }
 
@@ -222,7 +230,7 @@ export function createDelegation(ctx) {
         const agentQueue = ctx.agentQueue;
         if (!agentQueue.has(targetAgentId)) agentQueue.set(targetAgentId, []);
         const queue = agentQueue.get(targetAgentId);
-        queue.push({ originSessionId, targetAgentId, task, rawText });
+        queue.push({ originSessionId, targetAgentId, task, rawText, groupId });
         delegationTracker.setPendingQueue?.(agentQueue);
         const pos = queue.length;
         logger.info({ targetAgentId, queueLength: pos, max }, 'delegation: queued (agent at capacity)');
@@ -248,8 +256,10 @@ export function createDelegation(ctx) {
         targetAgentId,
         task,
         loop: wantsLoop,
-        depth
+        depth,
+        groupId
       });
+      attached = ctx.attachGroupMember?.(groupId, entry) ?? false;
 
       await sessionsStore.appendMessage(originSessionId, {
         role: 'assistant',
@@ -292,6 +302,9 @@ export function createDelegation(ctx) {
         depth
       }, 'delegation: task sent');
     } catch (err) {
+      // 등록까지 마친 뒤 터졌다면 멤버는 이미 트래커에 있다 — 스톨 스윕이
+      // 중단 처리하면서 그때 그룹에 결과가 들어간다.
+      if (!attached) ctx.dropGroupSlot?.(groupId, 'dispatch-error');
       logger.error({ err, targetAgentId: targetAgentIdRaw }, 'delegation: execution failed');
       await sessionsStore.appendMessage(originSessionId, {
         role: 'assistant',
@@ -314,15 +327,21 @@ export function createDelegation(ctx) {
       if (!failed) return null;
       ctx.dequeueNextAgent(failed.targetAgentId);
 
-      const trigger =
-        `[위임 중단]\n\n` +
-        `**대상**: ${failed.targetAgentId}\n` +
+      const body =
         `**작업**: ${failed.task}\n` +
         `**사유**: ${reason}\n\n` +
-        `위임한 작업이 결과 없이 중단됐습니다. 이 작업은 완료되지 않았습니다. ` +
-        `직접 처리할지, 다른 에이전트에게 다시 위임할지, 사용자에게 상황을 알릴지 판단해 계속 진행하세요.`;
-      await sessionsStore.appendMessage(failed.originSessionId, { role: 'user', content: trigger });
-      ctx.dispatch(failed.originSessionId, { kind: 'report', content: trigger });
+        `이 작업은 완료되지 않았습니다.`;
+      // 같은 턴에 함께 발주된 위임이면 형제들이 끝날 때까지 보고를 모아 둔다.
+      const held = ctx.collectGroupReport?.(failed, { status: 'aborted', body }) ?? false;
+      if (!held) {
+        const trigger =
+          `[위임 중단]\n\n` +
+          `**대상**: ${failed.targetAgentId}\n` +
+          body + `\n\n` +
+          `직접 처리할지, 다른 에이전트에게 다시 위임할지, 사용자에게 상황을 알릴지 판단해 계속 진행하세요.`;
+        await sessionsStore.appendMessage(failed.originSessionId, { role: 'user', content: trigger });
+        ctx.dispatch(failed.originSessionId, { kind: 'report', content: trigger });
+      }
       logger.info(
         { id: failed.id, targetSessionId, targetAgentId: failed.targetAgentId, reason },
         'delegation: abandoned — tracker released, planner resumed'

@@ -634,6 +634,18 @@ export function createMessageSender(ctx) {
                 if (completed) {
                   ctx.dequeueNextAgent(completed.targetAgentId);
 
+                  const reportBody =
+                    `**작업**: ${completed.task}\n` +
+                    sourceNote +
+                    truncationWarning +
+                    `\n**결과**:\n${summary}`;
+                  // 같은 턴에 함께 발주된 위임이면 형제들이 끝날 때까지 보고를 모아
+                  // 뒀다가 한 턴으로 합쳐 전달한다. 단건이면 false — 기존 경로 그대로.
+                  const heldForGroup = ctx.collectGroupReport?.(completed, {
+                    status: 'completed',
+                    body: reportBody
+                  }) ?? false;
+
                   await sessionsStore.appendMessage(completed.originSessionId, {
                     role: 'assistant',
                     content: `✅ **위임 완료** — ${completed.targetAgentId}\n\n**작업**: ${completed.task}\n${sourceNote}\n**결과**:\n${summary}`
@@ -649,36 +661,43 @@ export function createMessageSender(ctx) {
                     pushStore.sendPushToAll(`${agentName} 위임 완료`, completed.task?.slice(0, 80) || '위임된 작업이 완료되었습니다.', { url: `/chat?session=${encodeURIComponent(completed.originSessionId)}` }).catch(() => {});
                   }
 
-                  try {
-                    const reEntryCount = (ctx.reEntryCounters.get(completed.originSessionId) ?? 0) + 1;
-                    const trigger =
-                      `[위임 결과 보고]\n\n` +
-                      `**대상 에이전트**: ${completed.targetAgentId}\n` +
-                      `**작업**: ${completed.task}\n` +
-                      sourceNote +
-                      truncationWarning +
-                      `\n**결과**:\n${summary}\n\n` +
-                      `위 결과를 바탕으로 계획을 계속 진행하세요. ` +
-                      `다음 위임할 작업이 있으면 즉시 위임 JSON을 출력하세요. ` +
-                      `사용자에게 확인받거나 choices 태그로 질문하지 말고 자동으로 계속 진행하세요. ` +
-                      `모든 작업이 완료됐을 때만 최종 결과를 사용자에게 보고하세요.`;
-                    if (reEntryCount > ctx.MAX_REENTRY) {
-                      logger.warn({ originSessionId: completed.originSessionId, reEntryCount }, 'delegation re-entry limit exceeded — stopping auto-chain');
-                      await sessionsStore.appendMessage(completed.originSessionId, {
-                        role: 'assistant',
-                        content: `⚠️ **위임 자동 진행 한계 도달** (${reEntryCount - 1}/${ctx.MAX_REENTRY}회) — 무한 루프 방지를 위해 자동 진행을 중단합니다. 다음 단계를 직접 지시해 주세요.`
-                      });
-                    } else {
-                      // 플래너가 실행 중이든 아니든 동일 경로 — 큐가 직렬화한다.
-                      ctx.reEntryCounters.set(completed.originSessionId, reEntryCount);
-                      await sessionsStore.appendMessage(completed.originSessionId, {
-                        role: 'user',
-                        content: trigger
-                      });
-                      ctx.dispatch(completed.originSessionId, { kind: 'report', content: trigger });
+                  if (heldForGroup) {
+                    logger.info(
+                      { originSessionId: completed.originSessionId, groupId: completed.groupId },
+                      'delegation: report held by group barrier'
+                    );
+                  } else {
+                    try {
+                      const reEntryCount = (ctx.reEntryCounters.get(completed.originSessionId) ?? 0) + 1;
+                      const trigger =
+                        `[위임 결과 보고]\n\n` +
+                        `**대상 에이전트**: ${completed.targetAgentId}\n` +
+                        `**작업**: ${completed.task}\n` +
+                        sourceNote +
+                        truncationWarning +
+                        `\n**결과**:\n${summary}\n\n` +
+                        `위 결과를 바탕으로 계획을 계속 진행하세요. ` +
+                        `다음 위임할 작업이 있으면 즉시 위임 JSON을 출력하세요. ` +
+                        `사용자에게 확인받거나 choices 태그로 질문하지 말고 자동으로 계속 진행하세요. ` +
+                        `모든 작업이 완료됐을 때만 최종 결과를 사용자에게 보고하세요.`;
+                      if (reEntryCount > ctx.MAX_REENTRY) {
+                        logger.warn({ originSessionId: completed.originSessionId, reEntryCount }, 'delegation re-entry limit exceeded — stopping auto-chain');
+                        await sessionsStore.appendMessage(completed.originSessionId, {
+                          role: 'assistant',
+                          content: `⚠️ **위임 자동 진행 한계 도달** (${reEntryCount - 1}/${ctx.MAX_REENTRY}회) — 무한 루프 방지를 위해 자동 진행을 중단합니다. 다음 단계를 직접 지시해 주세요.`
+                        });
+                      } else {
+                        // 플래너가 실행 중이든 아니든 동일 경로 — 큐가 직렬화한다.
+                        ctx.reEntryCounters.set(completed.originSessionId, reEntryCount);
+                        await sessionsStore.appendMessage(completed.originSessionId, {
+                          role: 'user',
+                          content: trigger
+                        });
+                        ctx.dispatch(completed.originSessionId, { kind: 'report', content: trigger });
+                      }
+                    } catch (err) {
+                      logger.warn({ err: err.message }, 'delegation re-entry failed');
                     }
-                  } catch (err) {
-                    logger.warn({ err: err.message }, 'delegation re-entry failed');
                   }
                 }
               }
@@ -689,7 +708,10 @@ export function createMessageSender(ctx) {
               const del = delegationTracker.getByTarget(sessionId);
               if (del) {
                 const failed = delegationTracker.fail(sessionId, err.message);
-                if (failed) ctx.dequeueNextAgent(failed.targetAgentId);
+                if (failed) {
+                  ctx.dequeueNextAgent(failed.targetAgentId);
+                  ctx.collectGroupReport?.(failed, { status: 'failed', body: `**작업**: ${failed.task}\n**오류**: ${err.message}` });
+                }
               }
             }
           }
@@ -748,7 +770,10 @@ export function createMessageSender(ctx) {
             const del = delegationTracker.getByTarget(sessionId);
             if (del) {
               const failed = delegationTracker.fail(sessionId, err.message);
-              if (failed) ctx.dequeueNextAgent(failed.targetAgentId);
+              if (failed) {
+                ctx.dequeueNextAgent(failed.targetAgentId);
+                ctx.collectGroupReport?.(failed, { status: 'failed', body: `**작업**: ${failed.task}\n**오류**: ${err.message}` });
+              }
             }
           }
         },
