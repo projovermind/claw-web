@@ -31,7 +31,15 @@ export function createQueue(ctx) {
     setTimeout(() => {
       // executeDelegation 은 async — 타이머 콜백에서 reject 되면 unhandledRejection 이다.
       Promise.resolve(
-        ctx.executeDelegation(next.originSessionId, next.targetAgentId, next.task, next.rawText, next.groupId ?? null)
+        ctx.executeDelegation(
+          next.originSessionId,
+          next.targetAgentId,
+          next.task,
+          next.rawText,
+          next.groupId ?? null,
+          // 대기 시작 시각을 넘겨야 트래커가 queueMs 를 실행 시간과 분리해 기록한다.
+          next.queuedAt ?? null
+        )
       )
         .catch((err) =>
           logger.warn({ err: err?.message, agentId }, 'delegation: dequeued execution failed')
@@ -54,8 +62,11 @@ export function createQueue(ctx) {
     if (!queue || queue.length === 0) return 0;
 
     let released = 0;
+    let longestWaitMs = 0;
     while (queue.length > 0 && hasFreeSlot(agentId)) {
       const next = queue.shift();
+      const waitedMs = next.queuedAt ? Math.max(0, Date.now() - Date.parse(next.queuedAt)) : 0;
+      if (Number.isFinite(waitedMs)) longestWaitMs = Math.max(longestWaitMs, waitedMs);
       reserve(agentId, 1);
       released++;
       startLater(agentId, next);
@@ -70,7 +81,7 @@ export function createQueue(ctx) {
     // 재시작 복구가 이미 꺼내간 작업을 다시 보고하지 않도록 즉시 반영.
     ctx.delegationTracker?.setPendingQueue?.(agentQueue);
     logger.info(
-      { agentId, released, remaining: agentQueue.get(agentId)?.length ?? 0 },
+      { agentId, released, remaining: agentQueue.get(agentId)?.length ?? 0, longestWaitMs },
       'delegation: dequeuing next task(s)'
     );
     return released;

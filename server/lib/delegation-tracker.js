@@ -22,7 +22,11 @@ import { logger } from './logger.js';
  *     groupId: "grp_1_..." | null,   // 같은 턴에 함께 발주된 위임 묶음
  *     status: "running" | "completed" | "failed" | "orphaned",
  *     createdAt: ISO string,
+ *     queuedAt: ISO string,          // 발주 접수 시각 (대기열에 들어간 순간)
+ *     startedAt: ISO string,         // 워커에게 실제로 넘어간 시각
+ *     queueMs: number,               // startedAt - queuedAt (큐에서 죽은 시간)
  *     completedAt: ISO string | null,
+ *     durationMs: number | null,     // completedAt - startedAt (실행 시간)
  *     result: string | null,           // summary handed back to the planner
  *     reportPath: string | null        // full worker response on disk
  *   }
@@ -47,6 +51,18 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
   let pendingQueueRef = null;  // live agentId → [task, ...] map owned by the chat router
   let restoredPending = [];    // queued-but-never-started tasks recovered from the last run
   let orphanedOnRestore = [];  // entries that were mid-flight when the process died
+
+  /**
+   * 두 ISO 시각 사이의 밀리초. 복구된 옛 레코드는 새 필드가 없어 파싱이 실패할 수
+   * 있으므로, 계산 불가는 0 이 아니라 null 로 남긴다 — 0 은 "대기 없음"이라는
+   * 잘못된 신호를 주고 평균을 끌어내린다.
+   */
+  function elapsedMs(fromIso, toIso) {
+    const from = Date.parse(fromIso);
+    const to = Date.parse(toIso);
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+    return Math.max(0, to - from);
+  }
 
   function indexByOrigin(entry) {
     if (!byOrigin.has(entry.originSessionId)) byOrigin.set(entry.originSessionId, []);
@@ -88,7 +104,8 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
       originSessionId: item.originSessionId,
       targetAgentId: item.targetAgentId,
       task: item.task,
-      groupId: item.groupId ?? null
+      groupId: item.groupId ?? null,
+      queuedAt: item.queuedAt ?? null
     }));
   }
 
@@ -165,8 +182,12 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
     /**
      * Register a new delegation. Returns the entry.
      */
-    create({ originSessionId, targetSessionId, targetAgentId, task, loop = false, depth = 1, groupId = null }) {
+    create({ originSessionId, targetSessionId, targetAgentId, task, loop = false, depth = 1, groupId = null, queuedAt = null }) {
       const id = `del_${++idCounter}_${Date.now().toString(36)}`;
+      // 이 시점이 곧 "워커에게 넘어간 순간"이다. queuedAt 이 따로 오면 그 사이가
+      // 대기열에서 흘려버린 시간 — 큐 대기와 실행 시간을 갈라 보려면 둘 다 필요하다.
+      const startedAt = new Date().toISOString();
+      const acceptedAt = queuedAt ?? startedAt;
       const entry = {
         id,
         originSessionId,
@@ -177,8 +198,12 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
         depth,
         groupId,
         status: 'running',
-        createdAt: new Date().toISOString(),
+        createdAt: startedAt,
+        queuedAt: acceptedAt,
+        startedAt,
+        queueMs: elapsedMs(acceptedAt, startedAt) ?? 0,
         completedAt: null,
+        durationMs: null,
         result: null,
         reportPath: null
       };
@@ -222,13 +247,17 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
       if (!entry) return null;
       entry.status = 'completed';
       entry.completedAt = new Date().toISOString();
+      entry.durationMs = elapsedMs(entry.startedAt ?? entry.createdAt, entry.completedAt);
       entry.result = result;
       entry.reportPath = reportPath;
       active.delete(targetSessionId);
       retire(entry);
       releaseAgent(entry.targetAgentId);
       schedulePersist();
-      logger.info({ id: entry.id, targetAgentId: entry.targetAgentId }, 'delegation: completed');
+      logger.info(
+        { id: entry.id, targetAgentId: entry.targetAgentId, queueMs: entry.queueMs, durationMs: entry.durationMs },
+        'delegation: completed'
+      );
       return entry;
     },
 
@@ -240,12 +269,13 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
       if (!entry) return null;
       entry.status = 'failed';
       entry.completedAt = new Date().toISOString();
+      entry.durationMs = elapsedMs(entry.startedAt ?? entry.createdAt, entry.completedAt);
       entry.result = `Error: ${error}`;
       active.delete(targetSessionId);
       retire(entry);
       releaseAgent(entry.targetAgentId);
       schedulePersist();
-      logger.warn({ id: entry.id, error }, 'delegation: failed');
+      logger.warn({ id: entry.id, error, queueMs: entry.queueMs, durationMs: entry.durationMs }, 'delegation: failed');
       return entry;
     },
 

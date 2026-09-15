@@ -197,10 +197,13 @@ export function createDelegation(ctx) {
     return null;
   }
 
-  async function executeDelegation(originSessionId, targetAgentIdRaw, task, rawText, groupId = null) {
+  async function executeDelegation(originSessionId, targetAgentIdRaw, task, rawText, groupId = null, queuedAt = null) {
     // 그룹 슬롯은 정확히 한 번만 소비돼야 한다 — 등록(attach) 뒤에 예외가 나면
     // 취소(drop)까지 겹쳐 배리어가 형제들을 기다리지 않고 먼저 닫힌다.
     let attached = false;
+    // 발주가 접수된 시각. 대기열을 거쳐 재진입한 경우 호출자가 원래 시각을 넘겨주므로
+    // 그 값을 유지해야 큐에서 흘려버린 시간이 실행 시간에 섞이지 않는다.
+    const acceptedAt = queuedAt ?? new Date().toISOString();
     try {
       const targetAgentId = resolveAgentId(targetAgentIdRaw);
       if (!targetAgentId) {
@@ -230,7 +233,7 @@ export function createDelegation(ctx) {
         const agentQueue = ctx.agentQueue;
         if (!agentQueue.has(targetAgentId)) agentQueue.set(targetAgentId, []);
         const queue = agentQueue.get(targetAgentId);
-        queue.push({ originSessionId, targetAgentId, task, rawText, groupId });
+        queue.push({ originSessionId, targetAgentId, task, rawText, groupId, queuedAt: acceptedAt });
         delegationTracker.setPendingQueue?.(agentQueue);
         const pos = queue.length;
         logger.info({ targetAgentId, queueLength: pos, max }, 'delegation: queued (agent at capacity)');
@@ -257,7 +260,8 @@ export function createDelegation(ctx) {
         task,
         loop: wantsLoop,
         depth,
-        groupId
+        groupId,
+        queuedAt: acceptedAt
       });
       attached = ctx.attachGroupMember?.(groupId, entry) ?? false;
 
@@ -270,7 +274,11 @@ export function createDelegation(ctx) {
         originSessionId,
         targetSessionId: targetSession.id,
         targetAgentId,
-        task
+        task,
+        groupId,
+        queuedAt: entry.queuedAt,
+        startedAt: entry.startedAt,
+        queueMs: entry.queueMs
       });
 
       if (wantsLoop) {
@@ -299,7 +307,8 @@ export function createDelegation(ctx) {
         agent: targetAgentId,
         loop: wantsLoop,
         taskLength: task.length,
-        depth
+        depth,
+        queueMs: entry.queueMs
       }, 'delegation: task sent');
     } catch (err) {
       // 등록까지 마친 뒤 터졌다면 멤버는 이미 트래커에 있다 — 스톨 스윕이
