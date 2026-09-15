@@ -67,9 +67,13 @@ function makeCtx(chatConfig = {}) {
 const delegate = (agentId, task, rawText = '{}') =>
   ctx.executeDelegation('lead', agentId, task, rawText);
 
-/** 워커가 정상적으로 끝난 상태를 만든다 — CLI 세션 ID 가 남고 트래커는 비워진다. */
+/**
+ * 워커가 정상적으로 끝난 상태를 만든다 — CLI 세션 ID 가 남고 트래커는 비워진다.
+ * message-sender 의 정상 완료 경로와 같은 순서: complete → releaseWorkerSession.
+ */
 function finishWorker(sessionId) {
   ctx.delegationTracker.complete(sessionId, 'ok');
+  ctx.releaseWorkerSession?.(sessionId);
   const s = ctx.sessions.get(sessionId);
   s.claudeSessionId = `claude_${sessionId}`;
   s.personaBakedInto = s.claudeSessionId;
@@ -177,6 +181,55 @@ describe('worker session reuse', () => {
     await delegate('worker', 'C');
 
     expect(dispatchedTo()).toEqual(['sess_1', 'sess_1', 'sess_2']);
+  });
+
+  // TTL 이 재야 하는 것은 워커가 '놀고 있던 시간' 이지 '일한 시간' 이 아니다.
+  // 위임 시각 기준이던 시절 실측(durationMs p50 10.2분/max 67.5분, 재위임 간격
+  // 48~91분)에서는 재사용이 단 한 건도 적중하지 않았다.
+  it('reuses a worker that spent longer than the TTL finishing its previous task', async () => {
+    ctx = makeCtx({ delegationReuseTtlMin: 30 });
+    await delegate('worker', 'A');
+
+    clock += 67 * 60_000;   // 워커가 67분 걸려 끝냈다 — 위임 시각 기준이면 이미 만료
+    finishWorker('sess_1');
+
+    clock += 20 * 60_000;   // 완료로부터 20분 뒤 재위임 — TTL 30분 안이다
+    await delegate('worker', 'B');
+
+    expect(dispatchedTo()).toEqual(['sess_1', 'sess_1']);
+    expect(sessionSeq).toBe(1);
+  });
+
+  it('reuses across a realistic 67-minute task + 20-minute gap on default settings', async () => {
+    await delegate('worker', 'A');
+    clock += 67 * 60_000;
+    finishWorker('sess_1');
+    clock += 20 * 60_000;
+    await delegate('worker', 'B');
+
+    expect(dispatchedTo()).toEqual(['sess_1', 'sess_1']);
+  });
+
+  it('still rotates when the idle gap after completion exceeds the TTL', async () => {
+    await delegate('worker', 'A');
+    clock += 67 * 60_000;
+    finishWorker('sess_1');
+
+    clock += 91 * 60_000;   // 기본 TTL 90분 초과 → ttl-expired
+    await delegate('worker', 'B');
+
+    expect(dispatchedTo()).toEqual(['sess_1', 'sess_2']);
+  });
+
+  it('does not revive an aborted worker session when release is called on it', async () => {
+    await delegate('worker', 'A');
+    ctx.sessions.get('sess_1').claudeSessionId = 'claude_sess_1';
+    await ctx.abandonDelegation('sess_1', '응답 없이 중단됨');
+    ctx.releaseWorkerSession('sess_1');   // 풀에서 이미 빠졌으니 아무 일도 없어야 한다
+
+    await delegate('worker', 'B');
+    expect(dispatchedTo()).toEqual(['sess_1', 'sess_2']);
+    expect(ctx.workerPoolStats()).toEqual({ keys: 1, sessions: 1 });   // 새 세션 하나만
   });
 
   it('rotates away from a session whose context is already heavy', async () => {

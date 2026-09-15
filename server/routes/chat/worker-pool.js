@@ -21,7 +21,7 @@ import { sessionContextUsage } from '../../lib/context-window.js';
  *   - claudeSessionId 가 없는 세션 (resume 대상이 없으니 재사용해도 콜드스타트)
  */
 
-const DEFAULT_TTL_MIN = 30;
+const DEFAULT_TTL_MIN = 90;
 const DEFAULT_MAX_USES = 5;
 
 /** 재사용 후보 세션의 컨텍스트 사용률 상한(%). 넘으면 새 세션으로 돌린다. */
@@ -139,6 +139,23 @@ export function createWorkerPool(ctx) {
   }
 
   /**
+   * 워커가 작업을 정상으로 끝낸 시각으로 TTL 시계를 다시 맞춘다.
+   *
+   * lastUsedAt 을 '위임을 보낸 시각' 에만 찍으면 TTL 이 재는 것은 유휴 시간이
+   * 아니라 '작업 시간 + 유휴 시간' 이 된다. 실측 durationMs 는 p50 10.2분 /
+   * max 67.5분이라 오래 도는 워커는 일을 끝내기도 전에 만료됐다(재기동 후
+   * 위임 8건 전부 reused:0). TTL 은 놀고 있던 시간만 재야 한다.
+   */
+  function releaseWorkerSession(sessionId) {
+    const at = now();
+    for (const entries of pool.values()) {
+      for (const entry of entries) {
+        if (entry.sessionId === sessionId) entry.lastUsedAt = at;
+      }
+    }
+  }
+
+  /**
    * 워커 세션을 풀에서 제거한다. 중단·크래시로 끝난 세션은 CLI 세션 파일이
    * 깨졌을 수 있어 재사용 대상에서 빼야 한다.
    */
@@ -159,5 +176,11 @@ export function createWorkerPool(ctx) {
     };
   }
 
-  return { acquireWorkerSession, registerWorkerSession, forgetWorkerSession, workerPoolStats };
+  return {
+    acquireWorkerSession,
+    registerWorkerSession,
+    releaseWorkerSession,
+    forgetWorkerSession,
+    workerPoolStats
+  };
 }

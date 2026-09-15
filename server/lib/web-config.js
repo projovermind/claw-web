@@ -23,7 +23,9 @@ const DEFAULTS = {
   // delegationReuse: 같은 플래너가 같은 에이전트에게 다시 위임할 때 직전 워커 세션을
   //   --resume 으로 재사용해 콜드스타트(페르소나 재주입 + 코드베이스 재탐색)를 없앤다.
   //   false 면 위임마다 새 워커 세션 (구 동작).
-  // delegationReuseTtlMin: 마지막으로 쓴 지 이 분(分) 을 넘긴 워커 세션은 재사용하지 않는다.
+  // delegationReuseTtlMin: 직전 작업을 끝낸 지 이 분(分) 을 넘긴 워커 세션은 재사용하지
+  //   않는다. 기준은 '위임을 보낸 시각' 이 아니라 '끝난 시각' — 실측 재위임 간격이
+  //   48/53/91분이라 30분으로는 적중할 수가 없었다.
   // delegationReuseMaxUses: 한 워커 세션에 밀어 넣을 수 있는 위임 수(최초 1건 포함).
   //   넘으면 새 세션으로 로테이션한다 — 무한 재사용은 컨텍스트가 쌓여 압축을 부른다.
   // worktreeIsolation: maxConcurrent>1 인 에이전트의 워커마다 전용 git worktree 를
@@ -42,7 +44,7 @@ const DEFAULTS = {
     delegationRetentionDays: 30,
     delegationRetentionDryRun: true,
     delegationReuse: true,
-    delegationReuseTtlMin: 30,
+    delegationReuseTtlMin: 90,
     delegationReuseMaxUses: 5,
     worktreeIsolation: false,
     worktreeRoot: null,

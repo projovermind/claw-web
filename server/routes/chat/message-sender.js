@@ -666,6 +666,8 @@ export function createMessageSender(ctx) {
                   : `⚠️ 워커가 <report> 블록을 출력하지 않아 아래 요약은 응답의 앞뒤만 잘라낸 것입니다 — 중간 내용이 빠져 있으니 판단 전에 원문을 확인하세요.\n`;
                 const completed = delegationTracker.complete(sessionId, summary, reportPath);
                 if (completed) {
+                  // 정상 완료 — 재사용 TTL 은 여기서부터 센다(작업에 걸린 시간은 빼고).
+                  ctx.releaseWorkerSession?.(sessionId);
                   ctx.dequeueNextAgent(completed.targetAgentId);
 
                   const reportBody =

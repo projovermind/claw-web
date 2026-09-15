@@ -38,7 +38,7 @@ describe('chat.autoCompactPct + usage budget settings', () => {
       delegationRetentionDays: 30,
       delegationRetentionDryRun: true,
       delegationReuse: true,
-      delegationReuseTtlMin: 30,
+      delegationReuseTtlMin: 90,
       delegationReuseMaxUses: 5,
       worktreeIsolation: false,
       worktreeRoot: null,
