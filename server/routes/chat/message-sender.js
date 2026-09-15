@@ -14,7 +14,7 @@ import { classifyError, resolveAgent, buildConversationSummary } from './utils.j
 import { buildRoster, listProjectAgentIds } from '../../lib/agent-roster.js';
 import { writeHookSettingsFile, removeHookSettingsFile } from '../../lib/hook-settings.js';
 import { sessionContextUsage } from '../../lib/context-window.js';
-import { compactSession, shouldAutoCompact } from '../../lib/compact.js';
+import { compactSession, shouldAutoCompact, settleAutoCompactBaseline } from '../../lib/compact.js';
 import { readUpcomingSync, formatEventLine } from '../../lib/calendar-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -200,12 +200,30 @@ export function createMessageSender(ctx) {
       backendId: agent?.backendId ?? agent?.accountId ?? null,
       backends: backendsStore?.getRaw?.()?.backends ?? null
     });
-    if (!shouldAutoCompact(pct, usage)) return;
+    // 히스테리시스 기준점은 압축 '후' 사용량이다. 압축 직후에는 그 값을 알 수 없어
+    // 비워 둔 채 기록하므로, 압축 후 처음 측정된 여기 usage 로 확정한다.
+    const settled = settleAutoCompactBaseline(session, usage);
+    if (settled) await sessionsStore.update(sessionId, { lastAutoCompact: settled });
 
-    const result = await compactSession({ session, sessionsStore, eventBus });
+    if (!shouldAutoCompact(pct, usage, settled ? { ...session, lastAutoCompact: settled } : session)) return;
+
+    // inPlace: 살아 있는 세션을 그대로 줄인다. fork 하면 러너는 계속 원본을 쓰므로
+    // 컨텍스트가 줄지 않고 매 턴 재압축된다 (실측 32회/세션).
+    const result = await compactSession({ session, sessionsStore, eventBus, inPlace: true });
+    // 압축이 사실상 못 줄인 경우 매 턴 재시도하지 않도록 기준점을 남긴다.
+    // postCompactTokens 는 지금 알 수 없다(압축된 세션엔 usage 턴이 없다) — 다음 턴에
+    // settleAutoCompactBaseline 이 채운다. 여기에 압축 전 값을 넣으면 래칫이 된다.
+    await sessionsStore.update(sessionId, {
+      lastAutoCompact: {
+        at: new Date().toISOString(),
+        compactedAtTokens: usage.used,
+        postCompactTokens: null
+      }
+    });
     eventBus.publish('chat.auto-compacted', {
       sessionId,
       newSessionId: result.newSessionId,
+      archivedSessionId: result.archivedSessionId,
       thresholdPct: pct,
       usedPct: Math.round(usage.pct),
       usedTokens: usage.used,

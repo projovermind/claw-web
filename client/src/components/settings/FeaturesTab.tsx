@@ -4,7 +4,7 @@ import { useProgressMutation } from '../../lib/useProgressMutation';
 import { api } from '../../lib/api';
 import type { WebSettings } from '../../lib/types';
 
-const COMPACT_CHOICES = [0, 50, 60, 70, 80] as const;
+const COMPACT_CHOICES = [0, 70, 80, 85, 90] as const;
 
 /** 빈 문자열/음수/NaN 은 모두 0(미설정) 으로 접는다. */
 function parseBudget(raw: string): number {
@@ -68,6 +68,8 @@ export function FeaturesTab() {
         <div className="text-sm font-semibold text-zinc-200">자동 compact</div>
         <p className="text-[11px] text-zinc-500">
           턴이 끝난 뒤 세션 컨텍스트 사용률이 임계값을 넘으면 자동으로 압축합니다. 0 = 끔.
+          창에 아직 150K 토큰 넘게 남아 있으면 임계값을 넘어도 압축하지 않습니다 (1M 창에서 낮은 %가
+          매 턴 압축을 부르는 것을 막기 위한 절대 하한).
         </p>
         <div className="flex gap-1.5">
           {COMPACT_CHOICES.map((pct) => (
