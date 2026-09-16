@@ -214,11 +214,21 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
     },
 
     pickClaudeCliBackend() {
+      // 쿨다운 판정은 status 가 아니라 시각으로 한다. setCooldown 이 status 를
+      // 'cooldown' 으로 바꿔놓는데 만료 후 'active' 로 되돌리는 주체가 없어서,
+      // status 로 거르면 한 번 한도에 걸린 백엔드가 영영 자동 선택에서 빠진다.
+      // cooldownUntil 은 ISO 문자열이라 숫자와 직접 비교하면 언제나 false 다.
+      const now = Date.now();
+      const cooling = (b) => {
+        if (!b.cooldownUntil) return false;
+        const until = new Date(b.cooldownUntil).getTime();
+        return Number.isFinite(until) && until > now;
+      };
       const candidates = Object.entries(cache.backends ?? {})
         .filter(([, b]) =>
           b.type === 'claude-cli' &&
-          b.status === 'active' &&
-          (b.cooldownUntil == null || b.cooldownUntil < Date.now())
+          b.status !== 'disabled' &&
+          !cooling(b)
         )
         .map(([id, b]) => ({ id, ...b }));
 

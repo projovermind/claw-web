@@ -120,6 +120,21 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
       if (fallback.configDir) fbAgent.configDir = fallback.configDir;
       else delete fbAgent.configDir;
 
+      // 모델 별칭은 resolveAgent 가 1차 백엔드의 models 맵으로 이미 실제 ID 로 확정했다.
+      // 그대로 넘기면 폴백이 남의 백엔드 모델 ID 를 전선에 실어 "모르는 모델"로 거절당한다.
+      // → 보존해 둔 원본 별칭을 되돌려 놓고, 폴백 백엔드의 models 맵으로 다시 해석한다.
+      //   맵에 없으면 별칭 그대로 넘겨 러너의 MODEL_ID_MAP(opus/sonnet/haiku)이 풀게 한다.
+      if (agent.modelAlias) {
+        const fbModels = fallback.envOverrides?._backendsStore?.getBackend?.(fallback.backendId)?.models ?? null;
+        fbAgent.model = fbModels?.[agent.modelAlias] ?? agent.modelAlias;
+        if (fbAgent.model !== agent.model) {
+          logger.info(
+            { sessionId, alias: agent.modelAlias, from: agent.model, to: fbAgent.model, backendId: fallback.backendId },
+            'runner: re-resolved model alias for fallback backend'
+          );
+        }
+      }
+
       try {
         return api.start({
           sessionId,

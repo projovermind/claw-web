@@ -88,28 +88,77 @@ export function createAccountScheduler({ accountsStore, backendsStore }) {
         }
       }
     }
+
+    // 백엔드 쪽도 같이 되돌린다. setCooldown 이 status 를 'cooldown' 으로 바꾸는데
+    // 복구하는 주체가 없으면 UI 배지가 만료 후에도 '쿨다운' 으로 남는다.
+    for (const [id, b] of Object.entries(backendsStore?.getRaw?.()?.backends ?? {})) {
+      if (b.status !== 'cooldown') continue;
+      const until = b.cooldownUntil ? new Date(b.cooldownUntil).getTime() : 0;
+      if (Number.isFinite(until) && until > now) continue;
+      try {
+        await backendsStore.updateBackend(id, { status: 'active', cooldownUntil: null });
+        logger.info({ backendId: id }, '[scheduler] backend cooldown expired — restored to active');
+      } catch (err) {
+        logger.warn({ backendId: id, err: err.message }, '[scheduler] backend cooldown restore failed');
+      }
+    }
+  }
+
+  /**
+   * 쿨다운 중인지. cooldownUntil 은 저장 경로에 따라 epoch ms(숫자) 또는 ISO 문자열이라
+   * 둘 다 받아 넘긴다. 파싱 불가/미설정이면 쿨다운 아님으로 본다.
+   */
+  function isCoolingDown(backend) {
+    if (!backend?.cooldownUntil) return false;
+    const until = new Date(backend.cooldownUntil).getTime();
+    return Number.isFinite(until) && until > Date.now();
+  }
+
+  /**
+   * 쿨다운에 걸린 지정 백엔드 대신 쓸 폴백을 고른다.
+   * 우선순위: 해당 백엔드의 fallback > 전역 fallbackBackend.
+   * 자기 자신/미등록/비활성/쿨다운 중인 폴백은 무시 → 호출자가 다음 단계로 내려간다.
+   */
+  function cooldownFallbackFor(backendId, backendObj) {
+    if (!backendsStore) return null;
+    const raw = backendsStore.getRaw?.() ?? null;
+    const fallbackId = backendObj?.fallback || raw?.fallbackBackend || null;
+    if (!fallbackId || fallbackId === backendId) return null;
+    const fb = backendsStore.getBackend(fallbackId);
+    if (!fb || fb.status === 'disabled' || isCoolingDown(fb)) {
+      logger.warn({ backendId, fallbackId }, '[scheduler] cooldown fallback unusable — falling through');
+      return null;
+    }
+    logger.warn({ backendId, fallbackId }, '[scheduler] specified backend is cooling down — switching to fallback');
+    return { ...fb, id: fallbackId };
+  }
+
+  /**
+   * 지정 백엔드 하나를 검증해서 쓸 수 있는 형태로 돌려준다.
+   * 쿨다운이면 폴백으로 선회하고, 폴백도 못 쓰면 null (호출자가 다음 우선순위로).
+   */
+  function resolveSpecifiedBackend(backendId) {
+    if (!backendId || !backendsStore) return null;
+    const b = backendsStore.getBackend(backendId);
+    if (!b || b.status === 'disabled') return null;
+    if (!isCoolingDown(b)) return { ...b, id: backendId };
+    return cooldownFallbackFor(backendId, b);
   }
 
   /**
    * Pick the best backend for an agent run.
    * Priority:
-   *   1. agent.backendId  — agent-level fixed backend
-   *   2. project.backendId — project-level fixed backend
+   *   1. agent.backendId  — agent-level fixed backend (쿨다운이면 그 백엔드의 폴백)
+   *   2. project.backendId — project-level fixed backend (동일)
    *   3. backendsStore.pickClaudeCliBackend() — least recently used active backend
    *   4. null → use default auth (no CLAUDE_CONFIG_DIR override)
    */
   function pickBackend(agent, project) {
-    const backendId = agent.backendId ?? agent.accountId ?? null;
-    if (backendId && backendsStore) {
-      const b = backendsStore.getBackend(backendId);
-      if (b && b.status !== 'disabled') return { ...b, id: backendId };
-    }
+    const specified = resolveSpecifiedBackend(agent.backendId ?? agent.accountId ?? null);
+    if (specified) return specified;
 
-    const projectBackendId = project?.backendId ?? project?.accountId ?? null;
-    if (projectBackendId && backendsStore) {
-      const b = backendsStore.getBackend(projectBackendId);
-      if (b && b.status !== 'disabled') return { ...b, id: projectBackendId };
-    }
+    const projectPicked = resolveSpecifiedBackend(project?.backendId ?? project?.accountId ?? null);
+    if (projectPicked) return projectPicked;
 
     if (backendsStore) {
       const b = backendsStore.pickClaudeCliBackend();

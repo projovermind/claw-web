@@ -441,10 +441,21 @@ export function startClaudeRun({
   let gotAnyOutput = false;
   let rateLimitDetected = false;
   let rateLimitRestartDone = false;
+  // 감지된 한도 메시지 원문. close 에서 onError 로 라우팅할 때 사유로 싣는다.
+  let rateLimitText = null;
   // is_error result 이벤트가 API 스트림 소켓 끊김 에러를 담고 있는지.
   // 이 경우 resultText 가 truthy 라도 정상 응답(onResult)이 아니라 onError 로 라우팅해
   // message-sender 의 classifyError('socket_closed') 자동 재시도가 발동하게 한다.
   let retryableErrorText = null;
+  // result 이벤트 진단용. subtype = 'success' | 'error_max_turns' | 'error_during_execution' 등.
+  // 빈 응답이 왜 비었는지(모델 공백 / 턴 상한 / 실행 중 에러)를 로그로 구분하기 위해 캡처.
+  let resultSubtype = null;
+  let resultIsError = false;
+  // scheduleExitGrace 가 강제 종료한 경우. 유저 중단과 구분해야
+  // message-sender 의 wasKilled(exitCode 143/137) 판정이 정상 턴을 '워커 강제종료'로 오인하지 않는다.
+  let forcedExitAfterResult = false;
+  // 유저(또는 상위 호출자)가 abort() 를 호출한 실제 중단.
+  let userAborted = false;
   const SOCKET_ERROR_RE = /socket connection was closed|closed unexpectedly|other side closed/i;
   // API 일시 장애(과부하/게이트웨이) — 소켓 끊김과 동일하게 재시도 대상.
   // 429/사용량 한도는 handleRateLimit 의 쿨다운/계정 전환 경로가 담당하므로 제외.
@@ -454,6 +465,7 @@ export function startClaudeRun({
     if (rateLimitDetected) return;
     if (!isRateLimitText(text)) return;
     rateLimitDetected = true;
+    rateLimitText = text;
     const expiresAt = new Date(parseRateLimitExpiry(text)).toISOString();
 
     // backendsStore 기반 쿨다운 (우선)
@@ -533,6 +545,7 @@ export function startClaudeRun({
     clearTimeout(idleTimer); // 20분 스톨 타이머 대신 짧은 유예로 대체
     exitGraceTimer = setTimeout(() => {
       logger.warn({ agent: agent.id }, 'runner: result received but process lingering — forcing exit to finalize turn');
+      forcedExitAfterResult = true;
       try { proc.kill('SIGTERM'); } catch { /* ignore */ }
       setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 2000);
     }, EXIT_GRACE_MS);
@@ -606,6 +619,18 @@ export function startClaudeRun({
     } else if (event.type === 'result') {
       pendingToolUse = false;
       resultText = event.result ?? null;
+      resultSubtype = event.subtype ?? null;
+      resultIsError = !!event.is_error;
+      logger.info(
+        {
+          agent: agent.id,
+          subtype: resultSubtype,
+          isError: resultIsError,
+          resultLen: typeof resultText === 'string' ? resultText.length : 0,
+          assistantTexts: assistantTexts.length,
+        },
+        'runner: result event'
+      );
       // 실제 rate-limit 오류만 감지 — is_error: true 인 result 이벤트에서만 체크
       if (event.is_error && resultText) {
         handleRateLimit(resultText);
@@ -723,12 +748,40 @@ export function startClaudeRun({
       onExit?.({ code: exitCode });
       return;
     }
+    // 사용량 한도도 is_error result 로 온다. resultText 가 truthy 라 아래 onResult 로 새고,
+    // runner.js 의 폴백은 onError 에만 걸려 있어서 정작 한도에서 폴백이 발동하지 않았다.
+    // → 실제 응답 없이 한도 메시지만 받은 경우에만 onError 로 라우팅한다.
+    //   유저 중단이나 부분 응답(assistantTexts 존재)은 기존대로 onResult 로 보존.
+    if (rateLimitDetected && !userAborted && assistantTexts.length === 0) {
+      const detail = (rateLimitText || resultText || 'usage limit reached').toString().trim().slice(0, 400);
+      logger.warn(
+        { agent: agent.id, backendId: pickedBackendId, accountId: pickedAccountId },
+        'runner: rate-limited with no output — routing to onError so fallback can take over'
+      );
+      onError?.(new Error(`rate_limit: ${detail}`));
+      onExit?.({ code: exitCode });
+      return;
+    }
     const final = resultText || (assistantTexts.length ? assistantTexts.join('\n\n') : null);
     if (exitCode === 143 || exitCode === 137) {
-      // SIGTERM(143) / SIGKILL(137) = 유저가 중단하거나 타임아웃 kill
+      // SIGTERM(143) / SIGKILL(137) = 유저 중단, 타임아웃 kill, 또는 result 이후 강제 종료.
       // 에러가 아닌 정상 중단으로 처리. 부분 출력이 있어도 '완료'로 새면 안 되므로
       // exit 0 판정보다 먼저 확인한다.
-      onResult?.({ text: final ?? '(응답이 중단되었습니다)', claudeSessionId: resultSessionId, model: resultModel, usage: resultUsage, exitCode });
+      if (!final && !userAborted) {
+        // 유저가 중단한 게 아닌데 결과 텍스트도 assistant 출력도 없다.
+        // 여기서 '(응답이 중단되었습니다)' 를 onResult 로 흘리면 빈 턴이 '정상 완료'로
+        // 기록되고 재시도가 안 걸린다. → cli_exit 재시도 경로(classifyError)로 라우팅.
+        const errMsg = `claude CLI exited ${exitCode} (no result text, subtype=${resultSubtype ?? 'none'}, is_error=${resultIsError}${effectiveResumeId ? ', resume=true' : ''})`;
+        logger.warn({ agent: agent.id, exitCode, subtype: resultSubtype, isError: resultIsError }, 'runner: killed with empty output — routing to onError for retry');
+        onError?.(new Error(errMsg));
+        onExit?.({ code: exitCode });
+        return;
+      }
+      // result 를 이미 받은 뒤 EXIT_GRACE 로 우리가 죽인 경우는 '강제종료'가 아니라 정상 턴이다.
+      // exitCode 를 143 그대로 넘기면 message-sender 의 wasKilled 판정이 위임 완료를
+      // '워커 강제종료'로 오인해 정상 보고를 폐기한다.
+      const resultExitCode = forcedExitAfterResult ? 0 : exitCode;
+      onResult?.({ text: final ?? '(응답이 중단되었습니다)', claudeSessionId: resultSessionId, model: resultModel, usage: resultUsage, exitCode: resultExitCode });
     } else if (code === 0 || final) {
       onResult?.({ text: final, claudeSessionId: resultSessionId, model: resultModel, usage: resultUsage, exitCode: code });
     } else {
@@ -762,6 +815,7 @@ export function startClaudeRun({
   return {
     process: proc,
     abort() {
+      userAborted = true;
       try { proc.kill('SIGTERM'); } catch { /* ignore */ }
     }
   };

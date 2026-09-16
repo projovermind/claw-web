@@ -369,3 +369,48 @@ describe('runner fallback routing', () => {
     expect(onError).toHaveBeenCalledOnce();
   });
 });
+
+// 한도에 걸린 백엔드가 쿨다운이 끝난 뒤 자동 선택 후보로 돌아오는지.
+// setCooldown 은 status 를 'cooldown' 으로 바꾸는데 되돌리는 주체가 없어서,
+// status 로 거르면 한 번 한도에 걸린 계정이 영영 로테이션에서 빠졌다.
+describe('cooldown recovery', () => {
+  let file;
+  let store;
+
+  beforeEach(async () => {
+    file = tmpPath('backends-cooldown');
+    fs.writeFileSync(file, JSON.stringify({
+      version: 1,
+      activeBackend: 'a',
+      backends: {
+        a: { type: 'claude-cli', label: 'A', models: {} },
+        b: { type: 'claude-cli', label: 'B', models: {} }
+      }
+    }));
+    store = await createBackendsStore(file);
+  });
+
+  afterEach(async () => {
+    await store.close?.();
+    fs.rmSync(file, { force: true });
+  });
+
+  it('쿨다운 중인 백엔드는 자동 선택에서 빠진다', async () => {
+    await store.setCooldown('a', new Date(Date.now() + 60_000).toISOString());
+    expect(store.pickClaudeCliBackend()?.id).toBe('b');
+  });
+
+  it('쿨다운이 만료되면 status 가 cooldown 이어도 다시 후보가 된다', async () => {
+    await store.setCooldown('a', new Date(Date.now() - 60_000).toISOString());
+    await store.setCooldown('b', new Date(Date.now() + 60_000).toISOString());
+    const picked = store.pickClaudeCliBackend();
+    expect(picked?.id).toBe('a');
+    expect(picked?.status).toBe('cooldown'); // 상태는 아직 안 돌아왔지만 시각 기준으로 선택됨
+  });
+
+  it('disabled 는 쿨다운과 무관하게 계속 제외된다', async () => {
+    await store.updateBackend('b', { status: 'disabled' });
+    await store.setCooldown('a', new Date(Date.now() + 60_000).toISOString());
+    expect(store.pickClaudeCliBackend()).toBeNull();
+  });
+});

@@ -11,7 +11,9 @@ export function classifyError(errMsg = '') {
   if (msg.includes('사용량 한도 도달') || msg.includes('자동 복구됩니다')) {
     return { canRetry: false, delay: 0, label: 'rate_limit_cooldown' };
   }
-  if (msg.includes('rate limit') || msg.includes('429')) {
+  // `rate_limit:` 는 러너가 한도 result 를 onError 로 돌릴 때 붙이는 프리픽스.
+  // 공백형('rate limit')과 달리 기존 조건에 안 걸려서 unrecoverable 로 떨어졌다.
+  if (msg.includes('rate limit') || msg.includes('rate_limit') || msg.includes('429')) {
     return { canRetry: true, delay: 60000, label: 'rate_limit' };
   }
   if (msg.includes('overloaded') || msg.includes('529') || msg.includes('503')) {
@@ -303,6 +305,10 @@ export function resolveAgent(agentId, { configStore, metadataStore, projectsStor
   const { backendId, backendType, backendObj } = resolveBackend(agent, backendsStore);
 
   // ── 모델 별칭 해석 ──
+  // 해석 전 원본을 남겨 둔다. 폴백 백엔드는 models 맵이 달라서, 1차 백엔드 기준으로
+  // 확정된 모델 ID 를 그대로 들고 가면 남의 모델명을 전선에 싣게 된다.
+  // runner._startFallback 이 이 별칭을 폴백 백엔드 기준으로 다시 해석한다.
+  const originalModelAlias = typeof agent.model === 'string' ? agent.model : null;
   // 백엔드 models 딕셔너리: { "opus sub": "claude-opus-4-5", ... }
   // agent.model이 별칭(예: "opus sub")이면 실제 모델 ID로 교체.
   // 1차: 선택된 백엔드에서 해석 시도
@@ -345,6 +351,11 @@ export function resolveAgent(agentId, { configStore, metadataStore, projectsStor
   if (backendsStore) {
     envOverrides._backendsStore = backendsStore;
     envOverrides._resolvedBackendId = backendId;
+  }
+
+  // 별칭이 실제로 다른 ID 로 치환된 경우에만 보존 — 원래부터 raw 모델 ID 면 폴백도 그대로 쓴다.
+  if (originalModelAlias && agent.model !== originalModelAlias) {
+    agent.modelAlias = originalModelAlias;
   }
 
   const fallback = resolveFallbackBackend(agent, backendsStore, backendId);
