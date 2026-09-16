@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useProgressMutation } from '../../lib/useProgressMutation';
 import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, Settings2, Key, AlertTriangle, Eye, Users } from 'lucide-react';
 import { api } from '../../lib/api';
-import type { ClaudeCliBackend, ApplyBackendToAgentsResult } from '../../lib/types';
+import type { BackendPublic, ClaudeCliBackend, ApplyBackendToAgentsResult } from '../../lib/types';
 import { BackendCard } from './BackendCard';
 import { ModelRow } from './ModelRow';
 import { AddBackendModal } from './AddBackendModal';
@@ -568,6 +568,8 @@ export function BackendsTab() {
       {editingBackend && (
         <EditClaudeCliModal
           backend={editingBackend}
+          allBackends={list}
+          globalFallback={data.fallbackBackend ?? null}
           onClose={() => setEditingId(null)}
         />
       )}
@@ -634,23 +636,48 @@ function CredBadge({ cred }: { cred?: ClaudeCliBackend['cred'] }) {
   );
 }
 
-/** 기존 Claude CLI 계정 편집 (configDir + models) */
-function EditClaudeCliModal({ backend, onClose }: { backend: ClaudeCliBackend; onClose: () => void }) {
+/** 기존 Claude CLI 계정 편집 (configDir + 폴백 + models) */
+function EditClaudeCliModal({
+  backend,
+  allBackends,
+  globalFallback,
+  onClose,
+}: {
+  backend: ClaudeCliBackend;
+  allBackends: BackendPublic[];
+  globalFallback: string | null;
+  onClose: () => void;
+}) {
+  const t = useT();
   const [configDir, setConfigDir] = useState(backend.configDir ?? '');
+  const [fallback, setFallback] = useState<string>(backend.fallback ?? '');
   const [models, setModels] = useState<Record<string, string>>({ ...backend.models });
   const [showPicker, setShowPicker] = useState(false);
   const [draftAlias, setDraftAlias] = useState('');
   const [draftModel, setDraftModel] = useState('');
 
+  // 자기 자신은 폴백 대상이 될 수 없다 (자기참조는 서버가 무시)
+  const fallbackOptions = allBackends.filter((b) => b.id !== backend.id);
+  const globalFallbackLabel = globalFallback
+    ? (allBackends.find((b) => b.id === globalFallback)?.label ?? globalFallback)
+    : null;
+
   const patch = useProgressMutation<unknown, Error, void>({
     title: '저장 중...',
     successMessage: '저장 완료',
     invalidateKeys: [['backends'], ['accounts']],
-    mutationFn: (): Promise<unknown> =>
-      api.patchAccount(backend.id, {
+    mutationFn: async (): Promise<unknown> => {
+      const res = await api.patchAccount(backend.id, {
         configDir: configDir.trim() || undefined,
         models,
-      }),
+      });
+      // fallback 은 계정 스키마가 아니라 백엔드 스키마의 필드 → 변경됐을 때만 별도 PATCH
+      const next = fallback || null;
+      if (next !== (backend.fallback ?? null)) {
+        await api.patchBackend(backend.id, { fallback: next });
+      }
+      return res;
+    },
     onSuccess: onClose,
   });
 
@@ -712,6 +739,30 @@ function EditClaudeCliModal({ backend, onClose }: { backend: ClaudeCliBackend; o
                   찾기
                 </button>
               </div>
+            </div>
+
+            {/* 폴백 백엔드 — 이 계정이 실패했을 때 대신 쓸 곳 */}
+            <div>
+              <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1">
+                {t('editAccount.fallbackTitle')}
+              </div>
+              <select
+                value={fallback}
+                onChange={(e) => setFallback(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
+              >
+                <option value="">
+                  {globalFallbackLabel
+                    ? t('editAccount.fallbackInherit', { backend: globalFallbackLabel })
+                    : t('editAccount.fallbackNone')}
+                </option>
+                {fallbackOptions.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.label} ({b.id})
+                  </option>
+                ))}
+              </select>
+              <p className="text-[11px] text-zinc-500 mt-1">{t('editAccount.fallbackDesc')}</p>
             </div>
 
             {/* 모델 단축명 설정 — BackendCard 와 동일한 ModelRow UI */}

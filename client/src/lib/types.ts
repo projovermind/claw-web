@@ -269,6 +269,8 @@ export type BackendPublic =
       priority: number;
       cooldownUntil?: number | null;
       cooldownRemaining?: number;
+      /** 이 백엔드가 실패했을 때 대신 쓸 백엔드 id. 전역 fallbackBackend 보다 우선. */
+      fallback?: string | null;
       /** 'ok' = configDir exists, 'missing' = not found */
       envStatus: 'ok' | 'missing';
       /** managed OAuth token 보유 여부 */
