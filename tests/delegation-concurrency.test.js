@@ -186,6 +186,39 @@ describe('agent maxConcurrent', () => {
     expect(ctx.dispatch).toHaveBeenCalledTimes(1);
   });
 
+  it('reports the origin as delegating while its task only sits in the queue', async () => {
+    vi.useFakeTimers();
+    const hasActive = () => ctx.delegationTracker.hasActiveByOrigin('lead');
+
+    await delegate('solo', 'A');
+    expect(hasActive()).toBe(true);
+
+    await delegate('solo', 'B');
+    expect(queued('solo')).toBe(1);
+
+    // 실행 중이던 A 가 끝나도 B 가 대기열에 남아 있으면 원 세션은 여전히 위임 중이다.
+    // 여기서 false 가 나오면 sessions 목록이 회신 대기 중인 플래너를 유휴로 표시한다.
+    ctx.delegationTracker.complete('sess_1', 'done');
+    expect(hasActive()).toBe(true);
+
+    ctx.dequeueNextAgent('solo');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(queued('solo')).toBe(0);
+    expect(hasActive()).toBe(true); // B 가 이제 running
+
+    ctx.delegationTracker.complete('sess_2', 'done');
+    expect(hasActive()).toBe(false);
+  });
+
+  it('does not mark an unrelated session as delegating because of a queued task', async () => {
+    await ctx.executeDelegation('other-lead', 'solo', 'A', '{}');
+    await ctx.executeDelegation('other-lead', 'solo', 'B', '{}');
+    expect(queued('solo')).toBe(1);
+
+    expect(ctx.delegationTracker.hasActiveByOrigin('other-lead')).toBe(true);
+    expect(ctx.delegationTracker.hasActiveByOrigin('lead')).toBe(false);
+  });
+
   it('clamps out-of-range and non-numeric settings to a usable limit', () => {
     for (const [value, expected] of [[0, 1], [-4, 1], [99, 10], [2.7, 2], ['3', 3], [null, 1], ['abc', 1], [undefined, 1]]) {
       agents.solo.maxConcurrent = value;

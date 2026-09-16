@@ -8,7 +8,7 @@ import {
 import { Plus, Pin, ChevronDown, ListTodo, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { api } from '../lib/api';
 import type { Session, SessionMeta, ChatMessage, Agent, Project } from '../lib/types';
-import { isSessionBusy } from '../lib/visibility';
+import { isSessionBusy, isSessionRunning } from '../lib/visibility';
 import { useChatStore, selectActiveWorkspace } from '../store/chat-store';
 import { useProgressToastStore } from '../store/progress-toast-store';
 import { useT } from '../lib/i18n';
@@ -741,7 +741,9 @@ function MobileHeader({
                       className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-zinc-800/50">
                       <span>{agent?.avatar ?? '🤖'}</span>
                       <span className="truncate flex-1">{s.title}</span>
-                      <span className="text-[10px] text-amber-400 shrink-0 animate-pulse">● running</span>
+                      <span className="text-[10px] text-amber-400 shrink-0 animate-pulse">
+                        {isSessionRunning(s, runtimeAll) ? '● running' : `○ ${t('chat.session.delegating')}`}
+                      </span>
                     </button>
                   );
                 })}

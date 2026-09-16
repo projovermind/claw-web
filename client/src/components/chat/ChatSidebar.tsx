@@ -533,7 +533,9 @@ export function ChatSidebar({
                         <div className="font-semibold truncate">{s.title}</div>
                         <div className="text-[11px] text-zinc-500 truncate">{agent?.name ?? s.agentId}</div>
                       </div>
-                      <span className="text-[10px] text-amber-400 shrink-0 animate-pulse">● running</span>
+                      <span className="text-[10px] text-amber-400 shrink-0 animate-pulse">
+                        {isSessionRunning(s, runtime) ? '● running' : `○ ${t('chat.session.delegating')}`}
+                      </span>
                     </button>
                   );
                 })}

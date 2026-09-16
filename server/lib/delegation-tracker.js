@@ -321,12 +321,19 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
 
     /**
      * True while at least one delegation started by this session is still
-     * running. Cheap enough to call per-session on list endpoints.
+     * outstanding — running *or* still waiting in the router's per-agent queue.
+     * 대기열까지 세지 않으면 한도에 걸려 큐에 쌓인 위임이 원 세션에서
+     * delegating:false 로 보여, 회신을 기다리는 플래너가 유휴로 오인된다.
+     * Cheap enough to call per-session on list endpoints.
      */
     hasActiveByOrigin(originSessionId) {
       const bucket = byOrigin.get(originSessionId);
-      if (!bucket) return false;
-      return bucket.some((e) => e.status === 'running');
+      if (bucket?.some((e) => e.status === 'running')) return true;
+      if (!pendingQueueRef) return false;
+      for (const items of pendingQueueRef.values()) {
+        if (items.some((item) => item.originSessionId === originSessionId)) return true;
+      }
+      return false;
     },
 
     /**
