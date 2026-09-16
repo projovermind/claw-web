@@ -334,7 +334,15 @@ export interface BackendsState {
   activeBackend: string;
   austerityMode: boolean;
   austerityBackend: string;
+  /** 에이전트에 백엔드가 지정되지 않았을 때 쓰는 백엔드. null 이면 설정 안 함. */
+  fallbackBackend?: string | null;
   backends: Record<string, BackendPublic>;
+}
+
+/** POST /api/backends/apply-to-agents 응답 — previous 를 그대로 restore 로 돌려보내면 되돌려짐. */
+export interface ApplyBackendToAgentsResult {
+  updated: number;
+  previous: Record<string, string | null>;
 }
 
 export interface DelegationEntry {

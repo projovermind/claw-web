@@ -25,7 +25,22 @@ const updateSchema = z.object({
   models: z.record(z.string()).optional(),
   // 모델 id → 컨텍스트 창(토큰). 휴리스틱(context-window.js)보다 우선한다.
   // 새 모델이 나왔는데 휴리스틱이 아직 모를 때 코드 수정 없이 교정하는 통로.
-  contextWindows: z.record(z.number().int().positive()).optional()
+  contextWindows: z.record(z.number().int().positive()).optional(),
+  // 이 백엔드가 실패했을 때 대신 쓸 백엔드 id. 전역 fallbackBackend 보다 우선.
+  fallback: z.string().max(64).nullable().optional()
+}).strict();
+
+const fallbackSchema = z.object({
+  backendId: z.string().max(64).nullable()
+}).strict();
+
+const applyToAgentsSchema = z.object({
+  // null = 상속 (에이전트에서 backendId 를 지워 전역 active 백엔드를 따르게 함)
+  backendId: z.string().max(64).nullable(),
+  // 지정 시 해당 프로젝트 소속 에이전트만 대상
+  projectId: z.string().max(128).optional(),
+  // { agentId: backendId|null } — 이전 상태를 그대로 되돌린다. 주면 backendId 는 무시.
+  restore: z.record(z.string().max(64).nullable()).optional()
 }).strict();
 
 const secretSchema = z.object({
@@ -90,7 +105,7 @@ export const BACKEND_PRESETS = [
   }
 ];
 
-export function createBackendsRouter({ backendsStore, eventBus, webConfig }) {
+export function createBackendsRouter({ backendsStore, eventBus, webConfig, configStore, metadataStore }) {
   const router = Router();
 
   router.get('/', (req, res) => {
@@ -218,6 +233,72 @@ export function createBackendsRouter({ backendsStore, eventBus, webConfig }) {
       await backendsStore.setActive(backendId);
       if (eventBus) eventBus.publish('backends.updated', {});
       res.json({ activeBackend: backendId });
+    } catch (err) {
+      if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
+      next(err);
+    }
+  });
+
+  // 전역 폴백 백엔드 지정/해제.
+  router.post('/fallback', async (req, res, next) => {
+    try {
+      const { backendId } = fallbackSchema.parse(req.body);
+      const fallbackBackend = await backendsStore.setFallbackBackend(backendId);
+      if (eventBus) eventBus.publish('backends.updated', {});
+      res.json({ fallbackBackend });
+    } catch (err) {
+      if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
+      if (/^Unknown backend /.test(err.message ?? '')) {
+        return next(new HttpError(404, err.message, 'BACKEND_NOT_FOUND'));
+      }
+      next(err);
+    }
+  });
+
+  // 모든 에이전트의 backendId 를 한 번에 바꾼다. 응답의 previous 맵을 그대로
+  // restore 로 다시 POST 하면 원상복구된다 (실수했을 때의 탈출구).
+  router.post('/apply-to-agents', async (req, res, next) => {
+    try {
+      if (!configStore) throw new HttpError(503, 'config store not available', 'NO_CONFIG_STORE');
+      const { backendId, projectId, restore } = applyToAgentsSchema.parse(req.body);
+      if (backendId != null && !backendsStore.getBackend(backendId)) {
+        throw new HttpError(404, `Backend ${backendId} not found`, 'BACKEND_NOT_FOUND');
+      }
+
+      const agents = configStore.getAgents() ?? {};
+      const targets = restore
+        ? Object.keys(restore).filter((id) => agents[id])
+        : Object.keys(agents).filter((id) => {
+            if (!projectId) return true;
+            return metadataStore?.getAgent(id)?.projectId === projectId;
+          });
+
+      const previous = {};
+      const changed = [];
+      for (const id of targets) {
+        // accountId 는 backendId 의 구버전 별칭인데 계정 스케줄러에서는 오히려
+        // 우선순위가 높다. 남겨두면 backendId 만 바꿔도 실제 spawn 은 옛 계정으로
+        // 가므로, 실효값을 previous 에 담고 적용 시엔 제거한다.
+        const before = agents[id]?.backendId ?? agents[id]?.accountId ?? null;
+        const after = restore ? (restore[id] ?? null) : backendId;
+        previous[id] = before;
+        if (before === after && agents[id]?.accountId == null) continue;
+        // config.json 은 파일 락 하나를 공유하므로 순차 갱신. 병렬로 돌리면
+        // 락 재시도 폭주로 오히려 느려지고 일부가 조용히 유실된다.
+        await configStore.updateAgent(id, { backendId: after, accountId: null });
+        changed.push(id);
+      }
+
+      if (eventBus && changed.length) eventBus.publish('agents.updated', {});
+      res.json({
+        applied: restore ? 'restore' : (backendId ?? null),
+        scope: projectId ?? 'all',
+        total: targets.length,
+        // updated 는 클라이언트 토스트가 읽는 실제 변경 건수. changed 는 대상 id 목록.
+        updated: changed.length,
+        changed,
+        previous
+      });
     } catch (err) {
       if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
       next(err);

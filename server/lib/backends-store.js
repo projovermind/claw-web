@@ -10,6 +10,9 @@ const EMPTY = () => ({
   activeBackend: 'claude',
   austerityMode: false,
   austerityBackend: 'zai',
+  // 전역 폴백 — 어떤 백엔드가 실패했을 때 대신 쓸 백엔드. 백엔드별 `fallback`
+  // 이 설정돼 있으면 그쪽이 우선한다. null 이면 폴백 없음.
+  fallbackBackend: null,
   backends: {
     claude: {
       type: 'claude-cli',
@@ -125,6 +128,7 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
       activeBackend: cache.activeBackend,
       austerityMode: !!cache.austerityMode,
       austerityBackend: cache.austerityBackend,
+      fallbackBackend: cache.fallbackBackend ?? null,
       backends
     };
   }
@@ -166,6 +170,12 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
           throw err;
         }
         if (current.backends) delete current.backends[id];
+        // 지운 백엔드를 가리키는 폴백 포인터는 같이 끊는다 — 남겨두면 폴백이
+        // 매번 "Unknown backend" 로 조용히 실패한다.
+        if (current.fallbackBackend === id) current.fallbackBackend = null;
+        for (const [bid, b] of Object.entries(current.backends ?? {})) {
+          if (b?.fallback === id) current.backends[bid] = { ...b, fallback: null };
+        }
         return current;
       });
       // Also forget the secret for this backend
@@ -285,6 +295,21 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
         current.activeBackend = backendId;
         return current;
       });
+    },
+
+    /**
+     * 전역 폴백 백엔드 지정 (null = 해제). 백엔드별 `fallback` 이 있으면 그것이
+     * 우선하므로, 이 값은 "따로 지정하지 않은 모든 백엔드"의 폴백이 된다.
+     */
+    async setFallbackBackend(backendId) {
+      await writeWithLock((current) => {
+        if (backendId != null && !current.backends?.[backendId]) {
+          throw new Error(`Unknown backend ${backendId}`);
+        }
+        current.fallbackBackend = backendId ?? null;
+        return current;
+      });
+      return cache.fallbackBackend ?? null;
     },
 
     async setAusterity(enabled, backendId) {

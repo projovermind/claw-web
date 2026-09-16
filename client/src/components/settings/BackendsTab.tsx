@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useProgressMutation } from '../../lib/useProgressMutation';
-import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, Settings2, Key, AlertTriangle, Eye } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, Settings2, Key, AlertTriangle, Eye, Users } from 'lucide-react';
 import { api } from '../../lib/api';
-import type { ClaudeCliBackend } from '../../lib/types';
+import type { ClaudeCliBackend, ApplyBackendToAgentsResult } from '../../lib/types';
 import { BackendCard } from './BackendCard';
 import { ModelRow } from './ModelRow';
 import { AddBackendModal } from './AddBackendModal';
@@ -14,6 +14,7 @@ import { RevealTokenModal } from './RevealTokenModal';
 import PathPicker from '../common/PathPicker';
 import { useT } from '../../lib/i18n';
 import { useProgressToastStore } from '../../store/progress-toast-store';
+import { useToastStore } from '../../store/toast-store';
 
 function fmtTokens(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -63,6 +64,17 @@ export function BackendsTab() {
   const [authModalId, setAuthModalId] = useState<string | null>(null);
   const [revealId, setRevealId] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
+  // 일괄 적용 — 대상 백엔드('' = 전역 설정 따르기) 와 확인 모달
+  const [applyTarget, setApplyTarget] = useState<string>('');
+  const [applyConfirm, setApplyConfirm] = useState(false);
+  const addToast = useToastStore((s) => s.add);
+  const { data: agents } = useQuery({ queryKey: ['agents'], queryFn: api.agents });
+
+  /** null(전역 따르기) 또는 백엔드 id 를 사람이 읽는 라벨로. */
+  const backendLabelOf = (backendId: string | null): string => {
+    if (backendId == null) return t('backendsTab.applyAllFollowGlobal');
+    return data?.backends[backendId]?.label ?? backendId;
+  };
 
   // Cooldown countdown — seeded from polled data, ticks every second
   const [countdowns, setCountdowns] = useState<Record<string, number>>({});
@@ -158,6 +170,53 @@ export function BackendsTab() {
     mutationFn: ({ id, status }) => api.patchAccount(id, { status }),
   });
 
+  const setFallback = useProgressMutation<unknown, Error, string | null>({
+    title: '폴백 백엔드 변경 중...',
+    successMessage: '변경 완료',
+    invalidateKeys: [['backends']],
+    mutationFn: (backendId: string | null) => api.setFallbackBackend(backendId),
+  });
+
+  const restoreAgentBackends = useProgressMutation<
+    ApplyBackendToAgentsResult,
+    Error,
+    Record<string, string | null>
+  >({
+    title: t('backendsTab.applyAllProgress'),
+    invalidateKeys: [['agents'], ['backends']],
+    mutationFn: (previous) => api.applyBackendToAgents({ restore: previous }),
+    onSuccess: (res) => {
+      addToast('success', t('backendsTab.applyAllUndone', { count: res.updated }));
+    },
+    onError: (err) => {
+      addToast('error', t('backendsTab.applyAllUndoFailed', { error: err.message }));
+    },
+  });
+
+  const applyToAgents = useProgressMutation<ApplyBackendToAgentsResult, Error, string | null>({
+    title: t('backendsTab.applyAllProgress'),
+    invalidateKeys: [['agents'], ['backends']],
+    mutationFn: (backendId: string | null) => api.applyBackendToAgents({ backendId }),
+    onSuccess: (res, backendId) => {
+      addToast(
+        'success',
+        t('backendsTab.applyAllDone', {
+          count: res.updated,
+          target: backendLabelOf(backendId),
+        }),
+        {
+          action: {
+            label: t('backendsTab.applyAllUndo'),
+            onClick: () => restoreAgentBackends.mutate(res.previous),
+          },
+        }
+      );
+    },
+    onError: (err) => {
+      addToast('error', t('backendsTab.applyAllFailed', { error: err.message }));
+    },
+  });
+
   const testMut = useProgressMutation<{ ok: boolean; output?: string; error?: string }, Error, string>({
     title: '계정 테스트 중...',
     successMessage: '테스트 완료',
@@ -245,7 +304,72 @@ export function BackendsTab() {
         <p className="text-[11px] text-zinc-500">
           {t('backendsTab.austerityDesc', { backend: data.austerityBackend })}
         </p>
+
+        {/* 폴백 백엔드 — 에이전트에 백엔드가 지정 안 됐을 때 */}
+        <div className="pt-3 border-t border-zinc-800">
+          <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1">
+            {t('backendsTab.fallbackTitle')}
+          </div>
+          <select
+            value={data.fallbackBackend ?? ''}
+            onChange={(e) => setFallback.mutate(e.target.value || null)}
+            disabled={setFallback.isPending}
+            className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm disabled:opacity-50"
+          >
+            <option value="">{t('backendsTab.fallbackNone')}</option>
+            {list.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.label} ({b.id})
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-zinc-500 mt-1">{t('backendsTab.fallbackDesc')}</p>
+        </div>
+
+        {/* 전체 에이전트 백엔드 일괄 적용 */}
+        <div className="pt-3 border-t border-zinc-800">
+          <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-zinc-500 mb-1">
+            <Users size={11} />
+            {t('backendsTab.applyAllTitle')}
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={applyTarget}
+              onChange={(e) => setApplyTarget(e.target.value)}
+              className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
+            >
+              <option value="">{t('backendsTab.applyAllFollowGlobal')}</option>
+              {list.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.label} ({b.id})
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => setApplyConfirm(true)}
+              disabled={applyToAgents.isPending || restoreAgentBackends.isPending}
+              className="shrink-0 rounded bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-xs disabled:opacity-50"
+            >
+              {t('backendsTab.applyAllButton')}
+            </button>
+          </div>
+          <p className="text-[11px] text-zinc-500 mt-1">{t('backendsTab.applyAllDesc')}</p>
+        </div>
       </div>
+
+      {applyConfirm && (
+        <ApplyToAgentsConfirm
+          targetLabel={backendLabelOf(applyTarget || null)}
+          affectedCount={
+            agents ? agents.filter((a) => (a.backendId ?? null) !== (applyTarget || null)).length : null
+          }
+          onCancel={() => setApplyConfirm(false)}
+          onConfirm={() => {
+            setApplyConfirm(false);
+            applyToAgents.mutate(applyTarget || null);
+          }}
+        />
+      )}
 
       {/* 원클릭 프리셋 — 아직 등록 안 된 것만 노출 */}
       {(presetsQuery.data?.some((p) => !p.installed) ?? false) && (
@@ -712,5 +836,59 @@ function CopyLoginCmd({ configDir, onCopied }: { configDir: string; onCopied?: (
     <button onClick={copy} title="claude login 명령 복사" className="text-zinc-600 hover:text-zinc-300 shrink-0">
       {copied ? <CheckCircle2 size={11} className="text-emerald-400" /> : <Copy size={11} />}
     </button>
+  );
+}
+
+/** 일괄 적용 확인 모달 — 영향받는 에이전트 수를 먼저 알려준다. */
+function ApplyToAgentsConfirm({
+  targetLabel,
+  affectedCount,
+  onConfirm,
+  onCancel,
+}: {
+  targetLabel: string;
+  /** 에이전트 목록을 아직 못 읽었으면 null */
+  affectedCount: number | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  return (
+    <div
+      className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      onClick={onCancel}
+    >
+      <div
+        className="bg-zinc-900 border border-zinc-800 rounded-lg w-full max-w-sm"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-800">
+          <Users size={14} className="text-amber-400" />
+          <h3 className="text-sm font-semibold">{t('backendsTab.applyAllConfirmTitle')}</h3>
+        </div>
+        <div className="p-5 space-y-3">
+          <p className="text-sm text-zinc-300 leading-relaxed">
+            {affectedCount == null
+              ? t('backendsTab.applyAllConfirmBodyUnknown', { target: targetLabel })
+              : t('backendsTab.applyAllConfirmBody', { count: affectedCount, target: targetLabel })}
+          </p>
+          <p className="text-[11px] text-zinc-500">{t('backendsTab.applyAllDesc')}</p>
+          <div className="flex justify-end gap-2 pt-1">
+            <button
+              onClick={onCancel}
+              className="rounded bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 text-xs"
+            >
+              {t('backendsTab.applyAllConfirmCancel')}
+            </button>
+            <button
+              onClick={onConfirm}
+              className="rounded bg-amber-900/60 hover:bg-amber-800/70 text-amber-100 px-3 py-1.5 text-xs"
+            >
+              {t('backendsTab.applyAllConfirmOk')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }

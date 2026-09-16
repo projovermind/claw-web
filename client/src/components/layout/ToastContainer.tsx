@@ -24,7 +24,20 @@ export default function ToastContainer() {
             className={`flex items-start gap-2.5 rounded-lg border px-3 py-2.5 shadow-lg backdrop-blur-sm animate-toast-in ${bg}`}
           >
             <Icon size={16} className={`${color} shrink-0 mt-0.5`} />
-            <span className="flex-1 text-sm text-zinc-200 break-words">{t.message}</span>
+            <div className="flex-1 min-w-0 space-y-1.5">
+              <span className="block text-sm text-zinc-200 break-words">{t.message}</span>
+              {t.action && (
+                <button
+                  onClick={() => {
+                    t.action!.onClick();
+                    dismiss(t.id);
+                  }}
+                  className="rounded border border-zinc-700 bg-zinc-800/80 hover:bg-zinc-700 px-2 py-1 text-xs text-zinc-200 transition-colors"
+                >
+                  {t.action.label}
+                </button>
+              )}
+            </div>
             <button
               onClick={() => dismiss(t.id)}
               className="shrink-0 text-zinc-500 hover:text-zinc-300 transition-colors"

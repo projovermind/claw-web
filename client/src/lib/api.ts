@@ -11,6 +11,7 @@ import type {
   BackendsState,
   BackendPublic,
   BackendPreset,
+  ApplyBackendToAgentsResult,
   Skill,
   UsageCost,
   ActivityEntry,
@@ -284,6 +285,16 @@ export const api = {
   setActiveBackend: (backendId: string) => post<{ activeBackend: string }>('/backends/active', { backendId }),
   setAusterity: (enabled: boolean, backendId?: string) =>
     post<{ austerityMode: boolean }>('/backends/austerity', { enabled, backendId }),
+  /** 에이전트에 백엔드가 없을 때 쓰는 폴백. null 이면 설정 해제. */
+  setFallbackBackend: (backendId: string | null) =>
+    post<{ fallbackBackend: string | null }>('/backends/fallback', { backendId }),
+  /**
+   * 모든 에이전트의 backendId 를 일괄 변경. backendId: null 이면 전역 설정을 따르게 함.
+   * 응답의 previous 를 { restore } 로 다시 보내면 되돌아간다.
+   */
+  applyBackendToAgents: (
+    body: { backendId: string | null } | { restore: Record<string, string | null> }
+  ) => post<ApplyBackendToAgentsResult>('/backends/apply-to-agents', body),
   skills: () => get<{ skills: Skill[] }>('/skills').then((r) => r.skills),
   skill: (id: string) => get<Skill>(`/skills/${id}`),
   createSkill: (data: { name: string; description?: string; content?: string }) =>

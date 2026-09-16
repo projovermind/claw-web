@@ -35,7 +35,7 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
     };
   }
 
-  return {
+  const api = {
     /**
      * @param {object} opts
      * @param {string} opts.sessionId
@@ -44,7 +44,7 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
      * @param {string} [opts.claudeSessionId]
      * @param {object} [opts.envOverrides]
      * @param {string} [opts.backendType]    - 'claude-cli' | 'openai-compatible' | 'anthropic-compatible'
-     * @param {object} [opts.backendConfig]  - { backendName: 'zai' | 'deepseek' | ... }
+     * @param {object} [opts.backendConfig]  - { backendName, fallbackId, fallback }
      * @param {object} [opts.callbacks]
      */
     start({ sessionId, agent, message, claudeSessionId, envOverrides = {}, backendType, backendConfig, callbacks = {} }) {
@@ -55,10 +55,16 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
       // ── Discord bot 라우팅 로직 (bot.js line 2646) ──
       // openai-compatible → OpenAI SDK 직접 호출 (zai, deepseek, openai, openrouter)
       if (backendType === 'openai-compatible') {
-        return this._startOpenAI({ sessionId, agent, message, claudeSessionId, envOverrides, backendConfig, callbacks });
+        return api._startOpenAI({ sessionId, agent, message, claudeSessionId, backendConfig, callbacks });
       }
 
       // ── Claude CLI (claude-cli 또는 anthropic-compatible) ──
+      const fallback = backendConfig?.fallback ?? null;
+      // 레이트리밋/기동실패로 한 번만 폴백한다. 폴백 실행에는 fallback:null 을
+      // 넘기므로 폴백이 또 폴백하는 연쇄는 구조적으로 불가능하다(1홉).
+      let fallbackStarted = false;
+      let sawResult = false;
+
       lastActivity.set(sessionId, Date.now());
       const handle = startClaudeRun({
         agent,
@@ -68,7 +74,22 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
         accountScheduler,
         callbacks: {
           ...withActivity(sessionId, callbacks),
+          onResult: (result) => {
+            sawResult = true;
+            callbacks.onResult?.(result);
+          },
+          onError: (err) => {
+            if (fallback && !fallbackStarted && !sawResult) {
+              fallbackStarted = true;
+              api._startFallback({ sessionId, agent, message, claudeSessionId, fallback, callbacks, cause: err });
+              return;
+            }
+            callbacks.onError?.(err);
+          },
           onExit: (info) => {
+            // 폴백이 세션을 이어받았으면 1차 실행의 종료는 삼킨다 — 여기서
+            // onExit 를 흘리면 호출자가 턴을 끝내 버려 폴백 응답이 버려진다.
+            if (fallbackStarted) return;
             cleanup(sessionId);
             callbacks.onExit?.(info);
           }
@@ -82,10 +103,49 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
     },
 
     /**
+     * 폴백 백엔드로 1회 재시도. 폴백 백엔드의 타입대로 라우팅한다
+     * (claude-cli / anthropic-compatible → Claude CLI, openai-compatible → OpenAI SDK).
+     */
+    _startFallback({ sessionId, agent, message, claudeSessionId, fallback, callbacks, cause }) {
+      logger.warn(
+        { sessionId, agent: agent.id, fallbackBackend: fallback.backendId, fallbackType: fallback.backendType, cause: cause?.message },
+        'runner: primary backend failed — retrying on fallback backend'
+      );
+      cleanup(sessionId);
+
+      // backendId 를 폴백으로 갈아끼워야 러너/계정 스케줄러가 폴백 백엔드의
+      // configDir·managed OAuth 토큰·사용량 기록을 쓴다. accountId 는 스케줄러에서
+      // backendId 보다 우선하므로 같이 지운다.
+      const fbAgent = { ...agent, backendId: fallback.backendId, accountId: null };
+      if (fallback.configDir) fbAgent.configDir = fallback.configDir;
+      else delete fbAgent.configDir;
+
+      try {
+        return api.start({
+          sessionId,
+          agent: fbAgent,
+          message,
+          claudeSessionId,
+          envOverrides: fallback.envOverrides ?? {},
+          backendType: fallback.backendType,
+          backendConfig: { backendName: fallback.backendId, fallbackId: null, fallback: null },
+          callbacks
+        });
+      } catch (err) {
+        logger.error({ sessionId, fallbackBackend: fallback.backendId, err: err.message },
+          'runner: fallback start failed');
+        cleanup(sessionId);
+        callbacks.onError?.(cause ?? err);
+        callbacks.onExit?.({ code: 1 });
+        return null;
+      }
+    },
+
+    /**
      * OpenAI SDK 경로 — zai_runner.js 복제
      * Z.AI coding/paas 엔드포인트 + 로컬 도구 실행 루프
      */
-    _startOpenAI({ sessionId, agent, message, claudeSessionId, envOverrides, backendConfig, callbacks }) {
+    _startOpenAI({ sessionId, agent, message, claudeSessionId, backendConfig, callbacks }) {
       const { onText, onToolUse, onResult, onError, onExit } = withActivity(sessionId, callbacks);
 
       let aborted = false;
@@ -118,7 +178,8 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
       const systemPrompt = parts.join('\n').trim() || 'You are a helpful assistant.';
 
       const backendName = backendConfig?.backendName || 'zai';
-      const fallbackId = backendConfig?.fallbackId || null;
+      const fallback = backendConfig?.fallback ?? null;
+      const fallbackId = fallback?.backendId ?? null;
 
       logger.info(
         { agent: agent.id, backend: backendName, model: agent.model, fallback: fallbackId },
@@ -166,33 +227,11 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
           if (aborted) return;
           logger.warn({ err: err.message, agent: agent.id, backend: backendName, fallback: fallbackId }, 'runner: openai-runner failed');
 
-          // ── Fallback: 실패 시 다른 백엔드로 재시도 ──
-          if (fallbackId) {
-            logger.info({ agent: agent.id, fallback: fallbackId }, 'runner: falling back to Claude CLI');
-            cleanup(sessionId);
-
-            // Claude CLI로 fallback (envOverrides로 전달)
-            const fbHandle = startClaudeRun({
-              agent,
-              message,
-              claudeSessionId,
-              envOverrides: envOverrides || {},
-              // 빠뜨리면 fallback 실행이 기본 ~/.claude 계정으로 새고
-              // 사용량 기록/쿨다운 회전도 안 걸린다.
-              accountScheduler,
-              callbacks: {
-                ...withActivity(sessionId, callbacks),
-                onExit: (info) => {
-                  cleanup(sessionId);
-                  callbacks.onExit?.(info);
-                }
-              }
-            });
-            active.set(sessionId, fbHandle);
-            lastActivity.set(sessionId, Date.now());
-            if (processTracker && fbHandle.process?.pid) {
-              processTracker.track(sessionId, fbHandle.process.pid);
-            }
+          // ── Fallback: 실패 시 폴백 백엔드로 1회 재시도 ──
+          // 폴백 백엔드의 타입대로 라우팅한다. 예전엔 여기서 무조건 Claude CLI 를
+          // 띄워서, 폴백을 openai-compatible 로 지정해도 클로드로 샜다.
+          if (fallback) {
+            api._startFallback({ sessionId, agent, message, claudeSessionId, fallback, callbacks, cause: err });
             return;
           }
 
@@ -225,4 +264,6 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
     activeIds: () => [...active.keys()],
     lastActivityAt: (sessionId) => lastActivity.get(sessionId) ?? null
   };
+
+  return api;
 }

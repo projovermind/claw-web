@@ -1,4 +1,5 @@
 import { logger } from '../../lib/logger.js';
+import { resolveConfigDir } from '../../lib/config-dir.js';
 
 /**
  * Classify an error message and return retry strategy.
@@ -193,11 +194,11 @@ export function resolveBackend(agent, backendsStore) {
 }
 
 /**
- * Build env overrides for Claude CLI (anthropic-compatible backends only).
+ * Env for one concrete backend object. anthropic-compatible 만 실제 env 가 필요하고
+ * (Claude CLI 를 게이트웨이로 돌려세우는 값들), 나머지 타입은 빈 객체다.
  */
-export function buildBackendEnv(agent, backendsStore) {
-  const { backendType, backendObj } = resolveBackend(agent, backendsStore);
-  if (!backendObj || backendType !== 'anthropic-compatible') return {};
+function envForBackend(backendObj, agent) {
+  if (backendObj?.type !== 'anthropic-compatible') return {};
   const env = {};
   if (backendObj.baseURL) {
     env.ANTHROPIC_BASE_URL = backendObj.baseURL;
@@ -213,6 +214,50 @@ export function buildBackendEnv(agent, backendsStore) {
   if (models.haiku) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = models.haiku;
   if (agent?.model === 'default') agent.model = 'sonnet';
   return env;
+}
+
+/**
+ * Build env overrides for Claude CLI (anthropic-compatible backends only).
+ */
+export function buildBackendEnv(agent, backendsStore) {
+  const { backendObj } = resolveBackend(agent, backendsStore);
+  if (!backendObj) return {};
+  return envForBackend(backendObj, agent);
+}
+
+/**
+ * 1차 백엔드가 실패했을 때 쓸 폴백 백엔드를 실행 가능한 형태로 푼다.
+ *
+ * 우선순위: backend.fallback > 전역 fallbackBackend.
+ * 자기 자신을 가리키거나 등록되지 않은 id 면 폴백 없음(null)으로 취급한다 —
+ * 그래야 러너가 같은 실패를 한 번 더 반복하지 않는다.
+ *
+ * @returns {{ backendId, backendType, envOverrides, configDir }|null}
+ */
+export function resolveFallbackBackend(agent, backendsStore, primaryBackendId) {
+  if (!backendsStore) return null;
+  const raw = backendsStore.getRaw();
+  const primaryObj = raw?.backends?.[primaryBackendId] ?? null;
+  const fallbackId = primaryObj?.fallback || raw?.fallbackBackend || null;
+  if (!fallbackId || fallbackId === primaryBackendId) return null;
+
+  const fallbackObj = raw?.backends?.[fallbackId] ?? null;
+  if (!fallbackObj) {
+    logger.warn({ agent: agent?.id, primaryBackendId, fallbackId },
+      'resolveFallbackBackend: 폴백 대상 백엔드가 등록돼 있지 않음 — 폴백 없이 진행');
+    return null;
+  }
+
+  const envOverrides = envForBackend(fallbackObj, agent);
+  envOverrides._backendsStore = backendsStore;
+  envOverrides._resolvedBackendId = fallbackId;
+
+  return {
+    backendId: fallbackId,
+    backendType: fallbackObj.type || 'claude-cli',
+    envOverrides,
+    configDir: fallbackObj.type === 'claude-cli' ? resolveConfigDir(fallbackId, fallbackObj.configDir) : null
+  };
 }
 
 /**
@@ -302,8 +347,10 @@ export function resolveAgent(agentId, { configStore, metadataStore, projectsStor
     envOverrides._resolvedBackendId = backendId;
   }
 
+  const fallback = resolveFallbackBackend(agent, backendsStore, backendId);
+
   return {
     agent, envOverrides, backendType,
-    backendConfig: { backendName: backendId, fallbackId: backendObj?.fallback || null }
+    backendConfig: { backendName: backendId, fallbackId: fallback?.backendId ?? null, fallback }
   };
 }
