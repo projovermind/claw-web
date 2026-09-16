@@ -366,7 +366,15 @@ export const api = {
   claudeInstall: (reinstall = false) =>
     post<{ ok: boolean; message: string; startedAt: string }>(`/admin/claude/install`, { reinstall }),
   claudeLogin: () =>
-    post<{ ok: boolean; message: string }>(`/admin/claude/login`, {}),
+    post<{
+      ok: boolean;
+      message: string;
+      manual?: boolean;
+      command?: string;
+      platform?: string;
+      shell?: string;
+      hint?: string;
+    }>(`/admin/claude/login`, {}),
   /**
    * Upload a file (from drag-drop or clipboard paste) to the server's
    * /api/uploads endpoint. Base64-encodes the bytes and attaches the auth
@@ -466,7 +474,19 @@ export const api = {
   testAccount: (id: string) =>
     post<{ ok: boolean; configDir: string; output?: string; error?: string; autoActivated?: boolean }>(`/accounts/${id}/test`, {}),
   loginAccount: (id: string) =>
-    post<{ ok: boolean; message?: string; command?: string; error?: string; manual?: boolean }>(`/accounts/${id}/login`, {}),
+    post<{
+      ok: boolean;
+      message?: string;
+      command?: string;
+      error?: string;
+      manual?: boolean;
+      /** node process.platform — 'darwin' | 'win32' | 'linux' | ... */
+      platform?: string;
+      /** 명령을 붙여넣을 셸 (예: 'zsh', 'powershell', 'bash') */
+      shell?: string;
+      /** 사람이 읽는 안내 문구. 있으면 클라이언트 기본 문구보다 우선. */
+      hint?: string;
+    }>(`/accounts/${id}/login`, {}),
   setAccountOAuthToken: (id: string, token: string | null) =>
     req<{ ok: boolean; hasToken: boolean; account: import('./types').Account }>(`/accounts/${id}/oauth-token`, {
       method: 'PUT',

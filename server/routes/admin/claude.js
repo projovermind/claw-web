@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 import fssync from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { execFileAsync, findClaudeBin, findNodeBin, checkClaudeStatus } from './utils.js';
+import { findClaudeBin, findNodeBin, checkClaudeStatus } from './utils.js';
+import { launchTerminal } from '../../lib/terminal-launcher.js';
 
 /** Register /claude/* routes. */
 export function registerClaudeRoutes(router, { eventBus }) {
@@ -130,7 +131,7 @@ export function registerClaudeRoutes(router, { eventBus }) {
     }
   });
 
-  // POST /claude/login — Terminal.app 에서 `claude setup-token` 실행 (장기 토큰 발급)
+  // POST /claude/login — 터미널에서 `claude setup-token` 실행 (장기 토큰 발급)
   // 2.1.x 부터 권장 경로는 setup-token. login 은 interactive 메뉴로 진입해서
   // 토큰 추출이 모호함. setup-token 은 sk-ant-oat01-… 토큰을 stdout 으로 출력.
   router.post('/claude/login', async (_req, res) => {
@@ -138,12 +139,12 @@ export function registerClaudeRoutes(router, { eventBus }) {
     if (!bin) {
       return res.status(400).json({ error: 'claude not installed' });
     }
-    try {
-      const script = `tell application "Terminal" to do script "${bin} setup-token"`;
-      await execFileAsync('osascript', ['-e', script, '-e', 'tell application "Terminal" to activate'], { timeout: 5000 });
-      res.json({ ok: true, message: 'Terminal opened with claude setup-token' });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
+    const launch = await launchTerminal({ bin, args: ['setup-token'] });
+    res.json({
+      ...launch,
+      message: launch.ok
+        ? '터미널에서 claude setup-token 을 실행했습니다'
+        : '터미널을 자동으로 열지 못했습니다 — 아래 명령을 직접 실행하세요',
+    });
   });
 }

@@ -7,6 +7,7 @@ import fssync from 'node:fs';
 import path from 'node:path';
 import { HttpError } from '../middleware/error-handler.js';
 import { resolveConfigDir, ensureConfigDir } from '../lib/config-dir.js';
+import { launchTerminal } from '../lib/terminal-launcher.js';
 import { logger } from '../lib/logger.js';
 
 // node-pty 는 native binding — 일부 환경(CI, 일부 도커)에서 실패 가능 →
@@ -178,7 +179,7 @@ export function createAccountsRouter({ accountsStore, eventBus, backendsStore })
   // POST /:id/login — Terminal.app 에서 `CLAUDE_CONFIG_DIR=... claude` 실행 (TUI 진입)
   //  Claude Code v2.x 는 `claude login` 서브커맨드가 OAuth 를 직접 띄우지 않음 →
   //  TUI 진입 후 사용자가 `/login` 슬래시 명령을 입력해야 함.
-  // macOS 전용 (osascript). 비-macOS 에서는 명령어만 반환.
+  // 터미널 실행은 terminal-launcher 가 OS 별로 처리. 실패하면 manual:true + command 반환.
   router.post('/:id/login', async (req, res, next) => {
     try {
       const acc = accountsStore.getById(req.params.id);
@@ -192,19 +193,17 @@ export function createAccountsRouter({ accountsStore, eventBus, backendsStore })
       }
 
       // TUI 진입 → 사용자가 `/login` 직접 입력. (login 서브커맨드는 v2.x 에서 무용)
-      const loginCmd = `CLAUDE_CONFIG_DIR=${configDir} ${CLAUDE_BIN}`;
+      const launch = await launchTerminal({
+        bin: CLAUDE_BIN,
+        env: { CLAUDE_CONFIG_DIR: configDir },
+      });
 
-      if (process.platform !== 'darwin') {
-        return res.json({ ok: false, manual: true, command: loginCmd, message: 'macOS가 아니면 직접 실행하세요' });
-      }
-
-      const script = `tell application "Terminal" to do script "${loginCmd}"`;
-      await execFileAsync('osascript', [
-        '-e', script,
-        '-e', 'tell application "Terminal" to activate'
-      ], { timeout: 5000 });
-
-      res.json({ ok: true, message: 'Terminal을 통해 로그인 창을 열었습니다', command: loginCmd });
+      res.json({
+        ...launch,
+        message: launch.ok
+          ? '터미널을 열어 로그인 화면을 띄웠습니다'
+          : '터미널을 자동으로 열지 못했습니다 — 아래 명령을 직접 실행하세요',
+      });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

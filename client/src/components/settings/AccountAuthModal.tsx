@@ -166,10 +166,12 @@ function ReauthTab({ backend }: { backend: ClaudeCliBackend }) {
           <Terminal size={14} />
           {openTerminal.isPending ? '여는 중...' : 'Terminal 열고 claude setup-token 실행'}
         </button>
-        {openTerminal.isError && (
+        {(openTerminal.isError || openTerminal.data?.manual) && (
           <div className="text-[11px] text-amber-300 rounded border border-amber-900/50 bg-amber-950/30 p-2">
-            자동으로 못 열었습니다 (macOS 아님 등). Terminal 에서 직접 실행하세요:
-            <code className="block mt-1 text-amber-200 font-mono">claude setup-token</code>
+            {openTerminal.data ? manualLoginHint(openTerminal.data) : '터미널을 자동으로 열지 못했습니다 — 아래 명령을 직접 실행하세요.'}
+            <code className="block mt-1 text-amber-200 font-mono">
+              {openTerminal.data?.command ?? 'claude setup-token'}
+            </code>
           </div>
         )}
         <div className="text-[11px] text-zinc-500">브라우저 OAuth 완료 후 Terminal 에 토큰이 출력됩니다.</div>
@@ -487,11 +489,30 @@ function HeadlessLoginTab({ backend }: { backend: ClaudeCliBackend }) {
 // ─────────────────────────────────────────────────────────
 // Tab 3: Terminal 로그인 (기존 osascript)
 // ─────────────────────────────────────────────────────────
+
+/**
+ * 서버가 터미널을 자동으로 열지 못했을 때(manual) 보여줄 안내 문구.
+ * 서버가 hint 를 주면 그대로 쓰고, 없으면 platform/shell 로 조립한다.
+ */
+function manualLoginHint(res: { platform?: string; shell?: string; hint?: string }): string {
+  if (res.hint) return res.hint;
+  const where =
+    res.platform === 'win32' ? 'Windows'
+      : res.platform === 'wsl' ? 'WSL'
+        : res.platform === 'linux' ? 'Linux'
+          : res.platform === 'darwin' ? 'macOS'
+            : '이 환경';
+  const shell = res.shell ? `${res.shell} 터미널` : '터미널';
+  return `${where} 에서는 터미널을 자동으로 열 수 없습니다 — 위 명령어를 ${shell} 에 붙여넣어 실행하세요.`;
+}
+
 function TerminalLoginTab({ backend }: { backend: ClaudeCliBackend }) {
   // Claude Code v2.x: `claude login` 서브커맨드는 더 이상 OAuth 플로우를 직접 띄우지 않음.
   //  → `claude` 로 TUI 진입한 뒤 `/login` 슬래시 명령으로 로그인해야 함.
-  const cmd = `CLAUDE_CONFIG_DIR=${backend.configDir ?? ''} claude`;
   const loginMut = useMutation({ mutationFn: () => api.loginAccount(backend.id) });
+  // 서버가 실제로 실행/안내하는 명령을 그대로 보여준다 (플랫폼마다 형태가 다름).
+  // 응답이 오기 전에는 posix 기준 추정값을 표시.
+  const cmd = loginMut.data?.command ?? `CLAUDE_CONFIG_DIR=${backend.configDir ?? ''} claude`;
 
   return (
     <div className="space-y-3 text-sm">
@@ -524,7 +545,9 @@ function TerminalLoginTab({ backend }: { backend: ClaudeCliBackend }) {
         className="w-full rounded bg-sky-700 hover:bg-sky-600 disabled:opacity-30 px-3 py-2 text-white"
       >{loginMut.isPending ? '여는 중...' : 'Terminal 열기 (TUI 자동 실행)'}</button>
       {loginMut.data?.manual && (
-        <div className="text-[11px] text-amber-300">macOS 가 아닙니다. 위 명령어를 직접 실행하세요.</div>
+        <div className="text-[11px] text-amber-300 rounded border border-amber-900/50 bg-amber-950/30 p-2">
+          {manualLoginHint(loginMut.data)}
+        </div>
       )}
       {loginMut.isError && (
         <div className="text-[11px] text-red-400 rounded border border-red-900/50 bg-red-950/30 p-2">
