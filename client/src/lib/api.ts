@@ -21,7 +21,8 @@ import type {
   UsageBudget,
   CalendarEvent,
   CalendarEventInput,
-  Holiday
+  Holiday,
+  ScheduledMessage
 } from './types';
 
 const BASE = '/api';
@@ -226,6 +227,17 @@ export const api = {
       completionPromise
     }),
   stopLoop: (sessionId: string) => del<{ sessionId: string; loop: string }>(`/sessions/${sessionId}/loop`),
+  // 예약 전송 — 서버가 runAt 에 해당 세션으로 메시지를 대신 보낸다.
+  scheduledMessages: (sessionId: string) =>
+    get<{ scheduled?: ScheduledMessage[] } | ScheduledMessage[]>(
+      `/scheduled-messages?sessionId=${encodeURIComponent(sessionId)}`
+    ).then((r) => (Array.isArray(r) ? r : r.scheduled ?? [])),
+  createScheduledMessage: (sessionId: string, content: string, runAt: string) =>
+    post<{ scheduled: ScheduledMessage }>('/scheduled-messages', { sessionId, content, runAt }).then(
+      (r) => r.scheduled
+    ),
+  cancelScheduledMessage: (id: string) =>
+    del<{ ok: true }>(`/scheduled-messages/${encodeURIComponent(id)}`),
   settings: () => get<WebSettings>('/settings'),
   getSettings: () => get<WebSettings>('/settings'),
   patchSettings: (patch: {

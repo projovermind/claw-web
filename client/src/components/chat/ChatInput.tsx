@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Square, X, Paperclip, Loader2, AlertTriangle, FileText, Mic, MicOff, Phone, Headphones } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Send, Square, X, Paperclip, Loader2, AlertTriangle, FileText, Mic, MicOff, Phone, Headphones, Clock } from 'lucide-react';
 import { useUploadsStore } from '../../store/uploads-store';
 import { useChatStore } from '../../store/chat-store';
 import { getAuthToken, api } from '../../lib/api';
@@ -8,6 +9,7 @@ import { useT, useI18nStore } from '../../lib/i18n';
 import { useVoice } from '../../hooks/useVoice';
 import SlashPopover from './SlashPopover';
 import AtFilePopover from './AtFilePopover';
+import SchedulePopover from './SchedulePopover';
 
 interface Props {
   disabled?: boolean;
@@ -276,6 +278,41 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
     return '헤드폰 모드 (TTS 중에도 끼어들기 가능) — 클릭: 종료 / Esc: 종료';
   })();
 
+  // 예약 전송 — 대기 중인 예약 목록은 WS('scheduled.updated'/'scheduled.sent')로 무효화된다.
+  const qc = useQueryClient();
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const { data: scheduledAll = [] } = useQuery({
+    queryKey: ['scheduled-messages', sessionId],
+    queryFn: () => (sessionId ? api.scheduledMessages(sessionId) : Promise.resolve([])),
+    enabled: !!sessionId
+  });
+  const pendingScheduled = scheduledAll.filter((s) => !s.status || s.status === 'pending');
+
+  const schedule = async (runAt: string) => {
+    const trimmed = value.trim();
+    if (!sessionId || !trimmed) return;
+    setScheduleOpen(false);
+    try {
+      await api.createScheduledMessage(sessionId, trimmed, runAt);
+      setValue('');
+      localStorage.removeItem(`draft:${sessionId}`);
+      qc.invalidateQueries({ queryKey: ['scheduled-messages'] });
+      setTimeout(() => { if (textareaRef.current) textareaRef.current.style.height = 'auto'; }, 0);
+    } catch (err) {
+      useUploadsStore.getState().setError(`${t('chat.schedule.failed')}: ${(err as Error).message}`);
+    }
+  };
+
+  const cancelScheduled = async (id: string) => {
+    try {
+      await api.cancelScheduledMessage(id);
+    } catch (err) {
+      useUploadsStore.getState().setError(`${t('chat.schedule.cancelFailed')}: ${(err as Error).message}`);
+    } finally {
+      qc.invalidateQueries({ queryKey: ['scheduled-messages'] });
+    }
+  };
+
   // Popover state
   const [popover, setPopover] = useState<PopoverMode>('none');
   const [popoverQuery, setPopoverQuery] = useState('');
@@ -543,6 +580,15 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
         </div>
       )}
 
+      {/* Scheduled (pending) messages */}
+      {pendingScheduled.length > 0 && (
+        <div className="px-3 pt-2 flex flex-col gap-1">
+          {pendingScheduled.map((m) => (
+            <ScheduledChip key={m.id} msg={m} onCancel={() => cancelScheduled(m.id)} />
+          ))}
+        </div>
+      )}
+
       {/* Input box — textarea with buttons INSIDE the border */}
       <div className="p-2 lg:p-3 relative">
         {/* Popovers (above the input box) */}
@@ -603,6 +649,20 @@ export default function ChatInput({ disabled, running, workingDir, sessionId, on
             </div>
             <div className="flex items-center gap-2">
               {bottomRightSlot}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setScheduleOpen((v) => !v)}
+                  disabled={disabled || !sessionId || !value.trim()}
+                  className={`p-1.5 rounded transition-colors disabled:opacity-30 ${
+                    scheduleOpen ? 'bg-zinc-800 text-zinc-200' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+                  }`}
+                  title={t('chat.schedule.btn')}
+                >
+                  <Clock size={18} />
+                </button>
+                {scheduleOpen && <SchedulePopover onPick={schedule} onClose={() => setScheduleOpen(false)} />}
+              </div>
               {running ? (
                 <div className="flex gap-1">
                   {/* 응답 중 메시지 → 현재 응답 중단하고 참고해서 이어서 답변 */}
@@ -680,6 +740,35 @@ function StagedChip({
         <span className="text-[11px] text-zinc-500">{formatSize(u.size)}</span>
       </div>
       <button onClick={onRemove} className="ml-1 text-zinc-500 hover:text-red-400" title={t('common.remove')}>
+        <X size={12} />
+      </button>
+    </div>
+  );
+}
+
+function ScheduledChip({
+  msg,
+  onCancel
+}: {
+  msg: import('../../lib/types').ScheduledMessage;
+  onCancel: () => void;
+}) {
+  const t = useT();
+  const when = new Date(msg.runAt);
+  const whenLabel = Number.isNaN(when.getTime())
+    ? msg.runAt
+    : when.toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const summary = msg.content.replace(/\s+/g, ' ').trim();
+
+  return (
+    <div
+      className="flex items-center gap-2 rounded border border-sky-900/50 bg-sky-900/15 px-2 py-1.5"
+      title={msg.content}
+    >
+      <Clock size={12} className="shrink-0 text-sky-300" />
+      <span className="shrink-0 text-[11px] font-mono text-sky-200">{whenLabel}</span>
+      <span className="flex-1 min-w-0 truncate text-[11px] text-zinc-300">{summary}</span>
+      <button onClick={onCancel} className="shrink-0 text-zinc-500 hover:text-red-400" title={t('chat.schedule.cancel')}>
         <X size={12} />
       </button>
     </div>

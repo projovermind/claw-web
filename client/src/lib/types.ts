@@ -468,3 +468,14 @@ export interface Holiday {
   /** 대체공휴일 여부. */
   substitute: boolean;
 }
+
+/** 예약 전송 대기 중인 메시지. runAt 이 되면 서버가 해당 세션으로 보낸다. */
+export interface ScheduledMessage {
+  id: string;
+  sessionId: string;
+  content: string;
+  /** ISO 8601 — 전송 예정 시각. */
+  runAt: string;
+  status: 'pending' | 'sent' | 'canceled' | 'failed';
+  createdAt: string;
+}

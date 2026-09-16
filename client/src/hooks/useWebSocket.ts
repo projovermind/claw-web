@@ -43,7 +43,10 @@ const TOPICS_TO_INVALIDATE: Record<string, string[]> = {
   'delegation.started': ['sessions'],
   'delegation.completed': ['sessions'],
   // Calendar — 다른 세션/에이전트가 일정을 바꾸면 열려 있는 캘린더도 갱신
-  'calendar.changed': ['calendar', 'calendar-upcoming']
+  'calendar.changed': ['calendar', 'calendar-upcoming'],
+  // 예약 전송 — 생성/취소/발송 시 컴포저의 대기 칩 목록 갱신
+  'scheduled.updated': ['scheduled-messages'],
+  'scheduled.sent': ['scheduled-messages', 'sessions']
 };
 
 export function useWebSocket() {
@@ -201,6 +204,9 @@ export function useWebSocket() {
             });
             // 위임 시작 — origin 세션의 unread 억제 (위임 완료 시에 표시)
             useChatStore.getState().startDelegating(msg.originSessionId as string);
+          }
+          if (topic === 'scheduled.sent') {
+            useToastStore.getState().add('info', tRef.current('ws.scheduledSent'));
           }
           if (topic === 'delegation.completed') {
             const agent = (msg.targetAgentId as string) ?? '?';

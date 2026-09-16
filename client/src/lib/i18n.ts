@@ -333,6 +333,19 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.input.abortBtn': '중단',
     'chat.input.sendBtn': '전송',
 
+    // 예약 전송
+    'chat.schedule.btn': '나중에 보내기 — 시각을 고르면 예약됩니다',
+    'chat.schedule.title': '예약 전송',
+    'chat.schedule.in10m': '10분 후',
+    'chat.schedule.in1h': '1시간 후',
+    'chat.schedule.today21': '오늘 21시',
+    'chat.schedule.tomorrow9': '내일 09:00',
+    'chat.schedule.customLabel': '직접 입력',
+    'chat.schedule.confirm': '예약하기',
+    'chat.schedule.cancel': '예약 취소',
+    'chat.schedule.failed': '예약 실패',
+    'chat.schedule.cancelFailed': '예약 취소 실패',
+
     // At-file popover
     'atfile.noWorkingDir': '에이전트의 workingDir이 설정돼 있지 않아서 파일 검색 불가',
     'atfile.searchPrompt': '파일명을 입력하면 프로젝트 내 파일을 검색합니다',
@@ -844,6 +857,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     'ws.chatError': '채팅 에러: {error}',
     'ws.delegateStart': '🔄 위임 시작 → {agent}',
     'ws.delegateDone': '✅ 위임 완료 ← {agent}',
+    'ws.scheduledSent': '⏰ 예약한 메시지를 보냈습니다',
 
     // Permission prompt (tool approval modal)
     'permission.title': '도구 사용 권한 요청',
@@ -1198,6 +1212,19 @@ const DICT: Record<Lang, Record<string, string>> = {
     'chat.input.attachBtn': 'Attach file',
     'chat.input.abortBtn': 'Abort',
     'chat.input.sendBtn': 'Send',
+
+    // Scheduled send
+    'chat.schedule.btn': 'Send later — pick a time to schedule',
+    'chat.schedule.title': 'Schedule send',
+    'chat.schedule.in10m': 'In 10 minutes',
+    'chat.schedule.in1h': 'In 1 hour',
+    'chat.schedule.today21': 'Today 9 PM',
+    'chat.schedule.tomorrow9': 'Tomorrow 9 AM',
+    'chat.schedule.customLabel': 'Custom',
+    'chat.schedule.confirm': 'Schedule',
+    'chat.schedule.cancel': 'Cancel schedule',
+    'chat.schedule.failed': 'Scheduling failed',
+    'chat.schedule.cancelFailed': 'Cancel failed',
 
     // At-file popover
     'atfile.noWorkingDir': 'Agent has no workingDir — file search disabled',
@@ -1710,6 +1737,7 @@ const DICT: Record<Lang, Record<string, string>> = {
     'ws.chatError': 'Chat error: {error}',
     'ws.delegateStart': '🔄 Delegated → {agent}',
     'ws.delegateDone': '✅ Delegation done ← {agent}',
+    'ws.scheduledSent': '⏰ Scheduled message sent',
 
     // Permission prompt (tool approval modal)
     'permission.title': 'Tool permission request',

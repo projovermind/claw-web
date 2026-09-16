@@ -70,6 +70,8 @@ import { createHolidaysKr } from './lib/holidays-kr.js';
 import { createCalendarReminders } from './lib/calendar-reminders.js';
 import { createCalendarRouter } from './routes/calendar.js';
 import { createScheduler } from './lib/scheduler.js';
+import { createScheduledMessagesStore } from './lib/scheduled-messages-store.js';
+import { createScheduledMessagesRouter } from './routes/scheduled-messages.js';
 import { createDelegationTracker } from './lib/delegation-tracker.js';
 import { createPushStore } from './lib/push-store.js';
 import { createPushRouter } from './routes/push.js';
@@ -582,6 +584,11 @@ async function main() {
     filePath: path.join(USER_DIR, 'schedules.json'),
     eventBus
   });
+  // 배달 함수는 chat 라우터가 생긴 뒤에 setDeliver() 로 꽂는다. start() 도 그때.
+  const scheduledMessagesStore = createScheduledMessagesStore({
+    filePath: path.join(USER_DIR, 'scheduled-messages.json'),
+    eventBus
+  });
   const activityLog = createActivityLog({ filePath: ACTIVITY_PATH, eventBus });
   createSessionAnalyzer({ eventBus, sessionsStore, configStore });
   const healthCheck = createHealthCheck({ botPidFile: webConfig.botPidFile });
@@ -639,7 +646,7 @@ async function main() {
   app.use('/api/devices', createDevicesRouter({ devicesStore, eventBus }));
   // Phase 5: bridge router is created up-front so chat can inject IDE context
   const bridgeRouter = createBridgeRouter({ webConfig });
-  const { router: chatRouter, resumeInterruptedSession, clearAllWakeups, clearAllDispatch, abortDispatch, abandonDelegation } = createChatRouter({
+  const { router: chatRouter, deliver: deliverChatMessage, resumeInterruptedSession, clearAllWakeups, clearAllDispatch, abortDispatch, abandonDelegation } = createChatRouter({
     sessionsStore,
     configStore,
     metadataStore,
@@ -660,6 +667,39 @@ async function main() {
     getBridgeContext: (workspace) => bridgeRouter.getContextForWorkspace?.(workspace) ?? null
   });
   app.use('/api/chat', chatRouter);
+
+  // 예약 발송과 크론 예약은 같은 배달 경로를 쓴다 — chat 라우터가 생긴 지금 묶는다.
+  scheduledMessagesStore.setDeliver(deliverChatMessage);
+  scheduledMessagesStore.start();
+
+  // 크론(schedules)은 지금까지 이벤트만 쏘고 아무도 안 받아 실제로는 안 돌았다.
+  // 에이전트별 전용 세션 하나를 재사용해서 프롬프트를 배달한다.
+  eventBus.subscribe(({ topic, payload }) => {
+    if (topic !== 'schedule.triggered') return;
+    deliverScheduledPrompt(payload).catch((err) => {
+      logger.error({ scheduleId: payload?.id, err: err.message }, 'schedule: delivery failed');
+    });
+  });
+
+  async function deliverScheduledPrompt({ id, name, agentId, prompt }) {
+    if (!agentId || !prompt) {
+      logger.warn({ scheduleId: id }, 'schedule: missing agentId or prompt, skipped');
+      return;
+    }
+    if (!configStore.getAgent(agentId)) {
+      logger.warn({ scheduleId: id, agentId }, 'schedule: agent not found, skipped');
+      return;
+    }
+    const title = `⏰ ${name || id}`;
+    let session = sessionsStore.list(agentId).find((s) => s.title === title);
+    if (!session) {
+      session = await sessionsStore.create({ agentId, title });
+      eventBus.publish('session.created', { session });
+    }
+    await deliverChatMessage(session.id, prompt);
+    logger.info({ scheduleId: id, sessionId: session.id }, 'schedule: prompt delivered');
+  }
+
   // Mounted after chat so it can share the dispatch queue's abort path.
   app.use('/api/sessions', createSessionsRouter({ sessionsStore, configStore, runner, eventBus, approvalBroker, abortDispatch, abandonDelegation, delegationTracker }));
   // MCP approval — mount at root so `/internal/approval/request` (no /api prefix)
@@ -695,6 +735,7 @@ async function main() {
   app.use('/api/mcp', createMcpRouter({ projectsStore }));
   app.use('/api/worktree', createWorktreeRouter({ projectsStore }));
   app.use('/api/schedules', createSchedulesRouter({ scheduler, eventBus }));
+  app.use('/api/scheduled-messages', createScheduledMessagesRouter({ scheduledMessagesStore, sessionsStore }));
   app.use('/api/lsp', createLspRouter({ projectsStore }));
   app.use('/api/terraform', createTerraformRouter({ projectsStore, configStore, metadataStore, eventBus }));
   app.use('/api/undo', createUndoRouter({ configStore, metadataStore, sessionsStore, eventBus }));

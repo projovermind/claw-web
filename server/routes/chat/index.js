@@ -167,6 +167,39 @@ export function createChatRouter({
     return idx;
   }
 
+  /**
+   * 사용자 메시지 한 건을 세션에 넣고 러너를 깨운다. HTTP 전송과 예약 발송이
+   * 공유하는 단 하나의 배달 경로 — 예약이 다른 길로 들어가면 러너가 안 깨거나
+   * 큐 표시가 어긋난다.
+   */
+  async function deliver(sessionId, content, { attachmentPaths = [] } = {}) {
+    const session = sessionsStore.get(sessionId);
+    if (!session) throw new HttpError(404, 'Session not found', 'SESSION_NOT_FOUND');
+    if (!configStore.getAgent(session.agentId)) {
+      throw new HttpError(404, `Agent ${session.agentId} not found`, 'AGENT_NOT_FOUND');
+    }
+
+    // 유저가 개입했으면 예약된 자동 재개는 의미가 없다 — 취소.
+    ctx.cancelWakeup(sessionId, 'user message');
+
+    // Store the message before dispatching: an idle session starts the runner
+    // synchronously inside dispatch(), and the runner reads session.messages to
+    // decide first-turn injection / conversation-summary re-injection.
+    await sessionsStore.appendMessage(sessionId, {
+      role: 'user',
+      content,
+      attachmentPaths,
+      ...(ctx.isSessionBusy(sessionId) ? { queued: true } : {})
+    });
+
+    const { queued, queueLength } = ctx.dispatch(sessionId, { kind: 'user', content });
+    if (queued) {
+      eventBus.publish('chat.queued', { sessionId, count: queueLength });
+      logger.info({ sessionId, queue: queueLength }, 'chat: queued during running');
+    }
+    return { queued, queueLength };
+  }
+
   // ── Routes ─────────────────────────────────────────────
 
   router.post('/', async (req, res, next) => {
@@ -178,9 +211,6 @@ export function createChatRouter({
         throw new HttpError(404, `Agent ${session.agentId} not found`, 'AGENT_NOT_FOUND');
       }
 
-      // 유저가 개입했으면 예약된 자동 재개는 의미가 없다 — 취소.
-      ctx.cancelWakeup(sessionId, 'user message');
-
       // Auto-title on first message
       const isFirstMessage = !session.messages?.length;
       let augmentedMessage = message;
@@ -188,15 +218,6 @@ export function createChatRouter({
         const fileList = attachmentPaths.map((p) => `- ${p}`).join('\n');
         augmentedMessage = `${message}\n\n[첨부 파일]\n${fileList}\n\n위 경로의 파일들을 Read 도구로 확인해주세요.`;
       }
-      // Store the message before dispatching: an idle session starts the runner
-      // synchronously inside dispatch(), and the runner reads session.messages to
-      // decide first-turn injection / conversation-summary re-injection.
-      await sessionsStore.appendMessage(sessionId, {
-        role: 'user',
-        content: augmentedMessage,
-        attachmentPaths: attachmentPaths ?? [],
-        ...(ctx.isSessionBusy(sessionId) ? { queued: true } : {})
-      });
       if (isFirstMessage && (!session.title || session.title === 'New session')) {
         const title = message.slice(0, 40).replace(/\n/g, ' ').trim() || 'New session';
         await sessionsStore.update(sessionId, { title });
@@ -213,11 +234,9 @@ export function createChatRouter({
       reEntryCounters.delete(sessionId);
       failureReEntryCounters.delete(sessionId);
 
-      const { queued, queueLength } = ctx.dispatch(sessionId, { kind: 'user', content: augmentedMessage });
-      if (queued) {
-        eventBus.publish('chat.queued', { sessionId, count: queueLength });
-        logger.info({ sessionId, queue: queueLength }, 'chat: queued during running');
-      }
+      const { queued, queueLength } = await deliver(sessionId, augmentedMessage, {
+        attachmentPaths: attachmentPaths ?? []
+      });
       res.status(202).json({ sessionId, status: queued ? 'queued' : 'started', queueLength });
     } catch (err) {
       if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
@@ -333,6 +352,7 @@ export function createChatRouter({
 
   return {
     router,
+    deliver,
     resumeInterruptedSession,
     clearAllWakeups: ctx.clearAllWakeups,
     clearAllDispatch: ctx.clearAllDispatch,
