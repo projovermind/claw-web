@@ -18,6 +18,22 @@ export function useBackendUsage(): Record<string, BackendUsage> | null {
   return data?.backends ?? null;
 }
 
+/**
+ * backendId → 같은 accountUuid 를 쓰는 백엔드 수(자기 자신 포함).
+ * 2 이상이면 그 백엔드들은 같은 Anthropic 계정의 한도를 나눠 쓴다.
+ */
+export function sharedAccountCounts(map: Record<string, BackendUsage> | null | undefined): Record<string, number> {
+  const byUuid: Record<string, number> = {};
+  for (const u of Object.values(map ?? {})) {
+    if (u?.accountUuid) byUuid[u.accountUuid] = (byUuid[u.accountUuid] ?? 0) + 1;
+  }
+  const out: Record<string, number> = {};
+  for (const [id, u] of Object.entries(map ?? {})) {
+    if (u?.accountUuid) out[id] = byUuid[u.accountUuid];
+  }
+  return out;
+}
+
 /** 사용률(0~100)에 따른 바 색. 70% 주황, 90% 빨강. */
 function barColor(pct: number): string {
   if (pct >= 90) return 'bg-red-500';
@@ -39,7 +55,7 @@ function untilReset(resetsAt: string | null | undefined, t: (k: string, v?: Reco
   return `${String(hours).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
 }
 
-function UsageBar({ label, win }: { label: string; win?: BackendUsageWindow }) {
+function UsageBar({ label, win }: { label: string; win?: BackendUsageWindow | null }) {
   const t = useT();
   if (!win || typeof win.utilization !== 'number') return null;
   const pct = Math.max(0, Math.min(100, win.utilization));
@@ -64,26 +80,66 @@ function UsageBar({ label, win }: { label: string; win?: BackendUsageWindow }) {
   );
 }
 
-/** 백엔드 카드 안에 들어가는 잔여 한도 게이지. usage 가 없으면 아무것도 그리지 않는다. */
-export function BackendUsageGauge({ usage }: { usage?: BackendUsage }) {
+/** 상태 뱃지 — 한 줄짜리 회색/빨강 칩. */
+function StatusBadge({ tone, label, tip }: { tone: 'red' | 'zinc'; label: string; tip?: string }) {
+  const cls = tone === 'red'
+    ? 'bg-red-900/50 text-red-300 border-red-800/60'
+    : 'bg-zinc-800 text-zinc-400 border-zinc-700';
+  return (
+    <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded border ${cls}`} title={tip}>
+      {label}
+    </span>
+  );
+}
+
+/** '계정 공유' 표시 — 같은 Anthropic 계정을 쓰는 백엔드가 여럿일 때. */
+function SharedChip({ count }: { count?: number }) {
+  const t = useT();
+  const tip = count && count >= 2 ? t('backendUsage.sharedTipCount', { n: count }) : t('backendUsage.sharedTip');
+  return (
+    <span className="shrink-0 text-[10px] text-amber-400/70 cursor-default" title={tip}>
+      {t('backendUsage.shared')}
+      {count && count >= 2 ? ` (${count})` : ''}
+    </span>
+  );
+}
+
+/**
+ * 백엔드 카드 안에 들어가는 잔여 한도 게이지. usage 가 없으면 아무것도 그리지 않는다.
+ * sharedCount = 같은 accountUuid 를 쓰는 백엔드 수 (sharedAccountCounts 로 계산).
+ */
+export function BackendUsageGauge({ usage, sharedCount }: { usage?: BackendUsage; sharedCount?: number }) {
   const t = useT();
   if (!usage) return null;
 
   // unsupported = 한도 개념 없는 백엔드, error = 조회 실패 — 둘 다 조용히 숨김
   if (usage.status === 'unsupported' || usage.status === 'error') return null;
 
+  // 같은 계정을 쓰면 한도가 합산되므로, 게이지든 뱃지든 옆에 같이 붙인다.
+  const shared = usage.tokenSource === 'shared' || (sharedCount ?? 0) >= 2;
+  const withShared = (node: JSX.Element) => (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 min-w-0">{node}</div>
+      {shared && <SharedChip count={sharedCount} />}
+    </div>
+  );
+
   if (usage.status === 'expired') {
-    return (
-      <span className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-red-900/50 text-red-300 border border-red-800/60">
-        {t('backendUsage.expired')}
-      </span>
+    return withShared(<StatusBadge tone="red" label={t('backendUsage.expired')} />);
+  }
+  if (usage.status === 'unauthorized') {
+    return withShared(<StatusBadge tone="red" label={t('backendUsage.unauthorized')} />);
+  }
+  if (usage.status === 'no-credentials') {
+    return withShared(
+      <StatusBadge tone="zinc" label={t('backendUsage.noCredentials')} tip={t('backendUsage.noCredentialsTip')} />
     );
   }
 
   if (usage.status !== 'ok') return null;
   if (!usage.fiveHour && !usage.sevenDay) return null;
 
-  return (
+  return withShared(
     <div className="space-y-1">
       <UsageBar label={t('backendUsage.fiveHour')} win={usage.fiveHour} />
       <UsageBar label={t('backendUsage.sevenDay')} win={usage.sevenDay} />

@@ -295,14 +295,26 @@ export interface BackendUsageWindow {
 
 /**
  * GET /api/backends/usage 의 백엔드 1개분.
- * - ok: 게이지 표시 / expired: 재인증 필요 / unsupported: 한도 개념 없음 / error: 조회 실패
+ * - ok: 게이지 표시
+ * - expired: 토큰 만료 → '재인증 필요'
+ * - unauthorized: 401/403 → '권한 없음'
+ * - no-credentials: configDir 에 자격증명 없음(또는 조회 스코프 없는 setup-token) → '한도 조회 불가'
+ * - unsupported: 한도 개념 없는 백엔드 / error: 조회 실패 → 둘 다 숨김
  */
 export interface BackendUsage {
-  status: 'ok' | 'expired' | 'unsupported' | 'error';
-  fiveHour?: BackendUsageWindow;
-  sevenDay?: BackendUsageWindow;
-  extraUsage?: { enabled: boolean; usedCredits: number; monthlyLimit: number };
-  account?: { email: string | null; tier: string | null };
+  status: 'ok' | 'expired' | 'unauthorized' | 'no-credentials' | 'unsupported' | 'error';
+  fiveHour?: BackendUsageWindow | null;
+  sevenDay?: BackendUsageWindow | null;
+  extraUsage?: { enabled: boolean; usedCredits: number; monthlyLimit: number } | null;
+  account?: { email: string | null; tier: string | null; organization?: string | null } | null;
+  /** 같은 Anthropic 계정을 쓰는 백엔드끼리 동일. 한도 공유 판별용. (서버 추가 예정) */
+  accountUuid?: string | null;
+  /** 'shared' = 다른 백엔드와 같은 계정 토큰을 쓴다 → 한도를 나눠 쓴다. (서버 추가 예정) */
+  tokenSource?: 'self' | 'shared';
+  /** 실패 사유(사람이 읽는 문장). ok 에는 없다. */
+  reason?: string;
+  /** error/unauthorized 일 때의 HTTP 상태코드. */
+  httpStatus?: number;
   fetchedAt?: string;
 }
 

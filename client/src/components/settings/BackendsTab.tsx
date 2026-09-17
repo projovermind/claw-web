@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useProgressMutation } from '../../lib/useProgressMutation';
@@ -6,7 +6,7 @@ import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, Settings2, Key
 import { api } from '../../lib/api';
 import type { BackendPublic, ClaudeCliBackend, ApplyBackendToAgentsResult } from '../../lib/types';
 import { BackendCard } from './BackendCard';
-import { BackendUsageGauge, useBackendUsage } from './BackendUsageGauge';
+import { BackendUsageGauge, useBackendUsage, sharedAccountCounts } from './BackendUsageGauge';
 import { ModelRow } from './ModelRow';
 import { AddBackendModal } from './AddBackendModal';
 import { AccountAuthModal } from './AccountAuthModal';
@@ -59,6 +59,7 @@ export function BackendsTab() {
   const { data } = useQuery({ queryKey: ['backends'], queryFn: api.backends, refetchInterval: 5000 });
   const { data: usage } = useQuery({ queryKey: ['usage-stats'], queryFn: api.usageStats, refetchInterval: 30000 });
   const backendUsage = useBackendUsage();
+  const sharedCounts = useMemo(() => sharedAccountCounts(backendUsage), [backendUsage]);
   const [adding, setAdding] = useState(false);
   const [loginHint, setLoginHint] = useState<{ configDir: string } | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
@@ -536,7 +537,7 @@ export function BackendsTab() {
                 <span>우선순위 {b.priority}</span>
               </div>
 
-              <BackendUsageGauge usage={backendUsage?.[b.id]} />
+              <BackendUsageGauge usage={backendUsage?.[b.id]} sharedCount={sharedCounts[b.id]} />
 
               {testRes && (
                 <div className={`flex items-start gap-1.5 text-[11px] rounded px-2 py-1 ${testRes.ok ? 'bg-emerald-950/40 text-emerald-300' : 'bg-red-950/40 text-red-300'}`}>
@@ -558,6 +559,7 @@ export function BackendsTab() {
               isAusterity={b.id === data.austerityBackend}
               allBackends={openaiList}
               usage={backendUsage?.[b.id]}
+              sharedCount={sharedCounts[b.id]}
               onDelete={() => {
                 if (confirm(t('backendsTab.deleteConfirm', { label: b.label }))) removeBackend.mutate(b.id);
               }}

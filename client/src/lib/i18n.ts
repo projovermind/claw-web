@@ -625,6 +625,12 @@ const DICT: Record<Lang, Record<string, string>> = {
     'backendUsage.reset': '{time} 리셋',
     'backendUsage.resetDays': '{d}일 {h}시간',
     'backendUsage.expired': '재인증 필요',
+    'backendUsage.unauthorized': '권한 없음',
+    'backendUsage.noCredentials': '한도 조회 불가',
+    'backendUsage.noCredentialsTip': '이 백엔드는 setup-token 을 써서 사용량 조회 스코프가 없습니다',
+    'backendUsage.shared': '계정 공유',
+    'backendUsage.sharedTip': '같은 Anthropic 계정의 다른 백엔드와 한도를 공유합니다',
+    'backendUsage.sharedTipCount': '백엔드 {n}개가 같은 Anthropic 계정의 한도를 공유합니다',
 
     // BackendsTab
     'backendsTab.title': 'AI Backends',
@@ -1512,6 +1518,12 @@ const DICT: Record<Lang, Record<string, string>> = {
     'backendUsage.reset': 'resets in {time}',
     'backendUsage.resetDays': '{d}d {h}h',
     'backendUsage.expired': 'Re-auth needed',
+    'backendUsage.unauthorized': 'Unauthorized',
+    'backendUsage.noCredentials': 'Usage unavailable',
+    'backendUsage.noCredentialsTip': 'This backend uses a setup-token, which has no usage-read scope',
+    'backendUsage.shared': 'Shared account',
+    'backendUsage.sharedTip': 'Shares its limits with another backend on the same Anthropic account',
+    'backendUsage.sharedTipCount': '{n} backends share the limits of one Anthropic account',
 
     // BackendsTab
     'backendsTab.title': 'AI Backends',

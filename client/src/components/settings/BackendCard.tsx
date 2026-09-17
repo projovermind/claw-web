@@ -17,6 +17,7 @@ export function BackendCard({
   isAusterity,
   allBackends,
   usage,
+  sharedCount,
   onDelete,
   onReveal
 }: {
@@ -25,6 +26,7 @@ export function BackendCard({
   isAusterity: boolean;
   allBackends: ApiBackend[];
   usage?: BackendUsage;
+  sharedCount?: number;
   onDelete: () => void;
   onReveal?: () => void;
 }) {
@@ -146,7 +148,7 @@ export function BackendCard({
           )}
         </div>
       </div>
-      <BackendUsageGauge usage={usage} />
+      <BackendUsageGauge usage={usage} sharedCount={sharedCount} />
 
       <div className="flex items-center gap-1.5 text-[11px]">
         <span className="text-zinc-600 shrink-0">{t('backendCard.fallbackLabel')}</span>
