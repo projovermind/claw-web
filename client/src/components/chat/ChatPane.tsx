@@ -116,15 +116,63 @@ export default function ChatPane({
     }
   }, [sessionId, sessionQ.data, qc]);
 
+  // 하단 고정(pin): durationMs 동안, 혹은 사용자가 직접 스크롤할 때까지 바닥을 유지한다.
+  const pinBottomRef = useRef(false);
+  const pinReleaseRef = useRef<(() => void) | null>(null);
+  const pinnedSessionRef = useRef<string | null>(null);
+
+  const pinToBottom = useCallback((durationMs = 600) => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    pinReleaseRef.current?.();
+
+    const stick = () => {
+      const cur = chatScrollRef.current;
+      if (cur) cur.scrollTop = cur.scrollHeight;
+    };
+
+    pinBottomRef.current = true;
+    atBottomRef.current = true;
+    setAtBottom(true);
+    stick();
+
+    // 콘텐츠 높이가 바뀔 때마다 다시 바닥으로 (컨테이너 + 내부 콘텐츠 둘 다 관찰).
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(stick) : null;
+    if (ro) {
+      ro.observe(el);
+      if (el.firstElementChild) ro.observe(el.firstElementChild);
+    }
+    // ResizeObserver 가 못 잡는 변화(웹폰트 교체 등) 대비 주기 보정.
+    const iv = window.setInterval(stick, 50);
+    const to = window.setTimeout(() => pinReleaseRef.current?.(), durationMs);
+
+    // 사용자가 스크롤을 시작하면 즉시 해제 (프로그램 스크롤은 wheel/touchmove 를 발생시키지 않는다).
+    const release = () => pinReleaseRef.current?.();
+    el.addEventListener('wheel', release, { passive: true });
+    el.addEventListener('touchmove', release, { passive: true });
+
+    pinReleaseRef.current = () => {
+      pinReleaseRef.current = null;
+      pinBottomRef.current = false;
+      ro?.disconnect();
+      window.clearInterval(iv);
+      window.clearTimeout(to);
+      el.removeEventListener('wheel', release);
+      el.removeEventListener('touchmove', release);
+    };
+  }, []);
+
   // Track scroll position to decide if user is near the bottom / top
   useEffect(() => {
     const el = chatScrollRef.current;
     if (!el) return;
     const onScroll = () => {
-      const near = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      // 하단 고정(pin) 중에는 우리가 넣은 scrollTop 변경이라 사용자 의도가 아니다.
+      const near = pinBottomRef.current || el.scrollHeight - el.scrollTop - el.clientHeight < 80;
       atBottomRef.current = near;
       setAtBottom(near);
-      if (el.scrollTop < 120) loadOlder();
+      // pin 중에는 아직 콘텐츠가 짧아 scrollTop 이 0 이므로 과거 로드가 오발동한다.
+      if (!pinBottomRef.current && el.scrollTop < 120) loadOlder();
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     // 초기값 세팅
@@ -143,16 +191,25 @@ export default function ChatPane({
     });
   }, [streaming, running, sessionQ.data?.messages?.length]);
 
-  // 세션 변경 시에는 무조건 맨 아래로 (새 세션 진입)
+  // 세션 변경 시에는 무조건 맨 아래로 (새 세션 진입).
+  // rAF 한 번으로는 모바일에서 실패한다 — 그 시점엔 메시지 fetch 가 끝나지 않았거나
+  // 코드블록/이미지/웹폰트 레이아웃이 확정되지 않아 scrollHeight 가 계속 자란다.
+  // 그래서 "높이가 안정될 때까지" 하단에 붙잡아 두고(pin) 해제한다.
   useEffect(() => {
-    const el = chatScrollRef.current;
-    if (!el) return;
-    requestAnimationFrame(() => {
-      el.scrollTop = el.scrollHeight;
-      atBottomRef.current = true;
-      setAtBottom(true);
-    });
-  }, [sessionId]);
+    if (!sessionId) return;
+    pinnedSessionRef.current = null;
+    pinToBottom();
+    return () => pinReleaseRef.current?.();
+  }, [sessionId, pinToBottom]);
+
+  // 메시지 도착이 세션 전환보다 늦은 경우(캐시 미스) 한 번 더 고정. 세션당 1회만.
+  useEffect(() => {
+    if (!sessionId) return;
+    if (sessionQ.data?.id !== sessionId) return;
+    if (pinnedSessionRef.current === sessionId) return;
+    pinnedSessionRef.current = sessionId;
+    pinToBottom();
+  }, [sessionId, sessionQ.data, pinToBottom]);
 
   const scrollToBottom = () => {
     const el = chatScrollRef.current;

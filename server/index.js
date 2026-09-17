@@ -32,6 +32,7 @@ import { createDevicesRouter } from './routes/devices.js';
 import { createSessionsRouter } from './routes/sessions.js';
 import { createChatRouter } from './routes/chat.js';
 import { createBackendsRouter } from './routes/backends.js';
+import { createBackendUsageReader } from './lib/backend-usage.js';
 import { createUploadsRouter } from './routes/uploads.js';
 import { createSkillsRouter } from './routes/skills.js';
 import { createActivityRouter } from './routes/activity.js';
@@ -714,7 +715,14 @@ async function main() {
     metadataStore,
     pushStore
   }));
-  app.use('/api/backends', createBackendsRouter({ backendsStore, eventBus, webConfig, configStore, metadataStore }));
+  app.use('/api/backends', createBackendsRouter({
+    backendsStore, eventBus, webConfig, configStore, metadataStore,
+    // 마지막 ok 사용량을 파일에 남겨 재기동 후에도 한도 게이지가 유지되게 한다.
+    usageReader: createBackendUsageReader({
+      backendsStore,
+      persistPath: path.join(USER_DIR, 'backend-usage-last.json')
+    })
+  }));
   app.use('/api/accounts', createAccountsRouter({ accountsStore, eventBus, backendsStore }));
   app.use('/api/uploads', createUploadsRouter({ uploadsDir: UPLOADS_DIR, eventBus }));
   app.use(

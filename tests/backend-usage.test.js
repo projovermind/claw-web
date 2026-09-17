@@ -319,18 +319,44 @@ describe('createBackendUsageReader 실패 폴백', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
-  it('stale 이 15분을 넘으면 실패를 그대로 노출한다', async () => {
+  it('15분이 지나도 창이 살아 있으면 계속 stale 로 내준다', async () => {
     let t = 1_000_000;
     const r = reader(okThen(httpFail(500)), () => t);
     await r.getAll();
 
     t += 16 * 60_000;
     const after = (await r.getAll()).acc;
+    expect(after.status).toBe('ok');
+    expect(after.stale).toBe(true);
+    expect(after.staleStatus).toBe('error');
+  });
+
+  it('stale 이 12시간을 넘으면 실패를 그대로 노출한다', async () => {
+    let t = 1_000_000;
+    const r = reader(okThen(httpFail(500)), () => t);
+    await r.getAll();
+
+    t += 13 * 60 * 60_000;
+    const after = (await r.getAll()).acc;
     expect(after.status).toBe('error');
     expect(after.stale).toBeUndefined();
   });
 
-  it('로그아웃(no-credentials) 은 stale 로 가리지 않는다', async () => {
+  it('창이 리셋되면(resetsAt 경과) stale 을 끊는다', async () => {
+    let t = Date.parse('2026-09-17T06:00:00Z');   // five_hour.resetsAt = 06:40Z
+    const r = reader(okThen(httpFail(500)), () => t);
+    await r.getAll();
+
+    t += 30 * 60_000;                              // 아직 창 안
+    expect((await r.getAll()).acc.stale).toBe(true);
+
+    t += 20 * 60_000;                              // resetsAt 경과
+    const after = (await r.getAll()).acc;
+    expect(after.status).toBe('error');
+    expect(after.stale).toBeUndefined();
+  });
+
+  it('로그아웃(no-credentials) 도 마지막 값을 stale 로 유지한다', async () => {
     let t = 1_000_000;
     const r = reader(okFetch(), () => t);
     expect((await r.getAll()).acc.status).toBe('ok');
@@ -338,8 +364,54 @@ describe('createBackendUsageReader 실패 폴백', () => {
     fs.rmSync(path.join(configDir, '.credentials.json'));
     t += 61_000;
     const after = (await r.getAll()).acc;
-    expect(after.status).toBe('no-credentials');
-    expect(after.stale).toBeUndefined();
+    expect(after.status).toBe('ok');
+    expect(after.stale).toBe(true);
+    expect(after.staleStatus).toBe('no-credentials');
+    expect(after.fiveHour.utilization).toBe(74);
+  });
+
+  it('만료(expired) 도 stale 로 유지하되 재시도는 평소 ttl 로 한다', async () => {
+    let t = 1_000_000;
+    const fetchImpl = okFetch();
+    const r = reader(fetchImpl, () => t);
+    await r.getAll();
+
+    // 토큰을 만료시킨다 → fetch 까지 가지 않는 expired
+    fs.writeFileSync(
+      path.join(configDir, '.credentials.json'),
+      JSON.stringify({ claudeAiOauth: { ...liveCreds, expiresAt: 1_000 } })
+    );
+    t += 61_000;
+    const after = (await r.getAll()).acc;
+    expect(after.status).toBe('ok');
+    expect(after.staleStatus).toBe('expired');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    t += 30_000;                                   // 에러 ttl(10초)이 아니라 60초 ttl
+    expect((await r.getAll()).acc.cached).toBe(true);
+  });
+
+  it('lastOk 는 파일에 남아 재기동 후에도 게이지를 채운다', async () => {
+    const persistPath = path.join(configDir, 'last.json');
+    let t = 1_000_000;
+    const backendsStore = store({ acc: { type: 'claude-cli', configDir } });
+    const first = createBackendUsageReader({
+      backendsStore, fetchImpl: okFetch(), execFileAsync: noKeychain(), now: () => t, persistPath
+    });
+    expect((await first.getAll()).acc.fiveHour.utilization).toBe(74);
+    expect(JSON.parse(fs.readFileSync(persistPath, 'utf8')).backends.acc.value.status).toBe('ok');
+
+    // 재기동: 새 리더 + 토큰 없음 → 파일에서 읽은 값을 stale 로 내준다
+    fs.rmSync(path.join(configDir, '.credentials.json'));
+    t += 61_000;
+    const revived = createBackendUsageReader({
+      backendsStore, fetchImpl: okFetch(), execFileAsync: noKeychain(), now: () => t, persistPath
+    });
+    const after = (await revived.getAll()).acc;
+    expect(after.status).toBe('ok');
+    expect(after.stale).toBe(true);
+    expect(after.staleStatus).toBe('no-credentials');
+    expect(after.fiveHour.utilization).toBe(74);
   });
 });
 

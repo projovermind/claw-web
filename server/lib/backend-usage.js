@@ -4,6 +4,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resolveConfigDir } from './config-dir.js';
+import { logger } from './logger.js';
 
 /**
  * 백엔드별 사용량(5시간 창 / 7일 창 / 추가 크레딧) 조회.
@@ -39,9 +40,12 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const ERROR_TTL_MS = 10_000;
 /** Retry-After 를 존중하되 이 이상은 기다리지 않는다. */
 const MAX_RETRY_AFTER_MS = 5 * 60_000;
-/** 마지막 ok 값을 stale 로 대신 내주는 최대 기간. 넘으면 실패를 그대로 노출한다. */
-const STALE_MAX_MS = 15 * 60_000;
-/** 재시도로 회복될 수 있는 상태. 그 외(expired/no-credentials)는 실제 상태 변화다. */
+/**
+ * 마지막 ok 값을 stale 로 대신 내주는 최대 기간. 실제 상한은 창이 리셋되는 시각
+ * (fiveHour.resetsAt)이고, 그게 없거나 더 멀면 이 값에서 끊는다.
+ */
+const STALE_MAX_MS = 12 * 60 * 60_000;
+/** 재시도로 회복될 수 있는 상태. 그 외(expired/no-credentials)는 재시도 주기를 평소대로 둔다. */
 const TRANSIENT_STATUSES = new Set(['error', 'unauthorized']);
 const execFileP = promisify(execFile);
 
@@ -376,19 +380,55 @@ export async function fetchBackendUsage(id, backend, {
 /**
  * 60초 캐시 + in-flight 중복 제거를 얹은 리더.
  *
- * 실패는 성공과 다르게 다룬다: error/unauthorized 는 직전 ok 값을 덮어쓰지 않고
- * stale:true 로 대신 내주며(최대 15분), 실패 자체는 10초(429 면 Retry-After)만
- * 캐시해 빨리 재시도한다.
+ * 실패는 성공과 다르게 다룬다: 어떤 실패든 직전 ok 값을 덮어쓰지 않고 stale:true 로
+ * 대신 내준다(창 리셋 시각까지, 최대 12시간). 토큰이 만료되거나 로그아웃돼도 한도
+ * 자체는 그대로이므로, 게이지를 비우는 대신 마지막으로 본 숫자를 staleStatus 와 함께
+ * 보여 주는 편이 낫다. 재시도 주기는 그대로다 — error/unauthorized 는 10초
+ * (429 면 Retry-After), 그 외는 평소 ttl.
+ *
+ * lastOk 는 persistPath 에 저장돼 재기동 후에도 게이지가 유지된다.
  */
 export function createBackendUsageReader({
   backendsStore,
   ttlMs = DEFAULT_TTL_MS,
   now = () => Date.now(),
+  /** lastOk 영속화 경로 (data/user/backend-usage-last.json). 없으면 메모리에만 둔다. */
+  persistPath = null,
   ...deps
 } = {}) {
   const cache = new Map();   // id -> { at, value, ttl }
   const lastOk = new Map();  // id -> { at, value } — 실패 시 대신 내줄 직전 성공값
   const inflight = new Map(); // id -> Promise
+
+  /**
+   * 재기동 후에도 게이지를 유지하려고 마지막 ok 값을 파일에 남긴다.
+   * 손상/부재는 조용히 무시한다 — 캐시일 뿐이고, 없으면 첫 조회가 채운다.
+   */
+  function loadLastOk() {
+    if (!persistPath) return;
+    try {
+      const parsed = JSON.parse(fssync.readFileSync(persistPath, 'utf8'));
+      for (const [id, entry] of Object.entries(parsed?.backends ?? {})) {
+        if (Number.isFinite(entry?.at) && entry?.value?.status === 'ok') {
+          lastOk.set(id, { at: entry.at, value: entry.value });
+        }
+      }
+    } catch { /* 캐시 없음 또는 손상 */ }
+  }
+
+  function saveLastOk() {
+    if (!persistPath) return;
+    try {
+      fssync.mkdirSync(path.dirname(persistPath), { recursive: true });
+      const tmp = `${persistPath}.tmp`;
+      fssync.writeFileSync(tmp, JSON.stringify({ version: 1, backends: Object.fromEntries(lastOk) }));
+      fssync.renameSync(tmp, persistPath);
+    } catch (err) {
+      logger.warn({ persistPath, err: err.message }, 'backend-usage: lastOk 저장 실패');
+    }
+  }
+
+  loadLastOk();
 
   /**
    * 등록된 모든 claude-cli 백엔드의 configDir + 기본 계정(~/.claude).
@@ -418,21 +458,36 @@ export function createBackendUsageReader({
   }
 
   /**
-   * 일시적 실패는 직전 ok 값을 stale 로 대신 내준다. 그래야 API 가 한 번 흔들릴 때
-   * UI 에서 한도 게이지가 통째로 사라지지 않는다.
+   * stale 로 대신 내줄 수 있는 마지막 시각.
+   * 창이 리셋되면 옛 숫자는 의미가 없으므로 resetsAt 에서 끊고, 그게 없거나
+   * 12시간보다 멀면 STALE_MAX_MS 에서 끊는다.
+   */
+  function staleUntil(prev) {
+    const cap = prev.at + STALE_MAX_MS;
+    const resets = prev.value?.fiveHour?.resetsAt ?? prev.value?.sevenDay?.resetsAt ?? null;
+    const at = resets ? Date.parse(resets) : NaN;
+    if (Number.isNaN(at) || at <= prev.at) return cap;
+    return Math.min(at, cap);
+  }
+
+  /**
+   * 실패는 직전 ok 값을 stale 로 대신 내준다. 그래야 API 가 흔들리거나 토큰이
+   * 만료돼도 UI 에서 한도 게이지가 통째로 사라지지 않는다. 실제 실패 사유는
+   * staleStatus/staleReason 으로 남는다.
    */
   function staleOr(id, failure) {
     const prev = lastOk.get(id);
     if (!prev) return failure;
-    const age = now() - prev.at;
-    if (age > STALE_MAX_MS) {
+    const at = now();
+    if (at > staleUntil(prev)) {
       lastOk.delete(id);
+      saveLastOk();
       return failure;
     }
     return {
       ...prev.value,
       stale: true,
-      staleAgeMs: age,
+      staleAgeMs: at - prev.at,
       staleStatus: failure.status,
       staleReason: failure.reason ?? null
     };
@@ -443,17 +498,15 @@ export function createBackendUsageReader({
     const at = now();
     if (value.status === 'ok') {
       lastOk.set(id, { at, value });
-      cache.set(id, { at, value, ttl: ttlMs });
-      return value;
-    }
-    if (!TRANSIENT_STATUSES.has(value.status)) {
-      // 로그아웃/만료 같은 실제 상태 변화 — 옛 성공값을 되살리면 안 된다.
-      lastOk.delete(id);
+      saveLastOk();
       cache.set(id, { at, value, ttl: ttlMs });
       return value;
     }
     const served = staleOr(id, value);
-    const ttl = Math.min(Math.max(value.retryAfterMs ?? ERROR_TTL_MS, ERROR_TTL_MS), MAX_RETRY_AFTER_MS);
+    // 재시도 주기는 상태에 따라 다르다 — 일시적 실패만 짧게 잡고 빨리 되묻는다.
+    const ttl = TRANSIENT_STATUSES.has(value.status)
+      ? Math.min(Math.max(value.retryAfterMs ?? ERROR_TTL_MS, ERROR_TTL_MS), MAX_RETRY_AFTER_MS)
+      : ttlMs;
     cache.set(id, { at, value: served, ttl });
     return served;
   }
@@ -486,6 +539,7 @@ export function createBackendUsageReader({
     clearCache() {
       cache.clear();
       lastOk.clear();
+      saveLastOk();
     }
   };
 }
