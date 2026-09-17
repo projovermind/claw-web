@@ -26,6 +26,7 @@ import { useChatStore } from '../../store/chat-store';
 import { isSessionBusy } from '../../lib/visibility';
 import { DEFAULT_APPEARANCE } from '../../hooks/useAppearance';
 import DeviceSwitcher from './DeviceSwitcher';
+import SidebarUsage from './SidebarUsage';
 
 export default function Sidebar() {
   const t = useT();
@@ -215,6 +216,7 @@ export default function Sidebar() {
       </nav>
       {(!isCollapsed || authEnabled || version) && (
         <div className={`${isCollapsed ? 'p-1' : 'p-2'} border-t border-zinc-800`}>
+          <SidebarUsage collapsed={isCollapsed} />
           {!isCollapsed && (
             <>
               <div className="flex items-center gap-1 text-[0.6875rem] text-zinc-500 mb-1 px-2">

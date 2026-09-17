@@ -44,8 +44,9 @@ function barColor(pct: number): string {
 /**
  * resetsAt 까지 남은 시간. 24시간 미만은 HH:MM, 그 이상(주간 창)은 '2일 23시간'.
  * 이미 지났거나 값이 없으면 null.
+ * 사이드바(SidebarUsage)도 같은 표기를 쓰므로 export.
  */
-function untilReset(resetsAt: string | null | undefined, t: (k: string, v?: Record<string, string | number>) => string): string | null {
+export function untilReset(resetsAt: string | null | undefined, t: (k: string, v?: Record<string, string | number>) => string): string | null {
   if (!resetsAt) return null;
   const ms = new Date(resetsAt).getTime() - Date.now();
   if (!Number.isFinite(ms) || ms <= 0) return null;
