@@ -111,7 +111,7 @@ function normalizeWindow(w) {
 function normalizeExtraUsage(e) {
   if (!e || typeof e !== 'object') return null;
   return {
-    isEnabled: e.is_enabled === true,
+    enabled: e.is_enabled === true,
     utilization: num(e.utilization),
     usedCredits: num(e.used_credits),
     monthlyLimit: num(e.monthly_limit),
@@ -166,7 +166,7 @@ export async function fetchBackendUsage(id, backend, {
     return { ...base, status: 'no-credentials', account, reason: '이 백엔드의 configDir 에 로그인 자격증명이 없습니다' };
   }
 
-  const acct = { ...(account ?? {}), subscriptionType: creds.subscriptionType ?? null };
+  const acct = { email: null, organization: null, ...(account ?? {}), tier: creds.subscriptionType ?? null };
 
   // 만료 토큰은 갱신하지 않는다 — refresh 는 Claude CLI 의 몫이고, 여기서
   // 돌리면 CLI 와 경합해 양쪽 토큰이 함께 무효화될 수 있다.

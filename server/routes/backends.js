@@ -120,7 +120,7 @@ export function createBackendsRouter({ backendsStore, eventBus, webConfig, confi
   router.get('/usage', async (req, res, next) => {
     try {
       const force = req.query.force === '1' || req.query.force === 'true';
-      res.json({ usage: await usage.getAll({ force }), fetchedAt: new Date().toISOString() });
+      res.json({ backends: await usage.getAll({ force }), fetchedAt: new Date().toISOString() });
     } catch (err) {
       next(err);
     }

@@ -90,9 +90,9 @@ describe('fetchBackendUsage', () => {
     expect(r.fiveHour).toEqual({ utilization: 74, resetsAt: '2026-09-17T06:40:00.119863+00:00' });
     expect(r.sevenDay).toEqual({ utilization: 59, resetsAt: '2026-09-21T01:00:00.119883+00:00' });
     expect(r.extraUsage).toEqual({
-      isEnabled: false, utilization: 0, usedCredits: 0, monthlyLimit: 2000, currency: 'USD'
+      enabled: false, utilization: 0, usedCredits: 0, monthlyLimit: 2000, currency: 'USD'
     });
-    expect(r.account).toEqual({ email: 'a@b.com', organization: 'Org', subscriptionType: 'max' });
+    expect(r.account).toEqual({ email: 'a@b.com', organization: 'Org', tier: 'max' });
     expect(JSON.stringify(r)).not.toContain('SECRET');
   });
 
@@ -259,9 +259,9 @@ describe('GET /api/backends/usage', () => {
   it('백엔드별 정규화된 사용량을 반환한다', async () => {
     const res = await request(app).get('/api/backends/usage');
     expect(res.status).toBe(200);
-    expect(res.body.usage.claude.status).toBe('ok');
-    expect(res.body.usage.claude.fiveHour.utilization).toBe(74);
-    expect(res.body.usage.zai.status).toBe('unsupported');
+    expect(res.body.backends.claude.status).toBe('ok');
+    expect(res.body.backends.claude.fiveHour.utilization).toBe(74);
+    expect(res.body.backends.zai.status).toBe('unsupported');
   });
 
   it('응답에 accessToken 이 새지 않는다', async () => {
