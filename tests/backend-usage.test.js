@@ -8,7 +8,8 @@ import crypto from 'node:crypto';
 import {
   keychainServiceName,
   fetchBackendUsage,
-  createBackendUsageReader
+  createBackendUsageReader,
+  buildCredentialPool
 } from '../server/lib/backend-usage.js';
 import { createBackendsStore } from '../server/lib/backends-store.js';
 import { createBackendsRouter } from '../server/routes/backends.js';
@@ -224,6 +225,233 @@ describe('createBackendUsageReader 캐시', () => {
     });
     await Promise.all([reader.getAll(), reader.getAll(), reader.getAll()]);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('계정 공유 토큰 (accountUuid)', () => {
+  const UUID = 'fbbcae4a-50f4-42da-8c09-869be421d0d0';
+  const OTHER_UUID = '11111111-2222-3333-4444-555555555555';
+  let home, prevHome;
+
+  /** 키체인을 흉내낸다: 서비스명 → 자격증명 blob. 없는 서비스는 security 처럼 실패. */
+  function fakeKeychain(entries) {
+    const fn = vi.fn(async (_bin, args) => {
+      const service = args[2];
+      if (!(service in entries)) throw new Error('SecKeychainSearchCopyNext: not found');
+      return { stdout: JSON.stringify({ claudeAiOauth: entries[service] }) };
+    });
+    return fn;
+  }
+
+  /** <home>/.claude-claw/account-<id> 를 만들고 oauthAccount 만 심는다(토큰은 키체인). */
+  function accountDir(id, accountUuid) {
+    const dir = path.join(home, '.claude-claw', `account-${id}`);
+    fs.mkdirSync(dir, { recursive: true });
+    if (accountUuid) {
+      fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify({
+        oauthAccount: { accountUuid, emailAddress: 'a@b.com', organizationName: 'Org' }
+      }));
+    }
+    return dir;
+  }
+
+  /** 기본 계정(~/.claude) — .claude.json 은 레거시 위치인 ~/.claude.json 이다. */
+  function defaultDir(accountUuid) {
+    const dir = path.join(home, '.claude');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({
+      oauthAccount: { accountUuid, emailAddress: 'a@b.com', organizationName: 'Org' }
+    }));
+    return dir;
+  }
+
+  const expiredCreds = { accessToken: 'EXPIRED-SECRET', expiresAt: PAST, subscriptionType: 'max' };
+  const sharedCreds = { accessToken: 'SHARED-SECRET', expiresAt: FUTURE, subscriptionType: 'max', refreshToken: 'RT-SECRET' };
+
+  beforeEach(() => {
+    prevHome = process.env.HOME;
+    home = fs.mkdtempSync(path.join(os.tmpdir(), 'cw-home-'));
+    process.env.HOME = home;
+  });
+
+  afterEach(() => {
+    process.env.HOME = prevHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it('자기 토큰이 만료면 같은 계정의 기본 ~/.claude 토큰으로 조회한다', async () => {
+    const dir = accountDir('acc_T1', UUID);
+    const def = defaultDir(UUID);
+    const execFileAsync = fakeKeychain({
+      [keychainServiceName(dir)]: expiredCreds,
+      [keychainServiceName(def)]: sharedCreds
+    });
+    const fetchImpl = okFetch();
+
+    const r = await fetchBackendUsage('acc_T1', { type: 'claude-cli', configDir: dir }, {
+      fetchImpl, execFileAsync, platform: 'darwin'
+    });
+
+    expect(r.status).toBe('ok');
+    expect(r.tokenSource).toBe('shared');
+    expect(r.tokenSourceDir).toBe(def);
+    expect(r.accountUuid).toBe(UUID);
+    expect(r.fiveHour.utilization).toBe(74);
+    // 빌려온 토큰(기본 계정)으로 호출했는지
+    expect(fetchImpl.mock.calls[0][1].headers.authorization).toBe('Bearer SHARED-SECRET');
+    // 기본 계정의 키체인 항목은 접미사가 없다
+    expect(execFileAsync.mock.calls.some((c) => c[1][2] === 'Claude Code-credentials')).toBe(true);
+  });
+
+  it('자기 configDir 에 토큰 항목 자체가 없어도 계정이 같으면 빌려온다', async () => {
+    const dir = accountDir('acc_T1', UUID);
+    const def = defaultDir(UUID);
+    const execFileAsync = fakeKeychain({ [keychainServiceName(def)]: sharedCreds });
+
+    const r = await fetchBackendUsage('acc_T1', { type: 'claude-cli', configDir: dir }, {
+      fetchImpl: okFetch(), execFileAsync, platform: 'darwin'
+    });
+
+    expect(r.status).toBe('ok');
+    expect(r.tokenSource).toBe('shared');
+  });
+
+  it('accountUuid 를 모르는 백엔드는 남의 토큰을 빌리지 않고 no-credentials', async () => {
+    const dir = accountDir('acc_T1', null);   // 로그인 이력 없음
+    const def = defaultDir(UUID);
+    const execFileAsync = fakeKeychain({ [keychainServiceName(def)]: sharedCreds });
+    const fetchImpl = okFetch();
+
+    const r = await fetchBackendUsage('acc_T1', { type: 'claude-cli', configDir: dir }, {
+      fetchImpl, execFileAsync, platform: 'darwin'
+    });
+
+    expect(r.status).toBe('no-credentials');
+    expect(r.accountUuid).toBeNull();
+    expect(r.tokenSource).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('accountUuid 가 다르면 빌려오지 않고 expired 를 유지한다', async () => {
+    const dir = accountDir('acc_T1', UUID);
+    const def = defaultDir(OTHER_UUID);
+    const execFileAsync = fakeKeychain({
+      [keychainServiceName(dir)]: expiredCreds,
+      [keychainServiceName(def)]: sharedCreds
+    });
+    const fetchImpl = okFetch();
+
+    const r = await fetchBackendUsage('acc_T1', { type: 'claude-cli', configDir: dir }, {
+      fetchImpl, execFileAsync, platform: 'darwin'
+    });
+
+    expect(r.status).toBe('expired');
+    expect(r.accountUuid).toBe(UUID);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('자기 토큰이 유효하면 self 로 쓰고 다른 configDir 을 뒤지지 않는다', async () => {
+    const dir = accountDir('acc_T1', UUID);
+    defaultDir(UUID);
+    const execFileAsync = fakeKeychain({ [keychainServiceName(dir)]: { ...sharedCreds, accessToken: 'OWN-SECRET' } });
+    const fetchImpl = okFetch();
+
+    const r = await fetchBackendUsage('acc_T1', { type: 'claude-cli', configDir: dir }, {
+      fetchImpl, execFileAsync, platform: 'darwin'
+    });
+
+    expect(r.status).toBe('ok');
+    expect(r.tokenSource).toBe('self');
+    expect(r.tokenSourceDir).toBeUndefined();
+    expect(fetchImpl.mock.calls[0][1].headers.authorization).toBe('Bearer OWN-SECRET');
+    expect(execFileAsync).toHaveBeenCalledTimes(1);   // 자기 항목만 조회
+  });
+
+  it('토큰 refresh 를 시도하지 않는다 — usage 호출 1건, security 는 읽기 전용', async () => {
+    const dir = accountDir('acc_T1', UUID);
+    const def = defaultDir(UUID);
+    const execFileAsync = fakeKeychain({
+      [keychainServiceName(dir)]: expiredCreds,
+      [keychainServiceName(def)]: sharedCreds
+    });
+    const fetchImpl = okFetch();
+
+    await fetchBackendUsage('acc_T1', { type: 'claude-cli', configDir: dir }, {
+      fetchImpl, execFileAsync, platform: 'darwin'
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://api.anthropic.com/api/oauth/usage');
+    for (const [bin, args] of execFileAsync.mock.calls) {
+      expect(bin).toBe('/usr/bin/security');
+      expect(args[0]).toBe('find-generic-password');   // add/delete/update 아님
+    }
+  });
+
+  it('공유 조회에서도 토큰이 응답에 새지 않는다', async () => {
+    const dir = accountDir('acc_T1', UUID);
+    const def = defaultDir(UUID);
+    const r = await fetchBackendUsage('acc_T1', { type: 'claude-cli', configDir: dir }, {
+      fetchImpl: okFetch(),
+      execFileAsync: fakeKeychain({
+        [keychainServiceName(dir)]: expiredCreds,
+        [keychainServiceName(def)]: sharedCreds
+      }),
+      platform: 'darwin'
+    });
+    const json = JSON.stringify(r);
+    expect(json).not.toContain('SHARED-SECRET');
+    expect(json).not.toContain('RT-SECRET');
+    expect(json).not.toContain('EXPIRED-SECRET');
+  });
+
+  describe('buildCredentialPool', () => {
+    it('만료 토큰은 담지 않고 같은 계정의 유효 토큰이 이긴다', async () => {
+      const a = accountDir('a', UUID);
+      const b = accountDir('b', UUID);
+      const execFileAsync = fakeKeychain({
+        [keychainServiceName(a)]: expiredCreds,
+        [keychainServiceName(b)]: sharedCreds
+      });
+
+      const pool = await buildCredentialPool([a, b], { execFileAsync, platform: 'darwin' });
+      expect(pool.get(UUID).configDir).toBe(b);
+    });
+
+    it('accountUuid 가 없는 디렉터리는 풀에 넣지 않는다', async () => {
+      const anon = accountDir('anon', null);
+      const execFileAsync = fakeKeychain({ [keychainServiceName(anon)]: sharedCreds });
+      const pool = await buildCredentialPool([anon], { execFileAsync, platform: 'darwin' });
+      expect(pool.size).toBe(0);
+    });
+
+    it('같은 configDir 을 두 번 줘도 키체인은 한 번만 읽는다', async () => {
+      const a = accountDir('a', UUID);
+      const execFileAsync = fakeKeychain({ [keychainServiceName(a)]: sharedCreds });
+      await buildCredentialPool([a, a], { execFileAsync, platform: 'darwin' });
+      expect(execFileAsync).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('getAll 은 라운드당 풀을 한 번만 만든다', async () => {
+    const d1 = accountDir('a', UUID);
+    const d2 = accountDir('b', UUID);
+    const def = defaultDir(UUID);
+    const execFileAsync = fakeKeychain({ [keychainServiceName(def)]: sharedCreds });
+    const backendsStore = { getRaw: () => ({ backends: {
+      a: { type: 'claude-cli', configDir: d1 },
+      b: { type: 'claude-cli', configDir: d2 }
+    } }) };
+
+    const reader = createBackendUsageReader({
+      backendsStore, fetchImpl: okFetch(), execFileAsync, platform: 'darwin'
+    });
+    const out = await reader.getAll();
+
+    expect(out.a.tokenSource).toBe('shared');
+    expect(out.b.tokenSource).toBe('shared');
+    // configDir 3개(a, b, 기본) 를 각각 1회씩만 조회
+    expect(execFileAsync).toHaveBeenCalledTimes(3);
   });
 });
 

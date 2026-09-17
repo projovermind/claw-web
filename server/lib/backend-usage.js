@@ -20,6 +20,14 @@ import { resolveConfigDir } from './config-dir.js';
  * ⚠️ secrets.json 의 oauth.* (setup-token 으로 발급) 은 여기에 쓸 수 없다.
  *    그 토큰에는 `user:profile` 스코프가 없어서 /api/oauth/usage 가 403 이다.
  *
+ * 한도는 configDir 이 아니라 Anthropic 계정(accountUuid) 단위다. 그래서 어떤
+ * 백엔드의 configDir 에 유효한 토큰이 없더라도, 같은 accountUuid 로 로그인한
+ * 다른 configDir(기본 ~/.claude 포함)의 토큰으로 대신 조회한다
+ * (tokenSource: 'shared'). 자기 토큰을 쓴 경우는 'self'.
+ *
+ * ⚠️ 토큰 refresh 는 절대 하지 않는다. 키체인의 refreshToken 은 1회용이라
+ *    여기서 돌리면 Claude CLI 가 들고 있는 값이 무효화돼 CLI 로그인이 깨진다.
+ *
  * ⚠️ accessToken 은 절대 반환값이나 로그에 담지 않는다.
  */
 
@@ -87,6 +95,7 @@ function readAccountMeta(configDir) {
       const acc = JSON.parse(fssync.readFileSync(file, 'utf8'))?.oauthAccount;
       if (acc) {
         return {
+          accountUuid: acc.accountUuid ?? null,
           email: acc.emailAddress ?? null,
           organization: acc.organizationName ?? null
         };
@@ -94,6 +103,87 @@ function readAccountMeta(configDir) {
     } catch { /* 다음 후보 */ }
   }
   return null;
+}
+
+/** 기본 계정의 configDir (~/.claude). 키체인 항목은 접미사가 없다. */
+export function defaultConfigDir() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  return home ? path.join(home, '.claude') : null;
+}
+
+/**
+ * 한 configDir 의 자격증명을 읽는다. credentials.json → 키체인 순.
+ * 없으면 null. 토큰은 호출부 밖으로 새지 않도록 주의할 것.
+ *
+ * `credsCache` 를 주면 같은 라운드 안에서 configDir 당 한 번만 읽는다
+ * (키체인 조회는 /usr/bin/security 프로세스를 하나씩 띄운다).
+ */
+async function readCredsFor(configDir, { execFileAsync = execFileP, platform = process.platform, credsCache } = {}) {
+  // 값이 아니라 promise 를 캐시한다 — getAll 이 백엔드를 병렬로 도는 동안
+  // 같은 configDir 을 두 번 읽어 security 프로세스를 중복으로 띄우지 않도록.
+  if (credsCache?.has(configDir)) return credsCache.get(configDir);
+  const p = readCredsUncached(configDir, { execFileAsync, platform });
+  credsCache?.set(configDir, p);
+  return p;
+}
+
+async function readCredsUncached(configDir, { execFileAsync, platform }) {
+  try {
+    const credsFile = path.join(configDir, '.credentials.json');
+    if (fssync.existsSync(credsFile)) {
+      const parsed = parseCredsBlob(fssync.readFileSync(credsFile, 'utf8'));
+      if (parsed) return parsed;
+    }
+  } catch { /* 키체인으로 폴백 */ }
+
+  if (platform !== 'darwin') return null;
+  try {
+    const { stdout } = await readKeychain(keychainServiceName(configDir), execFileAsync);
+    return parseCredsBlob(String(stdout).trim());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * accountUuid → 유효한(미만료) 자격증명 풀을 만든다.
+ *
+ * 같은 Anthropic 계정으로 로그인한 configDir 이 여럿일 때, 그 중 하나라도
+ * 살아 있는 토큰을 갖고 있으면 나머지 백엔드도 그 토큰으로 사용량을 볼 수 있다.
+ * accountUuid 를 모르는 configDir(로그인 이력 없음)은 풀에 넣지 않는다 —
+ * 남의 계정 숫자를 엉뚱한 백엔드에 붙이지 않기 위해서다.
+ *
+ * @returns {Promise<Map<string, {configDir: string, creds: object}>>}
+ */
+export async function buildCredentialPool(configDirs, {
+  execFileAsync = execFileP,
+  platform = process.platform,
+  now = () => Date.now(),
+  credsCache
+} = {}) {
+  const pool = new Map();
+  const seen = new Set();
+  for (const dir of configDirs) {
+    if (!dir || seen.has(dir)) continue;
+    seen.add(dir);
+    const uuid = readAccountMeta(dir)?.accountUuid;
+    if (!uuid || pool.has(uuid)) continue;   // 이미 유효 토큰을 확보한 계정은 건너뜀
+    const creds = await readCredsFor(dir, { execFileAsync, platform, credsCache });
+    if (!creds) continue;
+    if (creds.expiresAt && new Date(creds.expiresAt).getTime() <= now()) continue;
+    pool.set(uuid, { configDir: dir, creds });
+  }
+  return pool;
+}
+
+/** 응답용 account. accountUuid 는 최상위 필드로만 노출한다(중복 방지). */
+function toAccount(meta, tier) {
+  if (!meta && tier == null) return null;
+  return {
+    email: meta?.email ?? null,
+    organization: meta?.organization ?? null,
+    tier: tier ?? null
+  };
 }
 
 function num(v) {
@@ -127,7 +217,11 @@ export async function fetchBackendUsage(id, backend, {
   fetchImpl = fetch,
   execFileAsync = execFileP,
   platform = process.platform,
-  now = () => Date.now()
+  now = () => Date.now(),
+  /** accountUuid → 유효 자격증명 맵. 없으면 이 백엔드 + 기본 계정으로 즉석에서 만든다. */
+  getPool,
+  /** configDir → creds 라운드 캐시 (풀과 자기 토큰 조회가 중복되지 않게). */
+  credsCache
 } = {}) {
   const fetchedAt = new Date(now()).toISOString();
   const base = {
@@ -137,6 +231,8 @@ export async function fetchBackendUsage(id, backend, {
     sevenDay: null,
     extraUsage: null,
     account: null,
+    accountUuid: null,
+    tokenSource: null,
     fetchedAt
   };
 
@@ -146,33 +242,52 @@ export async function fetchBackendUsage(id, backend, {
 
   const configDir = resolveConfigDir(id, backend.configDir);
   const account = readAccountMeta(configDir);
+  const accountUuid = account?.accountUuid ?? null;
+  const meta = { ...base, accountUuid };
 
-  let creds = null;
-  try {
-    const credsFile = path.join(configDir, '.credentials.json');
-    if (fssync.existsSync(credsFile)) {
-      creds = parseCredsBlob(fssync.readFileSync(credsFile, 'utf8'));
+  const ownCreds = await readCredsFor(configDir, { execFileAsync, platform, credsCache });
+  const ownExpired = !!(ownCreds?.expiresAt && new Date(ownCreds.expiresAt).getTime() <= now());
+
+  let creds = ownCreds && !ownExpired ? ownCreds : null;
+  let tokenSource = creds ? 'self' : null;
+  let sharedFrom = null;
+
+  // 자기 토큰이 없거나 만료 — 한도는 계정 단위이므로 같은 accountUuid 로
+  // 로그인한 다른 configDir 의 살아 있는 토큰으로 대신 조회한다.
+  if (!creds && accountUuid) {
+    const resolvePool = getPool ?? (() => buildCredentialPool(
+      [configDir, defaultConfigDir()],
+      { execFileAsync, platform, now, credsCache }
+    ));
+    const hit = (await resolvePool())?.get(accountUuid);
+    if (hit && hit.configDir !== configDir) {
+      creds = hit.creds;
+      tokenSource = 'shared';
+      sharedFrom = hit.configDir;
     }
-  } catch { /* keychain 으로 폴백 */ }
-
-  if (!creds && platform === 'darwin') {
-    try {
-      const { stdout } = await readKeychain(keychainServiceName(configDir), execFileAsync);
-      creds = parseCredsBlob(String(stdout).trim());
-    } catch { /* 항목 없음 → no-credentials */ }
   }
 
   if (!creds) {
-    return { ...base, status: 'no-credentials', account, reason: '이 백엔드의 configDir 에 로그인 자격증명이 없습니다' };
+    if (ownExpired) {
+      // 대체 토큰도 없음 → 이 계정은 어디서도 유효한 세션이 없다. 갱신은 하지 않는다.
+      return {
+        ...meta,
+        status: 'expired',
+        account: toAccount(account, ownCreds.subscriptionType),
+        expiresAt: ownCreds.expiresAt
+      };
+    }
+    return {
+      ...meta,
+      status: 'no-credentials',
+      account: account ? toAccount(account, null) : null,
+      reason: accountUuid
+        ? '이 계정으로 로그인한 configDir 중 유효한 토큰을 가진 곳이 없습니다'
+        : '이 백엔드의 configDir 에 로그인 이력이 없습니다'
+    };
   }
 
-  const acct = { email: null, organization: null, ...(account ?? {}), tier: creds.subscriptionType ?? null };
-
-  // 만료 토큰은 갱신하지 않는다 — refresh 는 Claude CLI 의 몫이고, 여기서
-  // 돌리면 CLI 와 경합해 양쪽 토큰이 함께 무효화될 수 있다.
-  if (creds.expiresAt && new Date(creds.expiresAt).getTime() <= now()) {
-    return { ...base, status: 'expired', account: acct, expiresAt: creds.expiresAt };
-  }
+  const acct = toAccount(account, creds.subscriptionType);
 
   let res;
   try {
@@ -187,27 +302,28 @@ export async function fetchBackendUsage(id, backend, {
     });
   } catch (err) {
     // err.message 는 토큰을 담지 않는다(요청 URL 만 포함).
-    return { ...base, status: 'error', account: acct, reason: err?.message ?? 'request failed' };
+    return { ...meta, status: 'error', account: acct, tokenSource, reason: err?.message ?? 'request failed' };
   }
 
   if (res.status === 401 || res.status === 403) {
     return {
-      ...base,
+      ...meta,
       status: 'unauthorized',
       account: acct,
+      tokenSource,
       httpStatus: res.status,
       reason: '토큰이 거부되었습니다 (user:profile 스코프가 없는 setup-token 일 수 있음)'
     };
   }
   if (!res.ok) {
-    return { ...base, status: 'error', account: acct, httpStatus: res.status, reason: `HTTP ${res.status}` };
+    return { ...meta, status: 'error', account: acct, tokenSource, httpStatus: res.status, reason: `HTTP ${res.status}` };
   }
 
   let body;
   try {
     body = await res.json();
   } catch {
-    return { ...base, status: 'error', account: acct, reason: 'invalid JSON response' };
+    return { ...meta, status: 'error', account: acct, tokenSource, reason: 'invalid JSON response' };
   }
 
   return {
@@ -217,6 +333,10 @@ export async function fetchBackendUsage(id, backend, {
     sevenDay: normalizeWindow(body?.seven_day),
     extraUsage: normalizeExtraUsage(body?.extra_usage),
     account: acct,
+    accountUuid,
+    tokenSource,
+    // 어느 configDir 의 토큰을 빌려 왔는지 (경로만, 토큰은 아님)
+    ...(sharedFrom ? { tokenSourceDir: sharedFrom } : {}),
     fetchedAt
   };
 }
@@ -233,14 +353,42 @@ export function createBackendUsageReader({
   const cache = new Map();   // id -> { at, value }
   const inflight = new Map(); // id -> Promise
 
-  async function getOne(id, backend, { force = false } = {}) {
+  /**
+   * 등록된 모든 claude-cli 백엔드의 configDir + 기본 계정(~/.claude).
+   * 한 라운드에서 계정 공유 토큰을 찾는 후보 목록이다.
+   */
+  function candidateConfigDirs() {
+    const backends = backendsStore?.getRaw?.().backends ?? {};
+    const dirs = Object.entries(backends)
+      .filter(([, b]) => b?.type === 'claude-cli')
+      .map(([id, b]) => resolveConfigDir(id, b.configDir));
+    const fallback = defaultConfigDir();
+    if (fallback) dirs.push(fallback);
+    return dirs;
+  }
+
+  /**
+   * 풀은 한 라운드에 한 번만 만든다(키체인 조회가 configDir 당 1회).
+   * 전부 캐시 히트면 아예 만들지 않도록 지연 생성한다.
+   */
+  function newRound() {
+    const credsCache = new Map();
+    let promise = null;
+    const getPool = () => (promise ??= buildCredentialPool(
+      candidateConfigDirs(), { ...deps, now, credsCache }
+    ));
+    return { getPool, credsCache };
+  }
+
+  async function getOne(id, backend, { force = false, round } = {}) {
     if (!force) {
       const hit = cache.get(id);
       if (hit && now() - hit.at < ttlMs) return { ...hit.value, cached: true };
     }
     if (inflight.has(id)) return inflight.get(id);
 
-    const p = fetchBackendUsage(id, backend, { ...deps, now })
+    const { getPool, credsCache } = round ?? newRound();
+    const p = fetchBackendUsage(id, backend, { ...deps, now, getPool, credsCache })
       .then((value) => {
         cache.set(id, { at: now(), value });
         return value;
@@ -254,8 +402,9 @@ export function createBackendUsageReader({
     getOne,
     async getAll({ force = false } = {}) {
       const backends = backendsStore?.getRaw?.().backends ?? {};
+      const round = newRound();
       const entries = await Promise.all(
-        Object.entries(backends).map(async ([id, b]) => [id, await getOne(id, b, { force })])
+        Object.entries(backends).map(async ([id, b]) => [id, await getOne(id, b, { force, round })])
       );
       return Object.fromEntries(entries);
     },
