@@ -78,7 +78,7 @@ describe('normalizeTiers / migrateBackendTierModels', () => {
     expect(normalizeTiers(undefined).order).toEqual(['high', 'middle', 'low']);
     expect(normalizeTiers({ order: [] }).order).toEqual(['high', 'middle', 'low']);
     expect(normalizeTiers({ order: ['s', 'a'], labels: { s: '최상' } })).toEqual({
-      order: ['s', 'a'], labels: { s: '최상', a: 'a' }
+      order: ['s', 'a'], labels: { s: '최상', a: 'a' }, backends: {}
     });
   });
 
@@ -188,7 +188,7 @@ describe('backends store — 티어 마이그레이션', () => {
     await store.updateBackend('claude', { tierModels: { high: 'o', middle: 's', low: 'h' } });
 
     const next = await store.setTiers({ order: ['high', 'low'], labels: { high: '고성능', low: '경량' } });
-    expect(next).toEqual({ order: ['high', 'low'], labels: { high: '고성능', low: '경량' } });
+    expect(next).toEqual({ order: ['high', 'low'], labels: { high: '고성능', low: '경량' }, backends: {} });
     expect(store.getRaw().backends.claude.tierModels.middle).toBe('s');
   });
 });

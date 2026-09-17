@@ -319,7 +319,12 @@ export const api = {
    * 모델 티어 정의를 통째로 저장 (추가/이름변경/삭제 전부 이 한 번의 호출).
    * order 에서 빠진 티어는 삭제된 것으로 취급된다.
    */
-  setBackendTiers: (body: { order: string[]; labels: Record<string, string> }) =>
+  setBackendTiers: (body: {
+    order: string[];
+    labels: Record<string, string>;
+    /** 티어 → 백엔드 id. 지정된 티어가 하나도 없으면 아예 보내지 않는다. */
+    backends?: Record<string, string>;
+  }) =>
     post<{ tiers: ModelTiers }>('/backends/tiers', body).then((r) => r.tiers),
   skills: () => get<{ skills: Skill[] }>('/skills').then((r) => r.skills),
   skill: (id: string) => get<Skill>(`/skills/${id}`),

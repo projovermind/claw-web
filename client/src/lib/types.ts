@@ -384,6 +384,11 @@ export interface BackendPreset {
 export interface ModelTiers {
   order: string[];
   labels: Record<string, string>;
+  /**
+   * 티어 → 그 티어를 실행할 백엔드 id. null/키 없음 = 전역 백엔드를 따름.
+   * 실제 결정 우선순위: agent.backendId(개별 지정) > 절약 모드 > 이 값 > 전역 activeBackend.
+   */
+  backends?: Record<string, string | null>;
 }
 
 export interface BackendsState {

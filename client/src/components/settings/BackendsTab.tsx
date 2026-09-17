@@ -5,7 +5,7 @@ import { useProgressMutation } from '../../lib/useProgressMutation';
 import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, Settings2, Key, AlertTriangle, Eye, Users, Layers } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { BackendPublic, ClaudeCliBackend, ApplyBackendToAgentsResult, ModelTiers } from '../../lib/types';
-import { resolveTiers, tierLabel, normalizeTierKey } from '../../lib/model-tiers';
+import { resolveTiers, tierLabel, normalizeTierKey, tierBackendOf } from '../../lib/model-tiers';
 import { BackendCard } from './BackendCard';
 import { BackendUsageGauge, useBackendUsage, sharedAccountCounts } from './BackendUsageGauge';
 import { ModelRow } from './ModelRow';
@@ -55,6 +55,13 @@ const STATUS_LABEL: Record<ClaudeCliBackend['status'], string> = {
   cooldown: '쿨다운',
   disabled: '비활성',
   'needs-relogin': '재로그인 필요',
+};
+
+/** POST /api/backends/tiers 바디. backends 는 null 을 담지 않는다(= 키를 뺀 것이 전역 따름). */
+type TiersPayload = {
+  order: string[];
+  labels: Record<string, string>;
+  backends?: Record<string, string>;
 };
 
 export function BackendsTab() {
@@ -234,16 +241,37 @@ export function BackendsTab() {
     },
   });
 
-  /** 티어 정의 저장 — 추가/이름변경/삭제 모두 { order, labels } 통째 저장. */
-  const saveTiers = useProgressMutation<ModelTiers, Error, ModelTiers>({
+  /** 티어 정의 저장 — 추가/이름변경/삭제/백엔드 지정 모두 통째 저장 한 번으로. */
+  const saveTiers = useProgressMutation<ModelTiers, Error, TiersPayload>({
     title: t('backendsTab.tiersSaving'),
     successMessage: t('backendsTab.tiersSaved'),
     invalidateKeys: [['backends']],
-    mutationFn: (next: ModelTiers) => api.setBackendTiers(next),
+    mutationFn: (next: TiersPayload) => api.setBackendTiers(next),
     onError: (err) => {
       addToast('error', t('backendsTab.tiersSaveFailed', { error: err.message }));
     },
   });
+
+  /**
+   * 티어는 항상 통째 저장이라 현재 값 위에 부분 수정만 얹어서 보낸다.
+   * backends 는 지정된 티어가 하나도 없으면 키 자체를 빼서, 이 필드를 아직 모르는
+   * 서버(구 tiersSchema 는 strict 라 400)에서도 이름변경/추가/삭제가 계속 동작하게 한다.
+   */
+  const saveTierPatch = (patch: Partial<ModelTiers>) => {
+    const order = patch.order ?? tiers.order;
+    const labels = patch.labels ?? tiers.labels;
+    const merged = patch.backends ?? tiers.backends ?? {};
+    const backends: Record<string, string> = {};
+    for (const tier of order) {
+      const b = merged[tier];
+      if (b) backends[tier] = b;
+    }
+    saveTiers.mutate({
+      order,
+      labels,
+      ...(Object.keys(backends).length > 0 ? { backends } : {})
+    });
+  };
 
   const restoreAgentTiers = useProgressMutation<
     ApplyBackendToAgentsResult,
@@ -419,6 +447,10 @@ export function BackendsTab() {
             </button>
           </div>
           <p className="text-[11px] text-zinc-500 mt-1">{t('backendsTab.applyAllDesc')}</p>
+          <p className="flex items-start gap-1 text-[11px] text-amber-400/80 mt-1 leading-snug">
+            <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+            <span>{t('backendsTab.applyAllTierWarn')}</span>
+          </p>
 
           {/* 티어 일괄 적용 — 백엔드 일괄 적용과 같은 되돌리기 토스트 흐름 */}
           <div className="flex items-center gap-2 mt-2">
@@ -453,32 +485,85 @@ export function BackendsTab() {
           </div>
           <p className="text-[11px] text-zinc-500 mb-2">{t('backendsTab.tiersDesc')}</p>
           <div className="space-y-1">
-            {tiers.order.map((key) => (
-              <div key={key} className="flex items-center gap-1.5">
-                <span className="w-28 shrink-0 truncate font-mono text-[11px] text-zinc-500">{key}</span>
-                <InlineEditText
-                  value={tierLabel(tiers, key)}
-                  onSave={(v) =>
-                    saveTiers.mutate({ order: tiers.order, labels: { ...tiers.labels, [key]: v } })
-                  }
-                  className="flex-1 text-sm text-zinc-200"
-                  placeholder={key}
-                />
-                <button
-                  onClick={() => {
-                    if (!confirm(t('backendsTab.tierDeleteConfirm', { tier: tierLabel(tiers, key) }))) return;
-                    const labels = { ...tiers.labels };
-                    delete labels[key];
-                    saveTiers.mutate({ order: tiers.order.filter((k) => k !== key), labels });
-                  }}
-                  disabled={saveTiers.isPending || tiers.order.length <= 1}
-                  className="p-1 rounded hover:bg-red-900/40 text-zinc-500 hover:text-red-400 disabled:opacity-30"
-                  title={t('backendsTab.tierDelete')}
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
-            ))}
+            {tiers.order.map((key) => {
+              const pinned = tierBackendOf(tiers, key);
+              // 전역 따름이면 지금의 activeBackend 기준으로 풀린다 — 그 결과를 그대로 보여준다.
+              const effectiveId = pinned ?? data.activeBackend;
+              const effective = data.backends[effectiveId];
+              const resolvedModel = effective?.tierModels?.[key] ?? null;
+              return (
+                <div key={key} className="flex items-center gap-1.5">
+                  {/* 1칸: 티어명 (라벨 인라인 수정 + 원래 키) */}
+                  <div className="w-32 shrink-0 min-w-0">
+                    <InlineEditText
+                      value={tierLabel(tiers, key)}
+                      onSave={(v) => saveTierPatch({ labels: { ...tiers.labels, [key]: v } })}
+                      className="text-sm text-zinc-200 truncate"
+                      placeholder={key}
+                    />
+                    <div className="font-mono text-[10px] text-zinc-600 truncate">{key}</div>
+                  </div>
+
+                  {/* 2칸: 이 티어를 실행할 백엔드 */}
+                  <select
+                    value={pinned ?? ''}
+                    disabled={saveTiers.isPending}
+                    onChange={(e) =>
+                      saveTierPatch({
+                        backends: { ...(tiers.backends ?? {}), [key]: e.target.value || null }
+                      })
+                    }
+                    className="w-44 shrink-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] text-zinc-300 disabled:opacity-50"
+                  >
+                    <option value="">{t('backendsTab.tierBackendGlobal')}</option>
+                    {list.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.label}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* 3칸: 그 백엔드에서 실제로 풀리는 모델 ID */}
+                  {resolvedModel ? (
+                    <span
+                      className="flex-1 min-w-0 truncate font-mono text-[11px] text-zinc-400"
+                      title={t('backendsTab.tierResolvedVia', {
+                        backend: effective?.label ?? effectiveId,
+                        model: resolvedModel
+                      })}
+                    >
+                      &rarr; {resolvedModel}
+                    </span>
+                  ) : (
+                    <span
+                      className="flex-1 min-w-0 truncate flex items-center gap-1 text-[11px] text-amber-400/90"
+                      title={t('backendsTab.tierUnmappedHint', {
+                        backend: effective?.label ?? effectiveId
+                      })}
+                    >
+                      <AlertTriangle size={10} className="shrink-0" />
+                      {t('backendsTab.tierUnmapped')}
+                    </span>
+                  )}
+
+                  <button
+                    onClick={() => {
+                      if (!confirm(t('backendsTab.tierDeleteConfirm', { tier: tierLabel(tiers, key) }))) return;
+                      const labels = { ...tiers.labels };
+                      const backends = { ...(tiers.backends ?? {}) };
+                      delete labels[key];
+                      delete backends[key];
+                      saveTierPatch({ order: tiers.order.filter((k) => k !== key), labels, backends });
+                    }}
+                    disabled={saveTiers.isPending || tiers.order.length <= 1}
+                    className="p-1 rounded hover:bg-red-900/40 text-zinc-500 hover:text-red-400 disabled:opacity-30"
+                    title={t('backendsTab.tierDelete')}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
           <div className="flex gap-1 pt-2">
             <input
@@ -497,7 +582,7 @@ export function BackendsTab() {
               onClick={() => {
                 const key = normalizeTierKey(draftTierKey);
                 if (!key || tiers.order.includes(key)) return;
-                saveTiers.mutate({
+                saveTierPatch({
                   order: [...tiers.order, key],
                   labels: { ...tiers.labels, [key]: draftTierLabel.trim() || key },
                 });
@@ -1146,6 +1231,12 @@ function ApplyToAgentsConfirm({
           <p className="text-[11px] text-zinc-500">
             {t(isTier ? 'backendsTab.applyTierDesc' : 'backendsTab.applyAllDesc')}
           </p>
+          {!isTier && (
+            <p className="flex items-start gap-1 text-[11px] text-amber-400/80 leading-snug">
+              <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+              <span>{t('backendsTab.applyAllTierWarn')}</span>
+            </p>
+          )}
           <div className="flex justify-end gap-2 pt-1">
             <button
               onClick={onCancel}

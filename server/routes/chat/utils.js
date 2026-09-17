@@ -1,6 +1,6 @@
 import { logger } from '../../lib/logger.js';
 import { resolveConfigDir } from '../../lib/config-dir.js';
-import { resolveTierModel } from '../../lib/model-tiers.js';
+import { resolveTierModel, tierBackendId as tierBackendOf } from '../../lib/model-tiers.js';
 
 /**
  * Classify an error message and return retry strategy.
@@ -153,7 +153,15 @@ export function resolveSkills(ids, skillsStore, systemSkillsStore) {
 
 /**
  * Resolve the active backend for an agent.
- * Handles model→backend auto-remapping (glm-* → zai, claude-* → claude).
+ *
+ * 우선순위: agent.backendId(개별 지정) > 절약 모드 > 티어가 고른 백엔드
+ * (tiers.backends[agent.modelTier]) > 전역 activeBackend.
+ *
+ * 티어→백엔드 해석을 여기 한 곳에만 두는 이유: buildBackendEnv 와 resolveAgent 가
+ * 각각 이 함수를 부르므로, 양쪽이 자동으로 같은 백엔드를 보게 된다.
+ *
+ * Handles model→backend auto-remapping (glm-* → zai, claude-* → claude) —
+ * 단, 티어가 백엔드를 고른 경우엔 그 결정과 싸우지 않도록 건너뛴다.
  */
 export function resolveBackend(agent, backendsStore) {
   if (!backendsStore) return { backendId: 'claude', backendType: 'claude-cli', backendObj: null };
@@ -163,18 +171,35 @@ export function resolveBackend(agent, backendsStore) {
   // backendObj 가 null 이 되고 backendType 이 'claude-cli' 로 기본값을 먹어서
   // "절약 모드인데 조용히 클로드로 나가는" 상태가 된다 → 평소 백엔드로 되돌린다.
   let globalActiveId = raw?.activeBackend;
+  let austerityActive = false;
   if (raw?.austerityMode) {
     if (raw?.backends?.[raw.austerityBackend]) {
       globalActiveId = raw.austerityBackend;
+      austerityActive = true;
     } else {
       logger.warn({ austerityBackend: raw.austerityBackend, fellBackTo: globalActiveId },
         'resolveBackend: 절약 모드 대상 백엔드가 없어 activeBackend 로 폴백');
     }
   }
-  let backendId = agentBackendId || globalActiveId || 'claude';
+
+  // 티어가 고른 백엔드. 개별 지정과 절약 모드가 둘 다 없을 때만 본다.
+  // 가리키는 백엔드가 지워졌으면 무시하고 전역으로 간다 — 조용히 죽는 것보다 낫다.
+  let tierBackendId = null;
+  if (!agentBackendId && !austerityActive && agent?.modelTier) {
+    const wanted = tierBackendOf(raw?.tiers, agent.modelTier);
+    if (wanted && raw?.backends?.[wanted]) tierBackendId = wanted;
+    else if (wanted) {
+      logger.warn({ agent: agent?.id, tier: agent.modelTier, backendId: wanted },
+        'resolveBackend: 티어가 가리키는 백엔드가 등록돼 있지 않음 — 전역 백엔드로 진행');
+    }
+  }
+
+  let backendId = agentBackendId || tierBackendId || globalActiveId || 'claude';
   let backendObj = raw?.backends?.[backendId] ?? null;
 
-  const model = typeof agent?.model === 'string' ? agent.model.toLowerCase() : '';
+  // 레거시 자동 리라우팅은 티어 결정이 없을 때만. 티어가 백엔드를 골랐는데 여기서
+  // 모델명만 보고 다른 백엔드로 틀면 사용자가 정한 급별 라우팅이 조용히 새어 나간다.
+  const model = !tierBackendId && typeof agent?.model === 'string' ? agent.model.toLowerCase() : '';
   if (model) {
     const currentType = backendObj?.type;
     const isGlm = model.startsWith('glm-');
@@ -211,11 +236,19 @@ function envForBackend(backendObj, agent) {
     }
     env.API_TIMEOUT_MS = env.API_TIMEOUT_MS ?? '3000000';
   }
+  // 게이트웨이가 opus/sonnet/haiku 요청을 무엇으로 받을지. 티어 매핑이 있으면
+  // 그쪽이 사용자가 실제로 정한 값이므로 우선하고, 없는 항목만 models 로 메운다.
   const models = backendObj.models ?? {};
-  if (models.opus) env.ANTHROPIC_DEFAULT_OPUS_MODEL = models.opus;
-  if (models.sonnet) env.ANTHROPIC_DEFAULT_SONNET_MODEL = models.sonnet;
-  if (models.haiku) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = models.haiku;
-  if (agent?.model === 'default') agent.model = 'sonnet';
+  const tierModels = backendObj.tierModels ?? {};
+  const opus = tierModels.high ?? models.opus;
+  const sonnet = tierModels.middle ?? models.sonnet;
+  const haiku = tierModels.low ?? models.haiku;
+  if (opus) env.ANTHROPIC_DEFAULT_OPUS_MODEL = opus;
+  if (sonnet) env.ANTHROPIC_DEFAULT_SONNET_MODEL = sonnet;
+  if (haiku) env.ANTHROPIC_DEFAULT_HAIKU_MODEL = haiku;
+  // 티어를 쓰는 에이전트는 아래 resolveAgent 의 티어 해석이 모델을 확정한다.
+  // 여기서 'default' 를 sonnet 으로 바꿔 버리면 그 해석 전에 급이 뒤바뀐다.
+  if (!agent?.modelTier && agent?.model === 'default') agent.model = 'sonnet';
   return env;
 }
 

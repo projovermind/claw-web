@@ -19,23 +19,38 @@ export const DEFAULT_TIER_LABELS = {
 
 export const DEFAULT_TIERS = () => ({
   order: [...DEFAULT_TIER_ORDER],
-  labels: { ...DEFAULT_TIER_LABELS }
+  labels: { ...DEFAULT_TIER_LABELS },
+  // 티어 → 백엔드 id. 비어 있으면 그 티어는 전역 백엔드를 따른다.
+  // (HIGH=Claude, LOW=Z.AI 처럼 급마다 다른 제공자를 섞어 쓰기 위한 것)
+  backends: {}
 });
 
 /** 기존 models 별칭 → 티어. 마이그레이션 기준표. */
 export const ALIAS_TO_TIER = { opus: 'high', sonnet: 'middle', haiku: 'low' };
 
-/** order/labels 를 항상 쓸 수 있는 형태로 정규화. 비어 있으면 기본 3단계. */
+/**
+ * order/labels/backends 를 항상 쓸 수 있는 형태로 정규화. 비어 있으면 기본 3단계.
+ * backends 는 값이 없거나 null 인 티어를 아예 키에서 뺀다 = "전역 백엔드 따름".
+ */
 export function normalizeTiers(tiers) {
   const raw = Array.isArray(tiers?.order) ? tiers.order : [];
   const cleaned = [...new Set(raw.filter((t) => typeof t === 'string' && t.trim()))];
   const order = cleaned.length ? cleaned : [...DEFAULT_TIER_ORDER];
   const labels = {};
+  const backends = {};
   for (const t of order) {
     const given = tiers?.labels?.[t];
     labels[t] = typeof given === 'string' && given.trim() ? given : (DEFAULT_TIER_LABELS[t] ?? t);
+    const backendId = tiers?.backends?.[t];
+    if (typeof backendId === 'string' && backendId.trim()) backends[t] = backendId.trim();
   }
-  return { order, labels };
+  return { order, labels, backends };
+}
+
+/** 이 티어가 쓰기로 돼 있는 백엔드 id. 지정이 없으면 null(= 전역 따름). */
+export function tierBackendId(tiers, tier) {
+  if (typeof tier !== 'string' || !tier.trim()) return null;
+  return normalizeTiers(tiers).backends[tier.trim()] ?? null;
 }
 
 /** 쓸 만한 모델 ID 하나를 고른다: default → auto → 첫 엔트리. 없으면 null. */

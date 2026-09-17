@@ -123,6 +123,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     'agents.help.modelTierUnmapped':
       '이 백엔드에 이 티어의 모델이 지정되지 않았습니다 — 설정 > 백엔드에서 매핑하세요.',
     'agents.help.modelTierPinned': '티어를 쓰지 않고 아래에서 고른 모델을 그대로 씁니다.',
+    'agents.help.backendOverridesTier':
+      '⚠ 티어별 백엔드가 지정돼 있습니다 — 여기서 백엔드를 고르면 그 에이전트는 티어 라우팅을 무시하고 항상 이 백엔드로 갑니다. 티어를 따르게 하려면 기본값으로 두세요.',
     'agents.tier.pinnedOption': '— 특정 모델 고정 —',
     'agents.tier.advancedPin': '고급 ▸ 특정 모델 고정',
     'agents.tier.advancedPinIgnored': '티어 사용 중 — 무시됨',
@@ -867,6 +869,13 @@ const DICT: Record<Lang, Record<string, string>> = {
     'backendsTab.tiersSaving': '티어 저장 중...',
     'backendsTab.tiersSaved': '티어를 저장했습니다',
     'backendsTab.tiersSaveFailed': '티어 저장 실패: {error}',
+    'backendsTab.applyAllTierWarn':
+      '개별 지정을 박으면 티어별 백엔드가 무력화됩니다. 티어 라우팅을 쓰려면 \'전역 설정 따르기\' 를 고르세요.',
+    'backendsTab.tierBackendGlobal': '전역 따름 (기본)',
+    'backendsTab.tierUnmapped': '모델 매핑 없음',
+    'backendsTab.tierUnmappedHint':
+      '{backend} 에 이 티어의 모델이 없어 모델이 풀리지 않습니다 — 해당 백엔드 카드에서 티어 → 모델을 지정하세요.',
+    'backendsTab.tierResolvedVia': '{backend} 에서 {model} 로 실행됩니다.',
     'tierMap.title': '티어 → 모델',
     'tierMap.desc': '이 백엔드에서 각 티어가 실제로 어떤 모델로 실행될지 정합니다.',
     'tierMap.unset': '미지정',
@@ -1053,6 +1062,8 @@ const DICT: Record<Lang, Record<string, string>> = {
     'agents.help.modelTierUnmapped':
       'This backend has no model mapped for this tier — set it in Settings > Backends.',
     'agents.help.modelTierPinned': 'Skips tiers and uses the exact model picked below.',
+    'agents.help.backendOverridesTier':
+      '⚠ Some tiers have a backend assigned — picking one here makes this agent ignore tier routing and always use this backend. Leave it at the default to follow the tier.',
     'agents.tier.pinnedOption': '— Pin a specific model —',
     'agents.tier.advancedPin': 'Advanced ▸ pin a specific model',
     'agents.tier.advancedPinIgnored': 'tier in use — ignored',
@@ -1797,6 +1808,13 @@ const DICT: Record<Lang, Record<string, string>> = {
     'backendsTab.tiersSaving': 'Saving tiers...',
     'backendsTab.tiersSaved': 'Tiers saved',
     'backendsTab.tiersSaveFailed': 'Saving tiers failed: {error}',
+    'backendsTab.applyAllTierWarn':
+      'Pinning a backend per agent disables per-tier backends. Choose \'Follow global setting\' to keep tier routing.',
+    'backendsTab.tierBackendGlobal': 'Follow global (default)',
+    'backendsTab.tierUnmapped': 'No model mapped',
+    'backendsTab.tierUnmappedHint':
+      '{backend} has no model for this tier, so it will not resolve — set tier → model on that backend card.',
+    'backendsTab.tierResolvedVia': 'Runs as {model} on {backend}.',
     'tierMap.title': 'Tier → model',
     'tierMap.desc': 'Decides which model each tier actually runs as on this backend.',
     'tierMap.unset': 'Not set',

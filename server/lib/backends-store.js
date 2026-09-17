@@ -211,6 +211,11 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
         for (const [bid, b] of Object.entries(current.backends ?? {})) {
           if (b?.fallback === id) current.backends[bid] = { ...b, fallback: null };
         }
+        // 티어 → 백엔드 포인터도 같이 끊는다. 남겨두면 그 티어를 쓰는 에이전트가
+        // 매번 "등록되지 않은 백엔드" 경고를 내며 전역 백엔드로 샌다.
+        for (const [tier, bid] of Object.entries(current.tiers?.backends ?? {})) {
+          if (bid === id) delete current.tiers.backends[tier];
+        }
         return current;
       });
       // Also forget the secret for this backend

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
 import { createBackendUsageReader } from '../lib/backend-usage.js';
 import { normalizeTiers } from '../lib/model-tiers.js';
+import { logger } from '../lib/logger.js';
 
 const createSchema = z.object({
   id: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i),
@@ -43,7 +44,9 @@ const fallbackSchema = z.object({
 const tiersSchema = z.object({
   // 표시 순서 = 성능 내림차순. 강등은 이 순서를 따라 아래로 내려간다.
   order: z.array(z.string().min(1).max(32).regex(/^[a-z0-9_-]+$/i)).min(1).max(12),
-  labels: z.record(z.string().min(1).max(40)).optional()
+  labels: z.record(z.string().min(1).max(40)).optional(),
+  // 티어 → 백엔드 id. null/빈 값 = 그 티어는 전역 백엔드를 따른다.
+  backends: z.record(z.string().max(64).nullable()).optional()
 }).strict();
 
 const applyToAgentsSchema = z.object({
@@ -302,7 +305,18 @@ export function createBackendsRouter({ backendsStore, eventBus, webConfig, confi
   router.post('/tiers', async (req, res, next) => {
     try {
       const body = tiersSchema.parse(req.body);
-      const tiers = await backendsStore.setTiers(body);
+      // 등록되지 않은 백엔드를 가리키는 티어는 저장을 거부하는 대신 버린다 —
+      // 백엔드 하나가 사라졌다고 티어 이름 변경까지 통째로 막히면 안 된다.
+      const backends = {};
+      for (const [tier, id] of Object.entries(body.backends ?? {})) {
+        if (typeof id !== 'string' || !id.trim()) continue;
+        if (!backendsStore.getBackend(id.trim())) {
+          logger.warn({ tier, backendId: id }, 'tiers: 등록되지 않은 백엔드 id — 무시');
+          continue;
+        }
+        backends[tier] = id.trim();
+      }
+      const tiers = await backendsStore.setTiers({ ...body, backends });
       if (eventBus) eventBus.publish('backends.updated', {});
       res.json({ tiers });
     } catch (err) {

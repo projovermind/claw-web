@@ -6,7 +6,7 @@ import type { Agent, PermissionMode } from '../../lib/types';
 import SkillPicker from '../common/SkillPicker';
 import ToolPicker from '../common/ToolPicker';
 import { useT } from '../../lib/i18n';
-import { resolveTiers, tierLabel } from '../../lib/model-tiers';
+import { resolveTiers, tierLabel, hasTierBackends } from '../../lib/model-tiers';
 
 export interface AgentFormState {
   id: string;
@@ -97,7 +97,7 @@ function Field({
   children
 }: {
   label: string;
-  help?: string;
+  help?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -132,6 +132,8 @@ export function AgentModal({
     [backendList]
   );
   const tiers = useMemo(() => resolveTiers(backendsState), [backendsState]);
+  /** 티어별 백엔드가 하나라도 지정돼 있으면, 백엔드 개별 지정이 그 라우팅을 덮어쓴다. */
+  const tierRoutingActive = useMemo(() => hasTierBackends(tiers), [tiers]);
   /** '고급 ▸ 특정 모델 고정' 접기. 티어를 안 쓰는 에이전트는 이 값이 실제로 쓰이므로 항상 펼친다. */
   const [pinOpen, setPinOpen] = useState(false);
 
@@ -294,7 +296,19 @@ export function AgentModal({
                 className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-2xl text-center"
               />
             </Field>
-            <Field label={t('agents.field.backend')} help={t('agents.help.backend')}>
+            <Field
+              label={t('agents.field.backend')}
+              help={
+                <>
+                  {t('agents.help.backend')}
+                  {tierRoutingActive && (
+                    <span className="block text-amber-400/80 mt-0.5">
+                      {t('agents.help.backendOverridesTier')}
+                    </span>
+                  )}
+                </>
+              }
+            >
               <select
                 value={form.backend}
                 onChange={(e) => {
