@@ -11,6 +11,7 @@ claw-web 은 파일 스토어 + Claude CLI 전제라 Windows 네이티브가 아
 | `scripts/omniroute-setup.sh` | WSL 셸 (맥도 동일) | 선택 — OmniRoute 게이트웨이 설치·상주·키 발급·백엔드 연결까지 한 번에 |
 | `scripts/omniroute-probe.mjs` | WSL 셸 (맥도 동일) | 무료 모델이 아직 살아 있고 툴을 부르는지 재검증 |
 | `scripts/claw-web-win-recover.ps1` | Windows **관리자** PowerShell | 고장났을 때 한 방에 복구 — 서비스·터널·포트포워딩·재부팅 대비까지 |
+| `scripts/claw-web-win-remote.ps1` | Windows **관리자** PowerShell | 구조적 해결 — 터널을 윈도우 서비스로 옮기고, SSH 원격 채널을 열고, 자동기동을 로그인 불필요하게 전환 |
 
 ---
 
@@ -202,6 +203,79 @@ node scripts/omniroute-probe.mjs --all --json   # 프리셋에 붙여넣을 mode
 
 ---
 
+## 원격 채널 + 로그인 없이 자동 복구
+
+`claw-web-win-recover.ps1` 은 **고장을 고친다.** 이건 **고장이 반복되는 구조를 바꾼다.**
+
+재부팅 뒤에도 계속 `Error 1033` 이 나던 이유는 세 가지였다.
+
+1. 자동기동 예약 작업이 전부 `-AtLogOn` 이었다 → 재부팅만 하고 아무도 로그인하지 않으면 WSL 도 터널도 뜨지 않는다.
+2. cloudflared 가 WSL 안 systemd 에 있었다 → WSL2 VM 이 꺼지면 터널도 같이 죽는다.
+3. WSL IP 는 부팅마다 바뀌는데 `netsh portproxy` 가 낡는다 → TCP 는 붙는데 HTTP 는 0바이트다.
+
+그리고 이 기계엔 원격 채널이 전혀 없었다. 고장나면 사용자가 그 앞에 앉아야 했다.
+
+```powershell
+# 관리자 PowerShell — 이 세 줄을 통째로 붙여넣으면 끝난다
+cd $env:USERPROFILE
+iwr -useb https://raw.githubusercontent.com/projovermind/claw-web/main/scripts/claw-web-win-remote.ps1 -OutFile claw-web-win-remote.ps1
+powershell -ExecutionPolicy Bypass -File .\claw-web-win-remote.ps1
+```
+
+하는 일:
+
+- **터널을 WSL 밖으로** — 자격증명을 WSL 에서 꺼내 `C:\ProgramData\cloudflared\` 로 옮기고,
+  `cloudflared service install` 로 윈도우 네이티브 서비스(SYSTEM, 자동시작)를 만든다.
+  WSL VM 이 꺼져도 터널은 엣지에 붙어 있다. WSL 안의 옛 터널 유닛은 내린다(커넥터 중복 제거).
+- **SSH 원격 채널** — 윈도우 OpenSSH 서버를 켜고 터널에 `ssh://` ingress 를 하나 더 실어,
+  맥에서 이 기계에 직접 붙을 수 있게 한다. 방화벽 규칙은 만들지 않는다(터널 경유 loopback 전용).
+- **자동기동 전면 교체** — `claw-web WSL anchor` 와 `claw-web portproxy` 를 **AtStartup** 으로 다시 건다.
+  앵커는 `-LogonType S4U` 로 현재 사용자 컨텍스트에서 돈다(SYSTEM 으로는 `wsl.exe` 가 안 된다).
+  포트포워딩은 `0.0.0.0` 과 `127.0.0.1` **둘 다** 등록한다 — 윈도우 서비스가 된 터널은
+  `127.0.0.1` 로 붙는데, `0.0.0.0` 규칙은 loopback 연결을 받지 않는다.
+- 옛 `-AtLogOn` 작업(`claw-web WSL`)은 제거한다.
+
+`claw-web` 서비스 자체는 계속 WSL 안에서 돈다. 바뀌는 건 "누가 무엇을 붙잡고 있느냐" 뿐이다.
+몇 번을 돌려도 안전하다.
+
+기본값은 `-Hostname win.example.com` `-SshHostname ssh.win.example.com` `-Port 3838`
+`-TunnelId 10461111-e2eb-468f-bbb8-d7bf853dbf10`, 배포판은 자동탐지(`-Distro` 로 고정 가능).
+맥 공개키를 바꾸려면 `-PubKey "ssh-ed25519 AAAA... 주석"`.
+
+마지막에 등록된 작업과 **실제 트리거 종류**(AtStartup / AtLogOn)를 찍어준다.
+`AtLogOn` 이 남아 있으면 그 작업은 아직 안 고쳐진 것이다.
+
+### 맥에서 이 기계에 붙기
+
+```bash
+# 키: ~/.ssh/clawweb_win_ed25519 (공개키는 위 스크립트가 윈도우에 등록한다)
+ssh -i ~/.ssh/clawweb_win_ed25519 \
+    -o ProxyCommand="cloudflared access ssh --hostname ssh.win.example.com" \
+    <윈도우사용자>@win
+```
+
+`~/.ssh/config` 에 박아두면 `ssh win` 한 줄이 된다.
+
+```
+Host win
+  HostName ssh.win.example.com
+  User <윈도우사용자>
+  IdentityFile ~/.ssh/clawweb_win_ed25519
+  ProxyCommand cloudflared access ssh --hostname %h
+```
+
+> DNS 는 맥에서 이미 이 터널로 라우팅해 뒀다. 스크립트는 새 터널을 만들거나 DNS 를 건드리지 않는다.
+> 자격증명을 못 찾으면 `.cloudflared` 디렉터리 내용을 찍고 **멈춘다** — 추측해서 새 터널을 만들면
+> 도메인은 여전히 옛 UUID 를 보므로 영영 안 붙는다.
+
+> 상태만 보려면 `-Diagnose`. WSL 가동시간, 윈도우 cloudflared 서비스 상태와 로그 40줄,
+> sshd 상태, 등록된 작업과 트리거 종류, portproxy 표, 레포와 origin 의 차이를 찍는다. 아무것도 바꾸지 않는다.
+
+> 이 `.ps1` 도 **UTF-8 BOM** 으로 저장돼 있다. BOM 을 떼면 Windows PowerShell 5.1 이 CP949 로 읽어서
+> 한글이 깨지고 `ParserError` 로 죽는다. 편집할 때 유지할 것.
+
+---
+
 ## 고장났을 때 — 한 방 복구
 
 재부팅 뒤 `https://<호스트명>` 이 안 열리거나 LAN 도 응답이 없으면, 어디가 깨졌는지 찾지 말고 이걸 돌린다.
@@ -242,6 +316,9 @@ WSL 가동 시간, 서비스·linger 상태, 터널 유닛 로그 40줄, 레포�
 > DNS 는 `--overwrite-dns` 로 강제로 이 기계의 터널을 가리키게 바꾼다.
 > 죽은 터널을 가리키고 있던 게 Error 1033 의 원인이라 그냥 두면 안 고쳐진다.
 
+> 이 스크립트는 **지금 난 고장**을 고친다. 재부팅 때마다 같은 고장이 반복된다면 원인은 `-AtLogOn` 트리거와
+> WSL 안의 터널이다 — 구조적 해결은 위 `claw-web-win-remote.ps1` 쪽이다.
+
 
 ## 자주 걸리는 것들
 
@@ -262,3 +339,6 @@ WSL 가동 시간, 서비스·linger 상태, 터널 유닛 로그 40줄, 레포�
 | `git pull` 이 `package-lock.json` 때문에 계속 막힘 | npm 이 다시 쓴 파일이라 작업물이 아니다 → `claw-web-win-recover.ps1` 이 `.bak` 으로 남기고 되돌린 뒤 fast-forward 한다 |
 | (맥) 자동 업데이트가 조용히 안 돎 | 레포가 외장 볼륨이면 launchd 의 `/bin/bash` 가 TCC 에 막혀 로그도 없이 exit 78/126 으로 죽는다 → `bash scripts/self-update.sh --install-timer` 로 다시 깔면 node 를 한 겹 씌운 plist 로 교체된다 |
 | 도메인이 **Cloudflare Error 1033** | 호스트명이 가리키는 터널에 붙어 있는 커넥터가 하나도 없다. v1.17.47 이전 자동 터널은 DNS 를 먼저 돌리고 상주 등록은 macOS 에서만 했어서, WSL 에서는 죽은 터널을 가리킨 채 끝났다 → 관리자 PowerShell 에서 `claw-web-win-recover.ps1` |
+| 재부팅 뒤 **계속** 1033 (복구 스크립트를 돌리면 그때만 살아남) | 자동기동 작업이 `-AtLogOn` 이라 로그인 전에는 아무것도 뜨지 않고, 터널이 WSL 안에 있어 VM 과 함께 죽는다. 판별법: `claw-web-win-remote.ps1 -Diagnose` 의 작업 목록에 `AtLogOn` 이 보이면 그것이다 → `claw-web-win-remote.ps1` 로 전환한다 (터널을 윈도우 서비스로 옮기고 트리거를 `AtStartup` 으로 바꾼다) |
+| 터널은 Running 인데 `win.example.com` 가 502 / 빈 응답 | 윈도우 서비스가 된 터널은 `127.0.0.1:3838` 로 붙는다. `netsh portproxy` 에 `0.0.0.0` 항목만 있으면 loopback 연결은 받지 않는다 → `claw-web-win-remote.ps1` 이 `0.0.0.0` 과 `127.0.0.1` 을 둘 다 등록한다 |
+| 맥에서 `ssh win` 이 `Permission denied (publickey)` | `administrators_authorized_keys` 의 ACL 이 느슨하면 sshd 가 파일을 통째로 무시한다 → `claw-web-win-remote.ps1` 이 `icacls /inheritance:r` 로 SYSTEM+Administrators 만 남긴다. 다시 돌리면 고쳐진다 |
