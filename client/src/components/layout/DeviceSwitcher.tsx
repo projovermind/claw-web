@@ -28,15 +28,17 @@ function targetUrl(device: Device) {
 export default function DeviceSwitcher({ collapsed }: { collapsed: boolean }) {
   const { data: devices } = useQuery({ queryKey: ['devices'], queryFn: api.devices, staleTime: 60_000 });
 
-  // Alt+1~9 로 순번 전환. e.key 는 Option 조합에서 다른 문자가 되므로 e.code 로 본다.
+  // Alt+1~9 (또는 Ctrl+Alt+1~9) 로 순번 전환.
+  // - e.key 는 Option/Alt 조합에서 다른 문자가 되므로 e.code 로 본다.
+  // - 윈도우 크롬에서 Alt+숫자가 브라우저에 먹히는 경우가 있어 Ctrl+Alt 조합도 받는다.
+  // - 입력창 포커스 가드는 두지 않는다. preventDefault 로 문자 입력이 막히고,
+  //   가드가 있으면 채팅 입력창에 커서를 둔 채로는 전환이 아예 안 된다.
   useEffect(() => {
     if (!devices?.length) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey) return;
+      if (!e.altKey || e.metaKey) return;
       const m = /^Digit([1-9])$/.exec(e.code);
       if (!m) return;
-      const el = document.activeElement as HTMLElement | null;
-      if (el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName))) return;
       const device = devices[Number(m[1]) - 1];
       if (!device || isSelf(device)) return;
       e.preventDefault();
@@ -71,7 +73,7 @@ function DeviceLink({ device, num, collapsed }: { device: Device; num: number; c
   });
 
   const dot = self ? 'bg-sky-400' : ping == null ? 'bg-zinc-600' : ping.online ? 'bg-emerald-400' : 'bg-red-400';
-  const hint = num <= 9 ? ` (Alt+${num})` : '';
+  const hint = num <= 9 ? ` (Alt+${num} 또는 Ctrl+Alt+${num})` : '';
   const title = collapsed
     ? `${device.name}${self ? ' (이 기기)' : ping && !ping.online ? ' — 응답 없음' : ''}${self ? '' : hint}`
     : self ? undefined : `${device.name}${hint}`;

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useDelegationStore, type DelegationEntry } from '../../store/delegation-store';
 import { api } from '../../lib/api';
 
@@ -111,25 +112,44 @@ function useStuckWatcher(delegations: DelegationEntry[]) {
   return stuckIds;
 }
 
-function DelegationItem({ entry, isStuck }: { entry: DelegationEntry; isStuck: boolean }) {
+function DelegationItem({ entry, isStuck, onOpen }: {
+  entry: DelegationEntry;
+  isStuck: boolean;
+  onOpen: () => void;
+}) {
   const fail = useDelegationStore((s) => s.fail);
+  const navigate = useNavigate();
   const isDone = isDoneEntry(entry);
 
   // 보고는 서버 abortChat 이 플래너에게 자동 전송한다
-  const handleStop = async () => {
+  const handleStop = async (e: ReactMouseEvent) => {
+    e.stopPropagation(); // 행 클릭(세션 이동) 과 겹치지 않게
     if (!confirm(`'${entry.targetAgentId}' 워커를 중단하고 지금까지의 결과를 플래너에게 보고할까요?`)) return;
     try { await api.abortChat(entry.targetSessionId); } catch { /* 이미 종료 */ }
     fail(entry.id);
   };
 
+  // 워커 세션을 활성 페인에 띄운다 — ChatPage 의 ?agent=&session= 처리 경로를 그대로 탄다.
+  const handleOpen = () => {
+    navigate(
+      `/chat?agent=${encodeURIComponent(entry.targetAgentId)}&session=${encodeURIComponent(entry.targetSessionId)}`
+    );
+    onOpen();
+  };
+
   return (
     <div
-      className={`flex items-center gap-2 px-3 py-2 text-xs font-medium transition-colors duration-300 ${
+      role="button"
+      tabIndex={0}
+      onClick={handleOpen}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleOpen(); } }}
+      title={`${entry.targetAgentId} 세션 열기`}
+      className={`flex items-center gap-2 px-3 py-2 text-xs font-medium cursor-pointer transition-colors duration-300 ${
         isDone
-          ? 'text-zinc-500'
+          ? 'text-zinc-500 hover:bg-zinc-800/60'
           : isStuck
-          ? 'bg-amber-900/30 text-amber-200'
-          : 'text-zinc-200'
+          ? 'bg-amber-900/30 text-amber-200 hover:bg-amber-900/50'
+          : 'text-zinc-200 hover:bg-zinc-800/60'
       }`}
     >
       {/* 상태 아이콘 */}
@@ -245,7 +265,12 @@ export default function DelegationIndicator({ align = 'left' }: { align?: 'left'
             위임 {delegations.length}건 · 진행 중 {activeCount}건
           </div>
           {delegations.map((entry) => (
-            <DelegationItem key={entry.id} entry={entry} isStuck={stuckIds.has(entry.id)} />
+            <DelegationItem
+              key={entry.id}
+              entry={entry}
+              isStuck={stuckIds.has(entry.id)}
+              onOpen={() => setOpen(false)}
+            />
           ))}
         </div>
       )}
