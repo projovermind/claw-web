@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
+import { createBackendUsageReader } from '../lib/backend-usage.js';
 
 const createSchema = z.object({
   id: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i),
@@ -105,11 +106,24 @@ export const BACKEND_PRESETS = [
   }
 ];
 
-export function createBackendsRouter({ backendsStore, eventBus, webConfig, configStore, metadataStore }) {
+export function createBackendsRouter({ backendsStore, eventBus, webConfig, configStore, metadataStore, usageReader }) {
   const router = Router();
+  const usage = usageReader ?? createBackendUsageReader({ backendsStore });
 
   router.get('/', (req, res) => {
     res.json(backendsStore.getPublic());
+  });
+
+  // 백엔드별 사용량(5시간/7일 창 + 추가 크레딧). 백엔드의 configDir 에 붙은
+  // Claude CLI OAuth 토큰으로 조회하며, 결과는 60초 캐시된다. `?force=1` 로 무효화.
+  // 토큰 자체는 응답에 담기지 않는다.
+  router.get('/usage', async (req, res, next) => {
+    try {
+      const force = req.query.force === '1' || req.query.force === 'true';
+      res.json({ usage: await usage.getAll({ force }), fetchedAt: new Date().toISOString() });
+    } catch (err) {
+      next(err);
+    }
   });
 
   router.post('/', async (req, res, next) => {
