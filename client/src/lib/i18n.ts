@@ -619,6 +619,13 @@ const DICT: Record<Lang, Record<string, string>> = {
     'backendCard.aliasPlaceholder': '단축명 (opus)',
     'backendCard.modelIdPlaceholder': '모델 ID (claude-opus-4-6)',
 
+    // BackendUsageGauge
+    'backendUsage.fiveHour': '5시간',
+    'backendUsage.sevenDay': '주간',
+    'backendUsage.reset': '{time} 리셋',
+    'backendUsage.resetDays': '{d}일 {h}시간',
+    'backendUsage.expired': '재인증 필요',
+
     // BackendsTab
     'backendsTab.title': 'AI Backends',
     'backendsTab.add': '백엔드 추가',
@@ -1498,6 +1505,13 @@ const DICT: Record<Lang, Record<string, string>> = {
     'backendCard.noModels': 'No models',
     'backendCard.aliasPlaceholder': 'Alias (opus)',
     'backendCard.modelIdPlaceholder': 'Model ID (claude-opus-4-6)',
+
+    // BackendUsageGauge
+    'backendUsage.fiveHour': '5-hour',
+    'backendUsage.sevenDay': 'Weekly',
+    'backendUsage.reset': 'resets in {time}',
+    'backendUsage.resetDays': '{d}d {h}h',
+    'backendUsage.expired': 'Re-auth needed',
 
     // BackendsTab
     'backendsTab.title': 'AI Backends',

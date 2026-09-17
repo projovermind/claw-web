@@ -2,10 +2,11 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Trash2, ChevronDown, ChevronRight, Check, XCircle, Plus, Eye } from 'lucide-react';
 import { api } from '../../lib/api';
-import type { BackendPublic } from '../../lib/types';
+import type { BackendPublic, BackendUsage } from '../../lib/types';
 import { InlineEditText } from './InlineEditText';
 import { ModelRow } from './ModelRow';
 import { SecretInput } from './SecretInput';
+import { BackendUsageGauge } from './BackendUsageGauge';
 import { useT } from '../../lib/i18n';
 
 type ApiBackend = Extract<BackendPublic, { type: 'openai-compatible' | 'anthropic-compatible' }>;
@@ -15,6 +16,7 @@ export function BackendCard({
   isActive,
   isAusterity,
   allBackends,
+  usage,
   onDelete,
   onReveal
 }: {
@@ -22,6 +24,7 @@ export function BackendCard({
   isActive: boolean;
   isAusterity: boolean;
   allBackends: ApiBackend[];
+  usage?: BackendUsage;
   onDelete: () => void;
   onReveal?: () => void;
 }) {
@@ -143,6 +146,8 @@ export function BackendCard({
           )}
         </div>
       </div>
+      <BackendUsageGauge usage={usage} />
+
       <div className="flex items-center gap-1.5 text-[11px]">
         <span className="text-zinc-600 shrink-0">{t('backendCard.fallbackLabel')}</span>
         <select

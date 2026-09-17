@@ -286,6 +286,31 @@ export type BackendPublic =
       };
     };
 
+/** 백엔드 한도 창 하나 (5시간 / 주간). utilization 은 0~100 퍼센트. */
+export interface BackendUsageWindow {
+  utilization: number;
+  /** ISO 시각 — 이 창이 초기화되는 시점 */
+  resetsAt: string | null;
+}
+
+/**
+ * GET /api/backends/usage 의 백엔드 1개분.
+ * - ok: 게이지 표시 / expired: 재인증 필요 / unsupported: 한도 개념 없음 / error: 조회 실패
+ */
+export interface BackendUsage {
+  status: 'ok' | 'expired' | 'unsupported' | 'error';
+  fiveHour?: BackendUsageWindow;
+  sevenDay?: BackendUsageWindow;
+  extraUsage?: { enabled: boolean; usedCredits: number; monthlyLimit: number };
+  account?: { email: string | null; tier: string | null };
+  fetchedAt?: string;
+}
+
+/** GET /api/backends/usage — 서버가 아직 라우트를 안 올렸으면 404. */
+export interface BackendUsageState {
+  backends: Record<string, BackendUsage>;
+}
+
 export type ClaudeCliBackend = Extract<BackendPublic, { type: 'claude-cli' }>;
 export type Backend = BackendPublic;
 

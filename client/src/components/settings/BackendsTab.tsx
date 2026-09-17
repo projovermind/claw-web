@@ -6,6 +6,7 @@ import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, Settings2, Key
 import { api } from '../../lib/api';
 import type { BackendPublic, ClaudeCliBackend, ApplyBackendToAgentsResult } from '../../lib/types';
 import { BackendCard } from './BackendCard';
+import { BackendUsageGauge, useBackendUsage } from './BackendUsageGauge';
 import { ModelRow } from './ModelRow';
 import { AddBackendModal } from './AddBackendModal';
 import { AccountAuthModal } from './AccountAuthModal';
@@ -57,6 +58,7 @@ export function BackendsTab() {
   const t = useT();
   const { data } = useQuery({ queryKey: ['backends'], queryFn: api.backends, refetchInterval: 5000 });
   const { data: usage } = useQuery({ queryKey: ['usage-stats'], queryFn: api.usageStats, refetchInterval: 30000 });
+  const backendUsage = useBackendUsage();
   const [adding, setAdding] = useState(false);
   const [loginHint, setLoginHint] = useState<{ configDir: string } | null>(null);
   const [testResults, setTestResults] = useState<Record<string, { ok: boolean; msg: string }>>({});
@@ -534,6 +536,8 @@ export function BackendsTab() {
                 <span>우선순위 {b.priority}</span>
               </div>
 
+              <BackendUsageGauge usage={backendUsage?.[b.id]} />
+
               {testRes && (
                 <div className={`flex items-start gap-1.5 text-[11px] rounded px-2 py-1 ${testRes.ok ? 'bg-emerald-950/40 text-emerald-300' : 'bg-red-950/40 text-red-300'}`}>
                   {testRes.ok ? <CheckCircle2 size={11} className="mt-0.5 shrink-0" /> : <XCircle size={11} className="mt-0.5 shrink-0" />}
@@ -553,6 +557,7 @@ export function BackendsTab() {
               isActive={b.id === data.activeBackend}
               isAusterity={b.id === data.austerityBackend}
               allBackends={openaiList}
+              usage={backendUsage?.[b.id]}
               onDelete={() => {
                 if (confirm(t('backendsTab.deleteConfirm', { label: b.label }))) removeBackend.mutate(b.id);
               }}

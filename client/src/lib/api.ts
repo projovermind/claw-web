@@ -11,6 +11,7 @@ import type {
   BackendsState,
   BackendPublic,
   BackendPreset,
+  BackendUsageState,
   ApplyBackendToAgentsResult,
   Skill,
   UsageCost,
@@ -270,6 +271,8 @@ export const api = {
     priority?: number;
   }) => post<BackendPublic>('/backends', data),
   patchBackend: (id: string, data: Partial<BackendPublic>) => patch<BackendPublic>(`/backends/${id}`, data),
+  /** 백엔드별 잔여 한도. 서버에 라우트가 없으면 404 — 호출부에서 게이지 미표시로 처리. */
+  backendsUsage: () => get<BackendUsageState>('/backends/usage'),
   setBackendSecret: (id: string, value: string | null) =>
     req<BackendPublic>(`/backends/${id}/secret`, {
       method: 'PUT',
