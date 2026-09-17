@@ -41,7 +41,7 @@ tailscale --socket=/tmp/tailscaled.sock status
 | 위치 | URL |
 |---|---|
 | Mac mini 본체 | http://localhost:3838 |
-| 같은 Wi-Fi LAN | http://172.30.1.26:3838 (또는 http://subinggraeui-Macmini.local:3838) |
+| 같은 Wi-Fi LAN | http://192.168.0.10:3838 (또는 http://your-mac.local:3838) |
 | 외부(tailnet) | http://100.106.13.76:3838 |
 
 모든 경우 로그인 비밀번호는 `data/private/web-config.json` 의 `auth.token` (처음 접속 시 LoginDialog에 입력).

@@ -3,7 +3,7 @@
   윈도우(WSL2) claw-web 을 한 번에 되살린다 — 서비스·터널·포트포워딩·재부팅 대비까지.
 
 .DESCRIPTION
-  "https://win.subinggrae.cc 가 Error 1033" / "LAN 은 붙는데 응답이 없다" 상태를 고친다.
+  "https://win.example.com 가 Error 1033" / "LAN 은 붙는데 응답이 없다" 상태를 고친다.
 
   하는 일:
     1. WSL 부팅 (재부팅 후엔 아무도 안 깨우면 꺼져 있다)
@@ -281,7 +281,7 @@ if (-not (WslOk 'test -f ~/.cloudflared/cert.pem')) {
 if (-not $Hostname) {
   $Hostname = Wsl "grep -m1 -oP 'hostname:\s*\K\S+' ~/.cloudflared/config.yml 2>/dev/null"
 }
-if (-not $Hostname) { Die "호스트명을 알 수 없다. -Hostname 으로 직접 지정하라 (예: win.subinggrae.cc)." }
+if (-not $Hostname) { Die "호스트명을 알 수 없다. -Hostname 으로 직접 지정하라 (예: win.example.com)." }
 Info "호스트명: $Hostname"
 
 # 이 기계가 자격증명을 들고 있는 터널을 찾는다.

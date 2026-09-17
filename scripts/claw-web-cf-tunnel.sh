@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # claw-web 을 Cloudflare named tunnel 로 외부에 노출한다 (WSL/Linux 용).
 #
-#   bash claw-web-cf-tunnel.sh win.subinggrae.cc
+#   bash claw-web-cf-tunnel.sh win.example.com
 #
 # cloudflared 설치 → 터널 생성 → DNS 라우팅 → config.yml → systemd --user 등록까지.
 # `cloudflared tunnel login` 만 브라우저 승인이 필요해서 그 단계는 안내 후 대기한다.
@@ -17,7 +17,7 @@ warn() { echo -e "  ${YELLOW}⚠${NC} $1"; }
 die()  { echo -e "  ${RED}✗${NC} $1"; exit 1; }
 step() { echo ""; echo -e "${CYAN}==${NC} $1"; }
 
-[ -n "$HOSTNAME_ARG" ] || die "사용법: bash $0 <호스트명>  (예: win.subinggrae.cc)"
+[ -n "$HOSTNAME_ARG" ] || die "사용법: bash $0 <호스트명>  (예: win.example.com)"
 
 # ── 1. cloudflared 설치 ────────────────────────────────
 step "cloudflared 확인"

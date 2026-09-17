@@ -13,7 +13,7 @@
 
 ```json
 {
-  "source": "https://subinggrae.cc",
+  "source": "https://claw.example.com",
   "token": "<원본 인스턴스의 인증 토큰>",
   "pathMap": {
     "/Volumes/Core/Vault/hivemind": "/home/user/vault",

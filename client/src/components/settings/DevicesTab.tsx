@@ -89,7 +89,7 @@ export function DevicesTab() {
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://studio.subinggrae.cc"
+            placeholder="https://studio.example.com"
             spellCheck={false}
             className="bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs font-mono text-zinc-200 focus:outline-none focus:border-zinc-600"
           />

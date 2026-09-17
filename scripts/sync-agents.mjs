@@ -10,7 +10,7 @@
  *
  * 설정은 data/private/agent-sync.json (토큰이 들어가므로 private):
  *   {
- *     "source": "https://subinggrae.cc",
+ *     "source": "https://claw.example.com",
  *     "token": "...",
  *     "pathMap": {
  *       "/Volumes/Core/Vault/hivemind": "/home/user/vault",
