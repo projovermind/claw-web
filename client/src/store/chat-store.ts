@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import { nanoid } from 'nanoid';
 import { api } from '../lib/api';
 
@@ -151,18 +151,21 @@ function getActive(state: Pick<ChatState, 'workspaces' | 'activeWorkspaceId'>) {
   return { ws, pane };
 }
 
-/** react-resizable-panels 가 자동 저장한 사이즈 정보 제거 (레이아웃 reset 용). */
+/**
+ * react-resizable-panels 가 자동 저장한 사이즈 정보 제거 (레이아웃 reset 용).
+ * WorkspaceGrid 가 sessionStorage 에 저장하므로(창별 분리) 여기서도 같은 곳을 본다.
+ */
 function clearPanelGroupStorage(wsId: string, count: PaneCount) {
   if (typeof window === 'undefined') return;
   try {
     const prefixes = [`claw-split-${wsId}-${count}`];
     const keysToRemove: string[] = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
+    for (let i = 0; i < sessionStorage.length; i++) {
+      const key = sessionStorage.key(i);
       if (!key) continue;
       if (prefixes.some((p) => key.includes(p))) keysToRemove.push(key);
     }
-    keysToRemove.forEach((k) => localStorage.removeItem(k));
+    keysToRemove.forEach((k) => sessionStorage.removeItem(k));
   } catch {
     // ignore storage errors
   }
@@ -170,9 +173,26 @@ function clearPanelGroupStorage(wsId: string, count: PaneCount) {
 
 const defaultWorkspace = createWorkspace('워크스페이스 1');
 
-// ── Cross-device sync state (module-scoped, not persisted) ──
+// ── Layout sync state (module-scoped, not persisted) ──
 // 각 브라우저 탭마다 고유한 clientId — WS echo 무시용.
 const CLIENT_ID = nanoid(10);
+/**
+ * 창(탭) 식별자. sessionStorage 라 새로고침·탭 복원에는 살아남고, 새 창을
+ * 열면 새로 발급된다 → 창마다 레이아웃이 독립적으로 저장/복원된다.
+ * (탭 복제는 sessionStorage 를 복사하므로 같은 viewId 를 공유한다 — 의도된 동작.)
+ */
+export const VIEW_ID: string = (() => {
+  try {
+    const KEY = 'claw-view-id';
+    const existing = sessionStorage.getItem(KEY);
+    if (existing) return existing;
+    const fresh = nanoid(10);
+    sessionStorage.setItem(KEY, fresh);
+    return fresh;
+  } catch {
+    return nanoid(10);
+  }
+})();
 // 서버에서 처음 로드를 마치기 전엔 PUT 하지 않음 (초기 localStorage 값으로
 // 서버 데이터를 덮어쓰는 사고 방지).
 let syncEnabled = false;
@@ -484,7 +504,7 @@ export const useChatStore = create<ChatState>()(
 
       loadLayoutFromServer: async () => {
         try {
-          const r = await api.getWorkspaceLayout();
+          const r = await api.getWorkspaceLayout(VIEW_ID);
           if (r && Array.isArray(r.workspaces) && r.workspaces.length > 0) {
             const wsList = r.workspaces as Workspace[];
             const activeId = (r.activeWorkspaceId as string | null) ?? wsList[0].id;
@@ -509,14 +529,31 @@ export const useChatStore = create<ChatState>()(
                 remoteApplyDepth = Math.max(0, remoteApplyDepth - 1);
               });
             }
+            // 처음 보는 창이라 다른 창 레이아웃을 복제해 받은 경우(seeded),
+            // 곧바로 자기 viewId 로 저장해 둔다 — 이후 변경이 원본 창을
+            // 덮어쓰지 않도록.
+            if (r.seeded) {
+              const cur = useChatStore.getState();
+              lastSavedSnapshot = JSON.stringify({
+                workspaces: cur.workspaces,
+                activeWorkspaceId: cur.activeWorkspaceId
+              });
+              api
+                .setWorkspaceLayout({
+                  viewId: VIEW_ID,
+                  workspaces: cur.workspaces,
+                  activeWorkspaceId: cur.activeWorkspaceId,
+                  clientId: CLIENT_ID
+                })
+                .catch(() => {
+                  lastSavedSnapshot = '';
+                });
+            }
           }
         } catch {
           /* offline / 401 — 무시. localStorage 값으로 계속 동작. */
         } finally {
           syncEnabled = true;
-          // 서버에 데이터가 없었던 경우(첫 사용자), 현재 로컬 상태를 곧바로 PUT.
-          // subscribe 가 다음 변경에서 잡지 않을 수 있으므로 명시적으로 트리거.
-          lastSavedSnapshot = '';
         }
       },
 
@@ -545,6 +582,8 @@ export const useChatStore = create<ChatState>()(
     }),
     {
       name: 'claw-chat',
+      // 창마다 레이아웃이 다르므로 localStorage(창 공유) 대신 sessionStorage.
+      storage: createJSONStorage(() => sessionStorage),
       version: 2,
       partialize: (state) => ({
         workspaces: state.workspaces,
@@ -593,6 +632,7 @@ if (typeof window !== 'undefined') {
       lastSavedSnapshot = payload;
       api
         .setWorkspaceLayout({
+          viewId: VIEW_ID,
           workspaces: cur.workspaces,
           activeWorkspaceId: cur.activeWorkspaceId,
           clientId: CLIENT_ID

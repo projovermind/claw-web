@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useWsStore } from '../store/ws-store';
-import { useChatStore } from '../store/chat-store';
+import { useChatStore, VIEW_ID } from '../store/chat-store';
 import { useToastStore } from '../store/toast-store';
 import { useDelegationStore } from '../store/delegation-store';
 import { getAuthToken, api } from '../lib/api';
@@ -163,7 +163,9 @@ export function useWebSocket() {
             return;
           }
           if (topic === 'workspace-layout.updated') {
-            // 자기 자신이 보낸 echo 는 무시
+            // 다른 창(viewId)의 레이아웃은 무시 — 창마다 레이아웃이 독립적이다.
+            if ((msg.viewId as string | undefined) !== VIEW_ID) return;
+            // 자기 자신이 보낸 echo 도 무시
             if ((msg.clientId as string | undefined) === useChatStore.getState().clientId) return;
             const wsList = msg.workspaces as unknown;
             const activeId = msg.activeWorkspaceId as string;

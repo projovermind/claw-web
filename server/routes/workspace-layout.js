@@ -1,19 +1,25 @@
 import { Router } from 'express';
 import { HttpError } from '../middleware/error-handler.js';
+import { normalizeViewId } from '../lib/workspace-layout-store.js';
 
 /**
- * Workspace layout sync.
+ * Workspace layout sync (창별 분리 — viewId).
  *
- * GET /api/workspace-layout       → current layout (null if never set)
- * PUT /api/workspace-layout       → replace layout, broadcast to all WS clients
- *                                   (the originating clientId is included so
- *                                    the sender can ignore its own echo)
+ * GET /api/workspace-layout?viewId=  → 해당 뷰의 레이아웃. 뷰가 없으면 가장
+ *                                      최근 뷰를 seeded:true 로 내려준다
+ *                                      (새 창이 빈 화면으로 시작하지 않게).
+ * PUT /api/workspace-layout          → body.viewId 뷰 교체, 전 WS 클라이언트에
+ *                                      브로드캐스트 (viewId·clientId 포함 —
+ *                                      수신 측이 자기 창인지 판별)
  */
 export function createWorkspaceLayoutRouter({ workspaceLayoutStore, eventBus }) {
   const router = Router();
 
-  router.get('/', (_req, res) => {
-    res.json(workspaceLayoutStore.get() ?? {
+  router.get('/', (req, res) => {
+    const layout = workspaceLayoutStore.get(req.query.viewId);
+    res.json(layout ?? {
+      viewId: normalizeViewId(req.query.viewId),
+      seeded: false,
       workspaces: null,
       activeWorkspaceId: null,
       updatedAt: null,
@@ -23,13 +29,14 @@ export function createWorkspaceLayoutRouter({ workspaceLayoutStore, eventBus }) 
 
   router.put('/', async (req, res, next) => {
     try {
-      const { workspaces, activeWorkspaceId, clientId } = req.body ?? {};
+      const { viewId, workspaces, activeWorkspaceId, clientId } = req.body ?? {};
       if (!Array.isArray(workspaces) || workspaces.length === 0) {
         throw new HttpError(400, 'workspaces must be a non-empty array', 'BAD_LAYOUT');
       }
-      const saved = await workspaceLayoutStore.set({ workspaces, activeWorkspaceId, clientId });
+      const saved = await workspaceLayoutStore.set({ viewId, workspaces, activeWorkspaceId, clientId });
       if (eventBus) {
         eventBus.publish('workspace-layout.updated', {
+          viewId: saved.viewId,
           workspaces: saved.workspaces,
           activeWorkspaceId: saved.activeWorkspaceId,
           updatedAt: saved.updatedAt,

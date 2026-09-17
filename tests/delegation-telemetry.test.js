@@ -73,6 +73,7 @@ afterEach(() => {
 
 describe('delegation telemetry fields', () => {
   it('stamps queuedAt/startedAt with no queue wait when a slot is free', async () => {
+    vi.useFakeTimers(); // 벽시계로 재면 부하 상황에서 1ms 가 끼어들어 queueMs 가 0 이 아니게 된다
     await delegate('solo', 'A');
     const entry = entryFor('sess_1');
     expect(entry.queueMs).toBe(0);

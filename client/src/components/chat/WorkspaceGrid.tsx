@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useState } from 'react';
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { Panel, PanelGroup, PanelResizeHandle, type PanelGroupStorage } from 'react-resizable-panels';
 import type { PaneCount } from '../../store/chat-store';
 
 interface Props {
@@ -12,6 +12,29 @@ interface Props {
   /** `renderPane(index)` returns the ChatPane element for pane at `index`. */
   renderPane: (index: number) => ReactNode;
 }
+
+/**
+ * divider 위치 저장소. 기본값(localStorage)은 창끼리 공유돼서 한 창에서 분할을
+ * 옮기면 다른 창의 분할까지 따라 움직인다 — 창별 레이아웃(viewId)과 짝이 맞도록
+ * sessionStorage 로 보낸다. 키 형식(autoSaveId)은 그대로 유지.
+ * SSR·스토리지 차단 환경에서는 조용히 no-op (분할 크기만 기억 안 됨).
+ */
+const sessionPanelStorage: PanelGroupStorage = {
+  getItem(name) {
+    try {
+      return sessionStorage.getItem(name);
+    } catch {
+      return null;
+    }
+  },
+  setItem(name, value) {
+    try {
+      sessionStorage.setItem(name, value);
+    } catch {
+      /* ignore storage errors */
+    }
+  }
+};
 
 /**
  * Tailwind `lg` (1024px) 미만이면 모바일/태블릿 협폭으로 간주.
@@ -56,7 +79,7 @@ export default function WorkspaceGrid({ workspaceId, count, resetKey = 0, active
   if (count === 2 || count === 3) {
     const sizes = count === 2 ? [50, 50] : [34, 33, 33];
     return (
-      <PanelGroup direction="horizontal" autoSaveId={saveKey} className="h-full w-full">
+      <PanelGroup direction="horizontal" autoSaveId={saveKey} storage={sessionPanelStorage} className="h-full w-full">
         {Array.from({ length: count }, (_, i) => (
           <FragmentPanel key={i} index={i} last={i === count - 1} defaultSize={sizes[i]}>
             {renderPane(i)}
@@ -74,9 +97,9 @@ export default function WorkspaceGrid({ workspaceId, count, resetKey = 0, active
   const [topCount, botCount] = rows;
 
   return (
-    <PanelGroup direction="vertical" autoSaveId={saveKey} className="h-full w-full">
+    <PanelGroup direction="vertical" autoSaveId={saveKey} storage={sessionPanelStorage} className="h-full w-full">
       <Panel defaultSize={50} minSize={15}>
-        <PanelGroup direction="horizontal" autoSaveId={`${saveKey}-top`} className="h-full w-full">
+        <PanelGroup direction="horizontal" autoSaveId={`${saveKey}-top`} storage={sessionPanelStorage} className="h-full w-full">
           {Array.from({ length: topCount }, (_, i) => (
             <FragmentPanel key={i} index={i} last={i === topCount - 1}>
               {renderPane(i)}
@@ -86,7 +109,7 @@ export default function WorkspaceGrid({ workspaceId, count, resetKey = 0, active
       </Panel>
       <PanelResizeHandle className="h-1 bg-transparent hover:bg-sky-500/40 transition-colors" />
       <Panel defaultSize={50} minSize={15}>
-        <PanelGroup direction="horizontal" autoSaveId={`${saveKey}-bot`} className="h-full w-full">
+        <PanelGroup direction="horizontal" autoSaveId={`${saveKey}-bot`} storage={sessionPanelStorage} className="h-full w-full">
           {Array.from({ length: botCount }, (_, i) => (
             <FragmentPanel key={i} index={i} last={i === botCount - 1}>
               {renderPane(topCount + i)}

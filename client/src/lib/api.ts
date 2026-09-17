@@ -522,16 +522,25 @@ export const api = {
 
   delegations: () => get<{ delegations: import('./types').DelegationEntry[] }>('/delegations').then(r => r.delegations),
 
-  // Workspace layout sync (across devices)
-  getWorkspaceLayout: () =>
+  // Workspace layout sync — 창(viewId) 단위. seeded:true 면 다른 창의
+  // 레이아웃을 복제해 받은 것이므로 수신 측이 자기 viewId 로 다시 저장해야 한다.
+  getWorkspaceLayout: (viewId: string) =>
     get<{
+      viewId: string;
+      seeded: boolean;
       workspaces: unknown[] | null;
       activeWorkspaceId: string | null;
       updatedAt: string | null;
       updatedBy: string | null;
-    }>('/workspace-layout'),
-  setWorkspaceLayout: (data: { workspaces: unknown[]; activeWorkspaceId: string; clientId: string }) =>
+    }>(`/workspace-layout?viewId=${encodeURIComponent(viewId)}`),
+  setWorkspaceLayout: (data: {
+    viewId: string;
+    workspaces: unknown[];
+    activeWorkspaceId: string;
+    clientId: string;
+  }) =>
     req<{
+      viewId: string;
       workspaces: unknown[];
       activeWorkspaceId: string;
       updatedAt: string;
