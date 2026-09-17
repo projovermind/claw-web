@@ -11,6 +11,9 @@ export interface Agent {
   thinkingEffort?: 'auto' | 'low' | 'medium' | 'high' | 'max';
   backendId?: string | null;
   accountId?: string | null; // deprecated: use backendId
+  /** 모델 티어 키 (HIGH/MIDDLE/LOW 또는 커스텀). 백엔드의 tierModels 로 실제 모델이 결정된다.
+   *  null/undefined → 티어 미사용, `model` 에 고정된 모델을 그대로 쓴다. */
+  modelTier?: string | null;
   // web-metadata overlay
   projectId?: string | null;
   tier?: 'main' | 'project' | 'addon' | null;
@@ -249,6 +252,8 @@ export type BackendPublic =
       models: Record<string, string>;
       /** Per-model context window in tokens (key = actual model id). */
       contextWindows?: Record<string, number>;
+      /** 티어 키 → 이 백엔드에서 그 티어가 쓸 실제 모델 id. 빈 티어는 키 자체가 없다. */
+      tierModels?: Record<string, string>;
       active?: boolean;
       austerity?: boolean;
       fallback?: string | null;
@@ -263,6 +268,8 @@ export type BackendPublic =
       models: Record<string, string>;
       /** Per-model context window in tokens (key = actual model id). */
       contextWindows?: Record<string, number>;
+      /** 티어 키 → 이 백엔드에서 그 티어가 쓸 실제 모델 id. 빈 티어는 키 자체가 없다. */
+      tierModels?: Record<string, string>;
       status: 'active' | 'cooldown' | 'disabled' | 'needs-relogin';
       lastUsedAt: number;
       usage?: { windowStart: string | null; messagesUsed: number };
@@ -369,6 +376,16 @@ export interface BackendPreset {
   };
 }
 
+/**
+ * 모델 티어 정의 — GET /api/backends 응답 루트의 `tiers`.
+ * order 는 표시 순서(강한 것 → 약한 것), labels 는 티어 키 → 사람이 읽는 이름.
+ * POST /api/backends/tiers 로 { order, labels } 를 통째로 덮어쓴다.
+ */
+export interface ModelTiers {
+  order: string[];
+  labels: Record<string, string>;
+}
+
 export interface BackendsState {
   activeBackend: string;
   austerityMode: boolean;
@@ -376,12 +393,23 @@ export interface BackendsState {
   /** 에이전트에 백엔드가 지정되지 않았을 때 쓰는 백엔드. null 이면 설정 안 함. */
   fallbackBackend?: string | null;
   backends: Record<string, BackendPublic>;
+  /** 서버가 아직 티어를 안 올렸으면 undefined — 클라이언트가 기본 3티어로 폴백한다. */
+  tiers?: ModelTiers;
 }
 
 /** POST /api/backends/apply-to-agents 응답 — previous 를 그대로 restore 로 돌려보내면 되돌려짐. */
 export interface ApplyBackendToAgentsResult {
   updated: number;
   previous: Record<string, string | null>;
+  /** 티어 되돌리기용 이전 상태 — { agentId: modelTier|null }. 그대로 restoreTiers 로 되쏜다. */
+  previousTiers?: Record<string, string | null>;
+  /** 적용한 백엔드 id 또는 'restore'. */
+  applied?: string | null;
+  /** 적용한 티어 키 또는 'restore'. */
+  appliedTier?: string | null;
+  scope?: string;
+  total?: number;
+  changed?: string[];
 }
 
 export interface DelegationEntry {

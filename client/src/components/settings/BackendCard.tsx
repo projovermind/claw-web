@@ -1,12 +1,14 @@
-import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useMemo } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Trash2, ChevronDown, ChevronRight, Check, XCircle, Plus, Eye } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { BackendPublic, BackendUsage } from '../../lib/types';
+import { resolveTiers } from '../../lib/model-tiers';
 import { InlineEditText } from './InlineEditText';
 import { ModelRow } from './ModelRow';
 import { SecretInput } from './SecretInput';
 import { BackendUsageGauge } from './BackendUsageGauge';
+import { TierModelMap } from './TierModelMap';
 import { useT } from '../../lib/i18n';
 
 type ApiBackend = Extract<BackendPublic, { type: 'openai-compatible' | 'anthropic-compatible' }>;
@@ -43,6 +45,15 @@ export function BackendCard({
 
   const patchModels = useMutation({
     mutationFn: (models: Record<string, string>) => api.patchBackend(backend.id, { models }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['backends'] })
+  });
+
+  // 티어 정의는 전역이라 backends 응답에서 읽는다 (BackendsTab 이 이미 캐싱한 쿼리).
+  const { data: backendsState } = useQuery({ queryKey: ['backends'], queryFn: api.backends });
+  const tiers = useMemo(() => resolveTiers(backendsState), [backendsState]);
+  const patchTierModels = useMutation({
+    mutationFn: (tierModels: Record<string, string>) =>
+      api.patchBackend(backend.id, { tierModels }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['backends'] })
   });
 
@@ -172,6 +183,19 @@ export function BackendCard({
           source={backend.secretSource ?? 'none'}
         />
       )}
+      <div className="border-t border-zinc-800 pt-2 space-y-1.5">
+        <div className="text-[11px] uppercase tracking-wider text-zinc-500">
+          {t('tierMap.title')}
+        </div>
+        <TierModelMap
+          tiers={tiers}
+          models={backend.models}
+          value={backend.tierModels ?? {}}
+          onChange={(next) => patchTierModels.mutate(next)}
+          disabled={patchTierModels.isPending}
+        />
+      </div>
+
       <div className="border-t border-zinc-800 pt-2">
         <button
           onClick={() => setExpanded((v) => !v)}

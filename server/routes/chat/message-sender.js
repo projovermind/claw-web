@@ -11,6 +11,7 @@ import { buildPaulContext } from '../../lib/paul-reader.js';
 import { buildPinnedFilesContext, buildGitDiffContext, buildBridgeContext, buildDeployGuardContext } from '../../lib/working-context-injector.js';
 import { findClaudeSessionFile } from '../../runners/claude-cli-runner.js';
 import { classifyError, resolveAgent, buildConversationSummary } from './utils.js';
+import { resolveTierModel, normalizeTiers } from '../../lib/model-tiers.js';
 import { buildRoster, listProjectAgentIds } from '../../lib/agent-roster.js';
 import { writeHookSettingsFile, removeHookSettingsFile } from '../../lib/hook-settings.js';
 import { sessionContextUsage } from '../../lib/context-window.js';
@@ -237,6 +238,30 @@ export function createMessageSender(ctx) {
   }
 
   /**
+   * 위임 JSON 의 "tier" 로 이 실행의 모델만 갈아끼운다.
+   *
+   * 에이전트 저장값(config.json 의 modelTier)은 건드리지 않는다 — 세션에 얹힌
+   * 오버라이드를 해석 결과 위에 덮어쓸 뿐이다. 티어 이름을 modelAlias 로 남겨야
+   * 폴백 백엔드에서도 그 백엔드의 tierModels 기준으로 다시 풀린다.
+   */
+  function applyTierOverride(sessionId, session, agent, backendConfig) {
+    const tier = typeof session.modelTierOverride === 'string' ? session.modelTierOverride.trim() : '';
+    if (!tier) return;
+    const backendObj = backendsStore?.getBackend?.(backendConfig?.backendName) ?? null;
+    const hit = resolveTierModel({ backendObj, tier, tiers: backendsStore?.getRaw?.()?.tiers });
+    if (!hit) {
+      logger.warn({ sessionId, agent: agent.id, tier, backendId: backendConfig?.backendName },
+        'chat: 위임 티어를 이 백엔드에서 풀지 못함 — 에이전트 기본 모델로 실행');
+      return;
+    }
+    logger.info({ sessionId, agent: agent.id, tier, from: agent.model, to: hit.modelId },
+      'chat: 위임 티어 오버라이드 적용');
+    agent.modelTier = tier;
+    agent.model = hit.modelId;
+    agent.modelAlias = tier;
+  }
+
+  /**
    * @returns {{started: true} | {started: false, reason: string}} When started
    * is true, onSettled is guaranteed to fire exactly once (runner exit or start
    * failure). When false, onSettled is never called — the caller owns recovery.
@@ -250,6 +275,8 @@ export function createMessageSender(ctx) {
     });
     if (!resolved) return { started: false, reason: `에이전트 ${session.agentId} 설정을 불러올 수 없습니다` };
     const { agent, envOverrides, backendType, backendConfig } = resolved;
+
+    applyTierOverride(sessionId, session, agent, backendConfig);
 
     // ── 슬롯 격리 cwd ──
     // 이 세션이 전용 worktree 를 배정받았으면 러너 cwd 를 그쪽으로 돌린다.
@@ -379,10 +406,13 @@ export function createMessageSender(ctx) {
         );
         // 리드는 "위임 우선" 을 강제한다. 그렇지 않으면 리드가 모든 실작업을 직접 처리해
         // 위임 구조가 사문화된다(실측: 위임 발동률 0). 워커는 회신·보고 중심.
+        // 티어 키는 사용자가 바꿀 수 있다(설정 > 백엔드 > Global) — 프롬프트에 하드코딩하면
+        // 이름을 바꾼 순간 존재하지 않는 티어를 광고하게 된다.
+        const tierKeys = normalizeTiers(backendsStore?.getRaw?.()?.tiers).order.join('|');
         const delegateIntro = isLead
           ? `당신은 이 프로젝트의 **리드**입니다. 아래 위임 규칙을 반드시 따르세요:\n- 구현·수정·리팩터링·디버깅·조사 등 **도메인이 명확한 실작업은 직접 처리하지 말고 적합한 워커에게 위임**하세요. 한 응답에서 여러 워커에게 동시에 위임할 수 있습니다(위임 JSON 여러 개 출력).\n- 단순 질의응답·상태 조회·짧은 판단·계획 수립은 직접 처리해도 됩니다.\n- 워커 결과가 회신되면 **검토·취합**한 뒤, **커밋·배포는 리드인 당신이 총괄**합니다(워커에게 배포를 맡기지 마세요).\n\n위임하려면 응답에 아래 JSON을 포함하세요 (코드블록 안이어도 됨):`
           : `다른 에이전트에게 작업을 맡기려면 응답에 아래 JSON을 포함하세요 (코드블록 안이어도 됨):`;
-        agent.delegateHint = `\n<delegation>\n${delegateIntro}\n\n\`\`\`json\n{"message": "짧은 안내", "delegate": {"agent": "실제_에이전트_ID", "task": "작업 설명(200자 이내)", "model": "glm-5.1 또는 sonnet/opus", "loop": false}}\n\`\`\`\n\n중요:\n- agent ID는 반드시 실제 등록된 ID(언더스코어 표기). 점(.)/대시(-) 표기는 자동 정규화되지만 혼동 방지를 위해 언더스코어 권장.\n- task 는 한국어 200자 이내 요약. 파일 전체 본문을 붙여넣지 마세요.\n- loop:true 면 Ralph Loop 모드 (DONE 출력까지 반복).\n- "새 세션을 열어 붙여넣으세요" 같은 우회 응답 금지 — 직접 이 JSON 을 출력하세요.\n\n같은 프로젝트 내 위임 가능 에이전트:\n${delegateTargets}\n</delegation>`;
+        agent.delegateHint = `\n<delegation>\n${delegateIntro}\n\n\`\`\`json\n{"message": "짧은 안내", "delegate": {"agent": "실제_에이전트_ID", "task": "작업 설명(200자 이내)", "tier": "${tierKeys}", "loop": false}}\n\`\`\`\n\n중요:\n- agent ID는 반드시 실제 등록된 ID(언더스코어 표기). 점(.)/대시(-) 표기는 자동 정규화되지만 혼동 방지를 위해 언더스코어 권장.\n- task 는 한국어 200자 이내 요약. 파일 전체 본문을 붙여넣지 마세요.\n- tier 는 이 작업 한 번에만 적용되는 모델 급(성능 높은 순: ${tierKeys}). 생략하면 대상 에이전트의 기본 티어를 그대로 씁니다.\n- loop:true 면 Ralph Loop 모드 (DONE 출력까지 반복).\n- "새 세션을 열어 붙여넣으세요" 같은 우회 응답 금지 — 직접 이 JSON 을 출력하세요.\n\n같은 프로젝트 내 위임 가능 에이전트:\n${delegateTargets}\n</delegation>`;
       }
 
       if (isWorkerSession) {
@@ -888,5 +918,7 @@ export function createMessageSender(ctx) {
     return { started: true };
   }
 
-  return { startRunner };
+  // applyTierOverride 도 함께 내보낸다 — 위임 티어 해석은 startRunner 전체를
+  // 세우지 않고 단독으로 검증할 수 있어야 한다.
+  return { startRunner, applyTierOverride };
 }

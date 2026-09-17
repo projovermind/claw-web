@@ -4,12 +4,16 @@ import EventEmitter from 'node:events';
 import lockfile from 'proper-lockfile';
 import { inspectCreds, readClaudeCreds } from './cred-inspector.js';
 import { resolveConfigDir, ensureConfigDirSync } from './config-dir.js';
+import { DEFAULT_TIERS, normalizeTiers, migrateBackendTierModels } from './model-tiers.js';
 
 const EMPTY = () => ({
   version: 1,
   activeBackend: 'claude',
   austerityMode: false,
   austerityBackend: 'zai',
+  // 모델 티어 체계 — 에이전트는 급(order 의 한 항목)을 고르고, 백엔드가
+  // tierModels 로 그 급의 실제 모델 ID 를 댄다. 이름/개수는 사용자가 바꿀 수 있다.
+  tiers: DEFAULT_TIERS(),
   // 전역 폴백 — 어떤 백엔드가 실패했을 때 대신 쓸 백엔드. 백엔드별 `fallback`
   // 이 설정돼 있으면 그쪽이 우선한다. null 이면 폴백 없음.
   fallbackBackend: null,
@@ -22,6 +26,11 @@ const EMPTY = () => ({
         opus: 'claude-opus-4-6',
         sonnet: 'claude-sonnet-4-6',
         haiku: 'claude-sonnet-4-6'
+      },
+      tierModels: {
+        high: 'claude-opus-4-6',
+        middle: 'claude-sonnet-4-6',
+        low: 'claude-sonnet-4-6'
       }
     }
   }
@@ -57,6 +66,30 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
       await release();
     }
   }
+
+  /**
+   * 기존 파일에 티어 체계를 채워 넣는다. 멱등 — 이미 채워진 티어/order 는 건드리지
+   * 않고, 보탤 것이 없으면 파일을 쓰지도 않는다(서버 재기동마다 쓰기 금지).
+   */
+  async function migrateTiers() {
+    const current = cache;
+    const needsTiers = !Array.isArray(current.tiers?.order) || current.tiers.order.length === 0;
+    const patches = {};
+    for (const [id, b] of Object.entries(current.backends ?? {})) {
+      const next = migrateBackendTierModels(b);
+      if (next) patches[id] = next;
+    }
+    if (!needsTiers && Object.keys(patches).length === 0) return;
+    await writeWithLock((c) => {
+      if (!Array.isArray(c.tiers?.order) || c.tiers.order.length === 0) c.tiers = DEFAULT_TIERS();
+      for (const [id, tierModels] of Object.entries(patches)) {
+        if (c.backends?.[id]) c.backends[id] = { ...c.backends[id], tierModels };
+      }
+      return c;
+    });
+  }
+
+  await migrateTiers();
 
   // Mask sensitive data — return only envKey name and whether it's set in process.env
   function publicView() {
@@ -113,6 +146,7 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
         envStatus: b.type === 'claude-cli' && oauthStatus === 'set' && envStatus !== 'set' ? 'set (OAuth)' : envStatus,
         secretSource,
         models: b.models ?? {},
+        tierModels: b.tierModels ?? {},
         contextWindows: b.contextWindows ?? {},
         fallback: b.fallback ?? null,
         ...(b.type === 'claude-cli' ? {
@@ -129,6 +163,7 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
       austerityMode: !!cache.austerityMode,
       austerityBackend: cache.austerityBackend,
       fallbackBackend: cache.fallbackBackend ?? null,
+      tiers: normalizeTiers(cache.tiers),
       backends
     };
   }
@@ -320,6 +355,20 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
         return current;
       });
       return cache.fallbackBackend ?? null;
+    },
+
+    /**
+     * 티어 체계(order + labels)를 통째로 교체한다. 추가/이름변경/삭제가 모두
+     * 이 한 경로로 들어온다. 백엔드의 tierModels 는 건드리지 않는다 — 삭제한
+     * 티어를 되살릴 때 매핑이 그대로 살아 있어야 한다.
+     */
+    async setTiers(tiers) {
+      const next = normalizeTiers(tiers);
+      await writeWithLock((current) => {
+        current.tiers = next;
+        return current;
+      });
+      return next;
     },
 
     async setAusterity(enabled, backendId) {

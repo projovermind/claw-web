@@ -38,7 +38,9 @@ export function createQueue(ctx) {
           next.rawText,
           next.groupId ?? null,
           // 대기 시작 시각을 넘겨야 트래커가 queueMs 를 실행 시간과 분리해 기록한다.
-          next.queuedAt ?? null
+          next.queuedAt ?? null,
+          // 대기열을 거쳐도 발주할 때 지정한 모델 티어를 그대로 들고 간다.
+          next.tier ?? null
         )
       )
         .catch((err) =>

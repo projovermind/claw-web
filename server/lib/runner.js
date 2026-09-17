@@ -12,6 +12,7 @@
 import { startClaudeRun } from '../runners/claude-cli-runner.js';
 import { runAgent as runOpenAIAgent } from '../runners/openai-runner.js';
 import { logger } from './logger.js';
+import { resolveTierModel } from './model-tiers.js';
 
 export function createRunner({ processTracker, accountScheduler } = {}) {
   const active = new Map();
@@ -125,8 +126,14 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
       // → 보존해 둔 원본 별칭을 되돌려 놓고, 폴백 백엔드의 models 맵으로 다시 해석한다.
       //   맵에 없으면 별칭 그대로 넘겨 러너의 MODEL_ID_MAP(opus/sonnet/haiku)이 풀게 한다.
       if (agent.modelAlias) {
-        const fbModels = fallback.envOverrides?._backendsStore?.getBackend?.(fallback.backendId)?.models ?? null;
-        fbAgent.model = fbModels?.[agent.modelAlias] ?? agent.modelAlias;
+        const fbStore = fallback.envOverrides?._backendsStore ?? null;
+        const fbBackend = fbStore?.getBackend?.(fallback.backendId) ?? null;
+        // 티어 이름이면 폴백 백엔드의 tierModels 로 먼저 푼다 (없으면 강등 → models.default).
+        // 티어가 아니면 null 이 돌아와 기존 models 별칭 경로가 그대로 동작한다.
+        const fbTier = resolveTierModel({
+          backendObj: fbBackend, tier: agent.modelAlias, tiers: fbStore?.getRaw?.()?.tiers
+        });
+        fbAgent.model = fbTier?.modelId ?? fbBackend?.models?.[agent.modelAlias] ?? agent.modelAlias;
         if (fbAgent.model !== agent.model) {
           logger.info(
             { sessionId, alias: agent.modelAlias, from: agent.model, to: fbAgent.model, backendId: fallback.backendId },

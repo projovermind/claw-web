@@ -1,17 +1,20 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { X } from 'lucide-react';
+import { X, ChevronDown, ChevronRight } from 'lucide-react';
 import { api } from '../../lib/api';
 import type { Agent, PermissionMode } from '../../lib/types';
 import SkillPicker from '../common/SkillPicker';
 import ToolPicker from '../common/ToolPicker';
 import { useT } from '../../lib/i18n';
+import { resolveTiers, tierLabel } from '../../lib/model-tiers';
 
 export interface AgentFormState {
   id: string;
   name: string;
   avatar: string;
   model: string;
+  /** 모델 티어 키. '' 이면 티어 미사용 — `model` 에 고정된 모델을 쓴다. */
+  modelTier: string;
   backend: string;
   backendId: string;
   systemPrompt: string;
@@ -73,6 +76,7 @@ export const emptyAgentForm = (): AgentFormState => ({
   name: '',
   avatar: '🤖',
   model: 'sonnet',
+  modelTier: '',
   backend: 'claude',
   backendId: '',
   systemPrompt: '',
@@ -127,6 +131,9 @@ export function AgentModal({
     () => backendList.filter((b) => b.type === 'claude-cli' && b.status !== 'disabled'),
     [backendList]
   );
+  const tiers = useMemo(() => resolveTiers(backendsState), [backendsState]);
+  /** '고급 ▸ 특정 모델 고정' 접기. 티어를 안 쓰는 에이전트는 이 값이 실제로 쓰이므로 항상 펼친다. */
+  const [pinOpen, setPinOpen] = useState(false);
 
   // Inherited skills / tools = defaults from the project this agent is in
   const inheritedProject = useMemo(() => {
@@ -143,6 +150,7 @@ export function AgentModal({
           name: agent.name ?? '',
           avatar: agent.avatar ?? '🤖',
           model: agent.model ?? 'sonnet',
+          modelTier: agent.modelTier ?? '',
           backend: agent.backendId ?? 'claude',
           backendId: agent.backendId ?? agent.accountId ?? '',
           systemPrompt: agent.systemPrompt ?? '',
@@ -210,6 +218,19 @@ export function AgentModal({
       label: alias === modelId ? alias : `${alias}  →  ${modelId}`
     }));
   }, [backendsState, form.backend]);
+  // 삭제된 커스텀 티어를 쓰고 있어도 선택지에서 조용히 사라지지 않게 유지한다.
+  const tierOptions = useMemo(
+    () =>
+      form.modelTier && !tiers.order.includes(form.modelTier)
+        ? [...tiers.order, form.modelTier]
+        : tiers.order,
+    [tiers, form.modelTier]
+  );
+  /** 선택한 백엔드에서 이 티어가 실제로 어떤 모델로 풀리는지. 매핑이 없으면 null. */
+  const tierResolvedModel = form.modelTier
+    ? backendsState?.backends?.[form.backend]?.tierModels?.[form.modelTier] ?? null
+    : null;
+
   const envErrors = form.env.map(envRowError);
   const duplicateEnvKey = (() => {
     const seen = new Set<string>();
@@ -294,22 +315,70 @@ export function AgentModal({
                 ))}
               </select>
             </Field>
-            <Field label={t('agents.field.model')} help={t('agents.help.model')}>
+            <Field
+              label={t('agents.field.modelTier')}
+              help={
+                form.modelTier
+                  ? tierResolvedModel
+                    ? t('agents.help.modelTierResolved', { model: tierResolvedModel })
+                    : t('agents.help.modelTierUnmapped')
+                  : t('agents.help.modelTierPinned')
+              }
+            >
               <select
-                value={form.model}
-                onChange={(e) => setForm({ ...form, model: e.target.value })}
-                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
+                value={form.modelTier}
+                onChange={(e) => {
+                  const tier = e.target.value;
+                  setForm({ ...form, modelTier: tier });
+                  if (!tier) setPinOpen(true);
+                }}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
               >
-                {availableModels.length === 0 && (
-                  <option value={form.model}>{form.model || '—'}</option>
-                )}
-                {availableModels.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
+                {tierOptions.map((key) => (
+                  <option key={key} value={key}>
+                    {tierLabel(tiers, key)}
                   </option>
                 ))}
+                <option value="">{t('agents.tier.pinnedOption')}</option>
               </select>
             </Field>
+          </div>
+
+          {/* 고급 ▸ 특정 모델 고정 — 티어를 안 쓰는 에이전트만 이 값이 실제로 쓰인다 */}
+          <div className="border border-zinc-800 rounded">
+            <button
+              type="button"
+              onClick={() => setPinOpen((v) => !v)}
+              className="w-full flex items-center gap-1 px-3 py-2 text-[11px] uppercase tracking-wider text-zinc-500 hover:text-zinc-300"
+            >
+              {pinOpen || !form.modelTier ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+              <span>{t('agents.tier.advancedPin')}</span>
+              {form.modelTier && (
+                <span className="ml-auto normal-case tracking-normal text-zinc-600">
+                  {t('agents.tier.advancedPinIgnored')}
+                </span>
+              )}
+            </button>
+            {(pinOpen || !form.modelTier) && (
+              <div className="px-3 pb-3">
+                <Field label={t('agents.field.model')} help={t('agents.help.model')}>
+                  <select
+                    value={form.model}
+                    onChange={(e) => setForm({ ...form, model: e.target.value, modelTier: '' })}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm font-mono"
+                  >
+                    {availableModels.length === 0 && (
+                      <option value={form.model}>{form.model || '—'}</option>
+                    )}
+                    {availableModels.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            )}
           </div>
           {claudeCliBackends.length > 0 && (
             <Field label="Claude 백엔드" help="이 에이전트에 사용할 Claude CLI 백엔드 (설정 > 백엔드에서 등록)">

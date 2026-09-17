@@ -2,12 +2,15 @@ import { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useProgressMutation } from '../../lib/useProgressMutation';
-import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, Settings2, Key, AlertTriangle, Eye, Users } from 'lucide-react';
+import { Plus, Trash2, CheckCircle2, XCircle, Play, Folder, Copy, Settings2, Key, AlertTriangle, Eye, Users, Layers } from 'lucide-react';
 import { api } from '../../lib/api';
-import type { BackendPublic, ClaudeCliBackend, ApplyBackendToAgentsResult } from '../../lib/types';
+import type { BackendPublic, ClaudeCliBackend, ApplyBackendToAgentsResult, ModelTiers } from '../../lib/types';
+import { resolveTiers, tierLabel, normalizeTierKey } from '../../lib/model-tiers';
 import { BackendCard } from './BackendCard';
 import { BackendUsageGauge, useBackendUsage, sharedAccountCounts } from './BackendUsageGauge';
 import { ModelRow } from './ModelRow';
+import { InlineEditText } from './InlineEditText';
+import { TierModelMap } from './TierModelMap';
 import { AddBackendModal } from './AddBackendModal';
 import { AccountAuthModal } from './AccountAuthModal';
 import { ClaudeStatusCard } from './ClaudeStatusCard';
@@ -70,6 +73,11 @@ export function BackendsTab() {
   // 일괄 적용 — 대상 백엔드('' = 전역 설정 따르기) 와 확인 모달
   const [applyTarget, setApplyTarget] = useState<string>('');
   const [applyConfirm, setApplyConfirm] = useState(false);
+  // 티어 일괄 적용 — '' = 티어 해제(에이전트가 고정 모델을 쓰게 됨)
+  const [applyTierTarget, setApplyTierTarget] = useState<string>('');
+  const [applyTierConfirm, setApplyTierConfirm] = useState(false);
+  const [draftTierKey, setDraftTierKey] = useState('');
+  const [draftTierLabel, setDraftTierLabel] = useState('');
   const addToast = useToastStore((s) => s.add);
   const { data: agents } = useQuery({ queryKey: ['agents'], queryFn: api.agents });
 
@@ -78,6 +86,12 @@ export function BackendsTab() {
     if (backendId == null) return t('backendsTab.applyAllFollowGlobal');
     return data?.backends[backendId]?.label ?? backendId;
   };
+
+  const tiers = useMemo(() => resolveTiers(data), [data]);
+
+  /** '' (티어 해제) 또는 티어 키를 사람이 읽는 라벨로. */
+  const tierLabelOf = (key: string): string =>
+    key ? tierLabel(tiers, key) : t('backendsTab.applyTierNone');
 
   // Cooldown countdown — seeded from polled data, ticks every second
   const [countdowns, setCountdowns] = useState<Record<string, number>>({});
@@ -220,6 +234,54 @@ export function BackendsTab() {
     },
   });
 
+  /** 티어 정의 저장 — 추가/이름변경/삭제 모두 { order, labels } 통째 저장. */
+  const saveTiers = useProgressMutation<ModelTiers, Error, ModelTiers>({
+    title: t('backendsTab.tiersSaving'),
+    successMessage: t('backendsTab.tiersSaved'),
+    invalidateKeys: [['backends']],
+    mutationFn: (next: ModelTiers) => api.setBackendTiers(next),
+    onError: (err) => {
+      addToast('error', t('backendsTab.tiersSaveFailed', { error: err.message }));
+    },
+  });
+
+  const restoreAgentTiers = useProgressMutation<
+    ApplyBackendToAgentsResult,
+    Error,
+    Record<string, string | null>
+  >({
+    title: t('backendsTab.applyTierProgress'),
+    invalidateKeys: [['agents'], ['backends']],
+    mutationFn: (previousTiers) => api.applyBackendToAgents({ restoreTiers: previousTiers }),
+    onSuccess: (res) => {
+      addToast('success', t('backendsTab.applyTierUndone', { count: res.updated }));
+    },
+    onError: (err) => {
+      addToast('error', t('backendsTab.applyAllUndoFailed', { error: err.message }));
+    },
+  });
+
+  const applyTierToAgents = useProgressMutation<ApplyBackendToAgentsResult, Error, string | null>({
+    title: t('backendsTab.applyTierProgress'),
+    invalidateKeys: [['agents'], ['backends']],
+    mutationFn: (modelTier: string | null) => api.applyBackendToAgents({ modelTier }),
+    onSuccess: (res, modelTier) => {
+      addToast(
+        'success',
+        t('backendsTab.applyTierDone', { count: res.updated, target: tierLabelOf(modelTier ?? '') }),
+        {
+          action: {
+            label: t('backendsTab.applyAllUndo'),
+            onClick: () => restoreAgentTiers.mutate(res.previousTiers ?? {}),
+          },
+        }
+      );
+    },
+    onError: (err) => {
+      addToast('error', t('backendsTab.applyTierFailed', { error: err.message }));
+    },
+  });
+
   const testMut = useProgressMutation<{ ok: boolean; output?: string; error?: string }, Error, string>({
     title: '계정 테스트 중...',
     successMessage: '테스트 완료',
@@ -357,6 +419,104 @@ export function BackendsTab() {
             </button>
           </div>
           <p className="text-[11px] text-zinc-500 mt-1">{t('backendsTab.applyAllDesc')}</p>
+
+          {/* 티어 일괄 적용 — 백엔드 일괄 적용과 같은 되돌리기 토스트 흐름 */}
+          <div className="flex items-center gap-2 mt-2">
+            <select
+              value={applyTierTarget}
+              onChange={(e) => setApplyTierTarget(e.target.value)}
+              className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
+            >
+              {tiers.order.map((key) => (
+                <option key={key} value={key}>
+                  {tierLabel(tiers, key)}
+                </option>
+              ))}
+              <option value="">{t('backendsTab.applyTierNone')}</option>
+            </select>
+            <button
+              onClick={() => setApplyTierConfirm(true)}
+              disabled={applyTierToAgents.isPending || restoreAgentTiers.isPending}
+              className="shrink-0 rounded bg-zinc-800 hover:bg-zinc-700 px-3 py-2 text-xs disabled:opacity-50"
+            >
+              {t('backendsTab.applyTierButton')}
+            </button>
+          </div>
+          <p className="text-[11px] text-zinc-500 mt-1">{t('backendsTab.applyTierDesc')}</p>
+        </div>
+
+        {/* 모델 티어 관리 — 추가 / 이름변경 / 삭제 */}
+        <div className="pt-3 border-t border-zinc-800">
+          <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-zinc-500 mb-1">
+            <Layers size={11} />
+            {t('backendsTab.tiersTitle')}
+          </div>
+          <p className="text-[11px] text-zinc-500 mb-2">{t('backendsTab.tiersDesc')}</p>
+          <div className="space-y-1">
+            {tiers.order.map((key) => (
+              <div key={key} className="flex items-center gap-1.5">
+                <span className="w-28 shrink-0 truncate font-mono text-[11px] text-zinc-500">{key}</span>
+                <InlineEditText
+                  value={tierLabel(tiers, key)}
+                  onSave={(v) =>
+                    saveTiers.mutate({ order: tiers.order, labels: { ...tiers.labels, [key]: v } })
+                  }
+                  className="flex-1 text-sm text-zinc-200"
+                  placeholder={key}
+                />
+                <button
+                  onClick={() => {
+                    if (!confirm(t('backendsTab.tierDeleteConfirm', { tier: tierLabel(tiers, key) }))) return;
+                    const labels = { ...tiers.labels };
+                    delete labels[key];
+                    saveTiers.mutate({ order: tiers.order.filter((k) => k !== key), labels });
+                  }}
+                  disabled={saveTiers.isPending || tiers.order.length <= 1}
+                  className="p-1 rounded hover:bg-red-900/40 text-zinc-500 hover:text-red-400 disabled:opacity-30"
+                  title={t('backendsTab.tierDelete')}
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-1 pt-2">
+            <input
+              value={draftTierKey}
+              onChange={(e) => setDraftTierKey(e.target.value)}
+              placeholder={t('backendsTab.tierKeyPlaceholder')}
+              className="w-32 shrink-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px] font-mono"
+            />
+            <input
+              value={draftTierLabel}
+              onChange={(e) => setDraftTierLabel(e.target.value)}
+              placeholder={t('backendsTab.tierLabelPlaceholder')}
+              className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-[11px]"
+            />
+            <button
+              onClick={() => {
+                const key = normalizeTierKey(draftTierKey);
+                if (!key || tiers.order.includes(key)) return;
+                saveTiers.mutate({
+                  order: [...tiers.order, key],
+                  labels: { ...tiers.labels, [key]: draftTierLabel.trim() || key },
+                });
+                setDraftTierKey('');
+                setDraftTierLabel('');
+              }}
+              disabled={
+                saveTiers.isPending ||
+                !normalizeTierKey(draftTierKey) ||
+                tiers.order.includes(normalizeTierKey(draftTierKey))
+              }
+              className="shrink-0 rounded bg-emerald-900/40 hover:bg-emerald-900/60 disabled:opacity-30 text-emerald-200 px-2 py-1 text-[11px] flex items-center"
+            >
+              <Plus size={11} />
+            </button>
+          </div>
+          {tiers.order.includes(normalizeTierKey(draftTierKey)) && (
+            <p className="text-[11px] text-amber-400/80 mt-1">{t('backendsTab.tierKeyDuplicate')}</p>
+          )}
         </div>
       </div>
 
@@ -370,6 +530,23 @@ export function BackendsTab() {
           onConfirm={() => {
             setApplyConfirm(false);
             applyToAgents.mutate(applyTarget || null);
+          }}
+        />
+      )}
+
+      {applyTierConfirm && (
+        <ApplyToAgentsConfirm
+          kind="modelTier"
+          targetLabel={tierLabelOf(applyTierTarget)}
+          affectedCount={
+            agents
+              ? agents.filter((a) => (a.modelTier ?? null) !== (applyTierTarget || null)).length
+              : null
+          }
+          onCancel={() => setApplyTierConfirm(false)}
+          onConfirm={() => {
+            setApplyTierConfirm(false);
+            applyTierToAgents.mutate(applyTierTarget || null);
           }}
         />
       )}
@@ -577,6 +754,7 @@ export function BackendsTab() {
           backend={editingBackend}
           allBackends={list}
           globalFallback={data.fallbackBackend ?? null}
+          tiers={tiers}
           onClose={() => setEditingId(null)}
         />
       )}
@@ -648,17 +826,20 @@ function EditClaudeCliModal({
   backend,
   allBackends,
   globalFallback,
+  tiers,
   onClose,
 }: {
   backend: ClaudeCliBackend;
   allBackends: BackendPublic[];
   globalFallback: string | null;
+  tiers: ModelTiers;
   onClose: () => void;
 }) {
   const t = useT();
   const [configDir, setConfigDir] = useState(backend.configDir ?? '');
   const [fallback, setFallback] = useState<string>(backend.fallback ?? '');
   const [models, setModels] = useState<Record<string, string>>({ ...backend.models });
+  const [tierModels, setTierModels] = useState<Record<string, string>>({ ...(backend.tierModels ?? {}) });
   const [showPicker, setShowPicker] = useState(false);
   const [draftAlias, setDraftAlias] = useState('');
   const [draftModel, setDraftModel] = useState('');
@@ -678,10 +859,15 @@ function EditClaudeCliModal({
         configDir: configDir.trim() || undefined,
         models,
       });
-      // fallback 은 계정 스키마가 아니라 백엔드 스키마의 필드 → 변경됐을 때만 별도 PATCH
+      // fallback / tierModels 는 계정 스키마가 아니라 백엔드 스키마의 필드 → 변경됐을 때만 별도 PATCH
       const next = fallback || null;
-      if (next !== (backend.fallback ?? null)) {
-        await api.patchBackend(backend.id, { fallback: next });
+      const backendPatch: Record<string, unknown> = {};
+      if (next !== (backend.fallback ?? null)) backendPatch.fallback = next;
+      if (JSON.stringify(tierModels) !== JSON.stringify(backend.tierModels ?? {})) {
+        backendPatch.tierModels = tierModels;
+      }
+      if (Object.keys(backendPatch).length > 0) {
+        await api.patchBackend(backend.id, backendPatch);
       }
       return res;
     },
@@ -770,6 +956,19 @@ function EditClaudeCliModal({
                 ))}
               </select>
               <p className="text-[11px] text-zinc-500 mt-1">{t('editAccount.fallbackDesc')}</p>
+            </div>
+
+            {/* 티어 → 모델 매핑 — 저장 버튼까지 버퍼링 */}
+            <div className="border border-zinc-800 rounded-lg p-3 space-y-2 bg-zinc-950/40">
+              <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1">
+                {t('tierMap.title')}
+              </div>
+              <TierModelMap
+                tiers={tiers}
+                models={models}
+                value={tierModels}
+                onChange={setTierModels}
+              />
             </div>
 
             {/* 모델 단축명 설정 — BackendCard 와 동일한 ModelRow UI */}
@@ -901,16 +1100,20 @@ function CopyLoginCmd({ configDir, onCopied }: { configDir: string; onCopied?: (
 function ApplyToAgentsConfirm({
   targetLabel,
   affectedCount,
+  kind = 'backend',
   onConfirm,
   onCancel,
 }: {
   targetLabel: string;
   /** 에이전트 목록을 아직 못 읽었으면 null */
   affectedCount: number | null;
+  /** 바꾸는 대상 — 백엔드인지 모델 티어인지. 확인 문구만 달라진다. */
+  kind?: 'backend' | 'modelTier';
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   const t = useT();
+  const isTier = kind === 'modelTier';
   return (
     <div
       className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
@@ -922,15 +1125,27 @@ function ApplyToAgentsConfirm({
       >
         <div className="flex items-center gap-2 px-5 py-3 border-b border-zinc-800">
           <Users size={14} className="text-amber-400" />
-          <h3 className="text-sm font-semibold">{t('backendsTab.applyAllConfirmTitle')}</h3>
+          <h3 className="text-sm font-semibold">
+            {t(isTier ? 'backendsTab.applyTierConfirmTitle' : 'backendsTab.applyAllConfirmTitle')}
+          </h3>
         </div>
         <div className="p-5 space-y-3">
           <p className="text-sm text-zinc-300 leading-relaxed">
             {affectedCount == null
-              ? t('backendsTab.applyAllConfirmBodyUnknown', { target: targetLabel })
-              : t('backendsTab.applyAllConfirmBody', { count: affectedCount, target: targetLabel })}
+              ? t(
+                  isTier
+                    ? 'backendsTab.applyTierConfirmBodyUnknown'
+                    : 'backendsTab.applyAllConfirmBodyUnknown',
+                  { target: targetLabel }
+                )
+              : t(isTier ? 'backendsTab.applyTierConfirmBody' : 'backendsTab.applyAllConfirmBody', {
+                  count: affectedCount,
+                  target: targetLabel,
+                })}
           </p>
-          <p className="text-[11px] text-zinc-500">{t('backendsTab.applyAllDesc')}</p>
+          <p className="text-[11px] text-zinc-500">
+            {t(isTier ? 'backendsTab.applyTierDesc' : 'backendsTab.applyAllDesc')}
+          </p>
           <div className="flex justify-end gap-2 pt-1">
             <button
               onClick={onCancel}

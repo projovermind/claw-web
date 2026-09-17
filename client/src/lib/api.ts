@@ -13,6 +13,7 @@ import type {
   BackendPreset,
   BackendUsageState,
   ApplyBackendToAgentsResult,
+  ModelTiers,
   Skill,
   UsageCost,
   ActivityEntry,
@@ -308,8 +309,18 @@ export const api = {
    * 응답의 previous 를 { restore } 로 다시 보내면 되돌아간다.
    */
   applyBackendToAgents: (
-    body: { backendId: string | null } | { restore: Record<string, string | null> }
+    body:
+      | { backendId: string | null; projectId?: string }
+      | { modelTier: string | null; projectId?: string }
+      | { restore: Record<string, string | null> }
+      | { restoreTiers: Record<string, string | null> }
   ) => post<ApplyBackendToAgentsResult>('/backends/apply-to-agents', body),
+  /**
+   * 모델 티어 정의를 통째로 저장 (추가/이름변경/삭제 전부 이 한 번의 호출).
+   * order 에서 빠진 티어는 삭제된 것으로 취급된다.
+   */
+  setBackendTiers: (body: { order: string[]; labels: Record<string, string> }) =>
+    post<{ tiers: ModelTiers }>('/backends/tiers', body).then((r) => r.tiers),
   skills: () => get<{ skills: Skill[] }>('/skills').then((r) => r.skills),
   skill: (id: string) => get<Skill>(`/skills/${id}`),
   createSkill: (data: { name: string; description?: string; content?: string }) =>

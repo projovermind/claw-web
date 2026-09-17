@@ -1,5 +1,6 @@
 import { logger } from '../../lib/logger.js';
 import { resolveConfigDir } from '../../lib/config-dir.js';
+import { resolveTierModel } from '../../lib/model-tiers.js';
 
 /**
  * Classify an error message and return retry strategy.
@@ -304,6 +305,23 @@ export function resolveAgent(agentId, { configStore, metadataStore, projectsStor
   const envOverrides = buildBackendEnv(agent, backendsStore);
   const { backendId, backendType, backendObj } = resolveBackend(agent, backendsStore);
 
+  // ── 모델 티어 해석 (최우선) ──
+  // agent.modelTier 가 있으면 "어느 급" 이 모델 지정을 이긴다. 해석된 뒤에도
+  // modelAlias 에 티어 이름을 남겨 둬야 폴백 백엔드에서 그 백엔드의 tierModels
+  // 기준으로 다시 풀린다 (runner._startFallback).
+  const tierHit = agent.modelTier
+    ? resolveTierModel({ backendObj, tier: agent.modelTier, tiers: backendsStore?.getRaw?.()?.tiers })
+    : null;
+  if (tierHit) {
+    if (tierHit.demoted || tierHit.fromDefault) {
+      logger.info(
+        { agentId: agent.id, backendId, requestedTier: tierHit.requestedTier, usedTier: tierHit.tier, model: tierHit.modelId },
+        'resolveAgent: 요청한 티어가 이 백엔드에 없어 강등/기본값으로 해석'
+      );
+    }
+    agent.model = tierHit.modelId;
+  }
+
   // ── 모델 별칭 해석 ──
   // 해석 전 원본을 남겨 둔다. 폴백 백엔드는 models 맵이 달라서, 1차 백엔드 기준으로
   // 확정된 모델 ID 를 그대로 들고 가면 남의 모델명을 전선에 싣게 된다.
@@ -312,14 +330,14 @@ export function resolveAgent(agentId, { configStore, metadataStore, projectsStor
   // 백엔드 models 딕셔너리: { "opus sub": "claude-opus-4-5", ... }
   // agent.model이 별칭(예: "opus sub")이면 실제 모델 ID로 교체.
   // 1차: 선택된 백엔드에서 해석 시도
-  if (backendObj?.models && agent.model) {
+  if (!tierHit && backendObj?.models && agent.model) {
     const resolvedId = backendObj.models[agent.model];
     if (resolvedId) {
       agent.model = resolvedId;
     }
   }
   // 2차: 여전히 별칭이 남아있으면 agent.backendId 원본 백엔드에서 시도
-  if (!backendObj?.models?.[agent.model] && backendsStore && agent.backendId) {
+  if (!tierHit && !backendObj?.models?.[agent.model] && backendsStore && agent.backendId) {
     const originalBackend = backendsStore.getBackend(agent.backendId);
     if (originalBackend?.models && agent.model) {
       const resolvedId = originalBackend.models[agent.model];
@@ -328,7 +346,7 @@ export function resolveAgent(agentId, { configStore, metadataStore, projectsStor
   }
   // 3차: backendId 없는 에이전트가 서브계정 별칭(e.g. "sonnet sub")을 사용하는 경우
   // → 모든 백엔드를 스캔해서 해당 별칭을 가진 첫 번째 백엔드로 해석
-  if (backendsStore && agent.model) {
+  if (!tierHit && backendsStore && agent.model) {
     const raw = backendsStore.getRaw();
     const allBackends = Object.values(raw?.backends ?? {});
     const isRawModelId = agent.model.startsWith('claude-') || agent.model.startsWith('glm-');
@@ -354,7 +372,10 @@ export function resolveAgent(agentId, { configStore, metadataStore, projectsStor
   }
 
   // 별칭이 실제로 다른 ID 로 치환된 경우에만 보존 — 원래부터 raw 모델 ID 면 폴백도 그대로 쓴다.
-  if (originalModelAlias && agent.model !== originalModelAlias) {
+  // 티어로 해석된 경우엔 (강등됐더라도) 요청한 티어 이름을 보존한다.
+  if (tierHit) {
+    agent.modelAlias = tierHit.requestedTier;
+  } else if (originalModelAlias && agent.model !== originalModelAlias) {
     agent.modelAlias = originalModelAlias;
   }
 

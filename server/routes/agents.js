@@ -11,6 +11,7 @@ const createSchema = z.object({
   avatar: z.string().max(16).optional(),
   systemPrompt: z.string().max(50000).optional(),
   model: z.string().max(64).optional(),
+  modelTier: z.string().max(32).optional(),
   workingDir: z.string().max(500).optional(),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),

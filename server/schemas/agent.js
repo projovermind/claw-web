@@ -20,6 +20,9 @@ export const agentPatchSchema = z.object({
   avatar: z.string().max(16).optional(),
   systemPrompt: z.string().max(50000).optional(),
   model: z.string().max(64).optional(),
+  // 모델 "급" (backends.json tiers.order 의 한 항목). 지정되면 model 보다 우선하고,
+  // 백엔드마다 tierModels 로 실제 모델 ID 가 풀린다. null = 지정 해제.
+  modelTier: z.string().max(32).nullable().optional(),
   workingDir: z.string().max(500).optional(),
   projectId: z.string().max(64).nullable().optional(),
   tier: z.enum(['main', 'project', 'addon']).nullable().optional(),
@@ -48,7 +51,7 @@ export const agentPatchSchema = z.object({
 
 // Which fields live in config.json (bot territory) vs web-metadata.json
 export const CONFIG_FIELDS = new Set([
-  'name', 'avatar', 'systemPrompt', 'model', 'workingDir',
+  'name', 'avatar', 'systemPrompt', 'model', 'modelTier', 'workingDir',
   'allowedTools', 'disallowedTools', 'planMode', 'permissionMode', 'env', 'backendId', 'thinkingEffort',
   'maxConcurrent',
   'pinnedFiles', 'gitDiffAutoAttach', 'bridgeAutoAttach'

@@ -1,5 +1,6 @@
 import { logger } from '../../lib/logger.js';
 import { buildRoster, listProjectAgentIds } from '../../lib/agent-roster.js';
+import { normalizeTiers } from '../../lib/model-tiers.js';
 import { REUSE_TASK_PREFIX } from './worker-pool.js';
 
 /**
@@ -66,7 +67,18 @@ export function createDelegation(ctx) {
             const obj = JSON.parse(src.slice(start, end + 1));
             if (obj?.delegate?.agent && obj?.delegate?.task) {
               const key = `${obj.delegate.agent}::${obj.delegate.task}`;
-              if (!seen.has(key)) { seen.add(key); results.push(obj); }
+              if (!seen.has(key)) {
+                seen.add(key);
+                // "model" 은 폐기된 필드다 — 프롬프트가 광고만 하고 아무도 읽지
+                // 않아 조용히 무시돼 왔다. 이제 "tier" 로 대체됐음을 남긴다.
+                if (obj.delegate.model !== undefined) {
+                  logger.warn(
+                    { agent: obj.delegate.agent, model: obj.delegate.model },
+                    'delegation: "model" 필드는 폐기됐습니다 — "tier" 를 쓰세요 (무시함)'
+                  );
+                }
+                results.push(obj);
+              }
             }
           } catch { /* ignore, try next */ }
         }
@@ -86,7 +98,9 @@ export function createDelegation(ctx) {
     // 한 턴으로 합쳐 보고한다. 단건이면 그룹 없이 기존대로 즉시 보고.
     const groupId = ctx.openDelegationGroup?.(originSessionId, parsed.length) ?? null;
     for (const p of parsed) {
-      const res = await executeDelegation(originSessionId, p.delegate.agent, p.delegate.task, JSON.stringify(p), groupId);
+      const res = await executeDelegation(
+        originSessionId, p.delegate.agent, p.delegate.task, JSON.stringify(p), groupId, null, p.delegate.tier ?? null
+      );
       if (res?.badId) badIds.push(res);
       else if (res?.depthExceeded) depthBlocked.push(res);
     }
@@ -198,7 +212,24 @@ export function createDelegation(ctx) {
     return null;
   }
 
-  async function executeDelegation(originSessionId, targetAgentIdRaw, task, rawText, groupId = null, queuedAt = null) {
+  /**
+   * 위임 JSON 의 "tier" 를 실제 티어 키로 정규화한다. 등록되지 않은 이름은
+   * 무시(null) — 오타 하나로 위임 자체가 실패하는 것보다 에이전트 기본 티어로
+   * 실행되는 편이 낫다.
+   */
+  function resolveOverrideTier(raw, targetAgentId) {
+    if (raw == null) return null;
+    const order = normalizeTiers(ctx.backendsStore?.getRaw?.()?.tiers).order;
+    const wanted = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    const match = wanted ? order.find((t) => t.toLowerCase() === wanted) : null;
+    if (!match) {
+      logger.warn({ agent: targetAgentId, tier: raw, known: order }, 'delegation: 알 수 없는 티어 — 무시하고 기본 티어로 실행');
+      return null;
+    }
+    return match;
+  }
+
+  async function executeDelegation(originSessionId, targetAgentIdRaw, task, rawText, groupId = null, queuedAt = null, tier = null) {
     // 그룹 슬롯은 정확히 한 번만 소비돼야 한다 — 등록(attach) 뒤에 예외가 나면
     // 취소(drop)까지 겹쳐 배리어가 형제들을 기다리지 않고 먼저 닫힌다.
     let attached = false;
@@ -234,7 +265,7 @@ export function createDelegation(ctx) {
         const agentQueue = ctx.agentQueue;
         if (!agentQueue.has(targetAgentId)) agentQueue.set(targetAgentId, []);
         const queue = agentQueue.get(targetAgentId);
-        queue.push({ originSessionId, targetAgentId, task, rawText, groupId, queuedAt: acceptedAt });
+        queue.push({ originSessionId, targetAgentId, task, rawText, groupId, queuedAt: acceptedAt, tier });
         delegationTracker.setPendingQueue?.(agentQueue);
         const pos = queue.length;
         logger.info({ targetAgentId, queueLength: pos, max }, 'delegation: queued (agent at capacity)');
@@ -251,15 +282,29 @@ export function createDelegation(ctx) {
       // --resume 으로 재사용해 콜드스타트(페르소나 재주입 + 코드베이스 재탐색)를
       // 없앤다. loop 위임은 세션에 loop 상태가 붙으므로 항상 새 세션.
       const reuse = wantsLoop ? null : ctx.acquireWorkerSession?.(originSessionId, targetAgentId) ?? null;
+      // 이 실행에만 적용할 모델 티어. 에이전트 저장값(config.json)은 건드리지 않고
+      // 세션에만 얹는다. 재사용 세션에도 **매번** 써 넣어야(없으면 null) 앞 위임의
+      // 티어가 다음 작업까지 따라가지 않는다.
+      const tierOverride = resolveOverrideTier(tier, targetAgentId);
+      if (tierOverride) {
+        logger.info(
+          { agent: targetAgentId, from: configStore.getAgent(targetAgentId)?.modelTier ?? null, to: tierOverride },
+          'delegation: 이번 실행에만 모델 티어를 덮어씀'
+        );
+      }
       let targetSession;
       if (reuse) {
         targetSession = reuse.session;
-        await sessionsStore.update(targetSession.id, { title: `[위임] ${task.slice(0, 40)}` });
+        await sessionsStore.update(targetSession.id, {
+          title: `[위임] ${task.slice(0, 40)}`,
+          modelTierOverride: tierOverride
+        });
       } else {
         targetSession = await sessionsStore.create({
           agentId: targetAgentId,
           title: `[위임] ${task.slice(0, 40)}`,
-          isDelegation: true
+          isDelegation: true,
+          modelTierOverride: tierOverride
         });
         eventBus.publish('session.created', { session: targetSession });
         if (!wantsLoop) ctx.registerWorkerSession?.(originSessionId, targetAgentId, targetSession.id);
@@ -339,6 +384,7 @@ export function createDelegation(ctx) {
         target: targetSession.id,
         agent: targetAgentId,
         loop: wantsLoop,
+        tier: tierOverride,
         taskLength: task.length,
         depth,
         queueMs: entry.queueMs,

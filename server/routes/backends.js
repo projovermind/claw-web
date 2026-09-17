@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError } from '../middleware/error-handler.js';
 import { createBackendUsageReader } from '../lib/backend-usage.js';
+import { normalizeTiers } from '../lib/model-tiers.js';
 
 const createSchema = z.object({
   id: z.string().min(1).max(64).regex(/^[a-z0-9_-]+$/i),
@@ -13,6 +14,8 @@ const createSchema = z.object({
   baseURL: z.string().url(),
   envKey: z.string().min(1).max(80),
   models: z.record(z.string()),
+  // 티어(상/중/하) → 모델 ID. models 와 별개 — 이쪽이 modelTier 해석에 쓰인다.
+  tierModels: z.record(z.string()).optional(),
   // Optional: if provided, we also store the actual key value in the
   // secrets store (and inject into process.env) — user can paste the key
   // directly in the UI instead of fiddling with shell env vars.
@@ -24,6 +27,8 @@ const updateSchema = z.object({
   baseURL: z.string().url().optional(),
   envKey: z.string().min(1).max(80).optional(),
   models: z.record(z.string()).optional(),
+  // 티어 이름 → 모델 ID. 키는 backends.json 의 tiers.order 에 있는 값.
+  tierModels: z.record(z.string()).optional(),
   // 모델 id → 컨텍스트 창(토큰). 휴리스틱(context-window.js)보다 우선한다.
   // 새 모델이 나왔는데 휴리스틱이 아직 모를 때 코드 수정 없이 교정하는 통로.
   contextWindows: z.record(z.number().int().positive()).optional(),
@@ -35,14 +40,28 @@ const fallbackSchema = z.object({
   backendId: z.string().max(64).nullable()
 }).strict();
 
+const tiersSchema = z.object({
+  // 표시 순서 = 성능 내림차순. 강등은 이 순서를 따라 아래로 내려간다.
+  order: z.array(z.string().min(1).max(32).regex(/^[a-z0-9_-]+$/i)).min(1).max(12),
+  labels: z.record(z.string().min(1).max(40)).optional()
+}).strict();
+
 const applyToAgentsSchema = z.object({
-  // null = 상속 (에이전트에서 backendId 를 지워 전역 active 백엔드를 따르게 함)
-  backendId: z.string().max(64).nullable(),
+  // null = 상속 (에이전트에서 backendId 를 지워 전역 active 백엔드를 따르게 함).
+  // 생략하면 backendId 는 손대지 않는다 — modelTier 만 일괄 적용할 때 쓴다.
+  backendId: z.string().max(64).nullable().optional(),
+  // null = 티어 지정 해제(기존 model 설정을 따름)
+  modelTier: z.string().max(32).nullable().optional(),
   // 지정 시 해당 프로젝트 소속 에이전트만 대상
   projectId: z.string().max(128).optional(),
   // { agentId: backendId|null } — 이전 상태를 그대로 되돌린다. 주면 backendId 는 무시.
-  restore: z.record(z.string().max(64).nullable()).optional()
-}).strict();
+  restore: z.record(z.string().max(64).nullable()).optional(),
+  // { agentId: modelTier|null } — previousTiers 를 그대로 되쏘면 티어가 복구된다.
+  restoreTiers: z.record(z.string().max(32).nullable()).optional()
+}).strict().refine(
+  (b) => b.backendId !== undefined || b.modelTier !== undefined || b.restore || b.restoreTiers,
+  { message: 'backendId 또는 modelTier 중 하나는 있어야 합니다' }
+);
 
 const secretSchema = z.object({
   // Pass empty string or null to clear; otherwise this becomes the new value.
@@ -88,7 +107,10 @@ export const BACKEND_PRESETS = [
         'muse-spark-1.2': 'oc/muse-spark-1.2-contributor-free',
         // GLM-5.2 는 답변 품질은 좋지만 이 경로에서 tool_use 를 못 내보낸다(대화 전용).
         'glm-5.2-chat': 'cfp/zai-org/glm-5.2'
-      }
+      },
+      // 티어는 셋 다 big-pickle — 이 게이트웨이에서 tool_use 를 확실히 내보내는
+      // 유일한 주력 모델이다. 급을 나눌 만큼 성능대가 갈리는 모델이 없다.
+      tierModels: { high: 'oc/big-pickle', middle: 'oc/big-pickle', low: 'oc/big-pickle' }
     }
   },
   {
@@ -101,7 +123,10 @@ export const BACKEND_PRESETS = [
       label: 'Z.AI (GLM)',
       baseURL: 'https://api.z.ai/api/anthropic',
       envKey: 'ZAI_API_KEY',
-      models: { opus: 'glm-4.6', sonnet: 'glm-4.6', haiku: 'glm-4.5-air' }
+      // z.ai 공식 문서(docs.z.ai/devpack/latest-model) 기준 현행 코딩 플랜 모델.
+      // glm-5.3 = 텍스트 전용 주력, glm-5.3-flash = 멀티모달/경량.
+      models: { opus: 'glm-5.3', sonnet: 'glm-5.3', haiku: 'glm-5.3-flash' },
+      tierModels: { high: 'glm-5.3', middle: 'glm-5.3', low: 'glm-5.3-flash' }
     }
   }
 ];
@@ -212,7 +237,8 @@ export function createBackendsRouter({ backendsStore, eventBus, webConfig, confi
     }
   });
 
-  router.patch('/:id', async (req, res, next) => {
+  // PATCH 와 PUT 은 같은 핸들러 — 둘 다 부분 갱신이다(주지 않은 필드는 보존).
+  const updateHandler = async (req, res, next) => {
     try {
       const data = updateSchema.parse(req.body);
       if (!backendsStore.getBackend(req.params.id)) {
@@ -225,7 +251,9 @@ export function createBackendsRouter({ backendsStore, eventBus, webConfig, confi
       if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
       next(err);
     }
-  });
+  };
+  router.patch('/:id', updateHandler);
+  router.put('/:id', updateHandler);
 
   router.delete('/:id', async (req, res, next) => {
     try {
@@ -269,49 +297,92 @@ export function createBackendsRouter({ backendsStore, eventBus, webConfig, confi
     }
   });
 
+  // 티어 체계 통째 저장 (추가/이름변경/삭제 모두 이 한 경로). 백엔드의 tierModels
+  // 는 건드리지 않으므로, 지운 티어를 되살리면 매핑도 그대로 살아난다.
+  router.post('/tiers', async (req, res, next) => {
+    try {
+      const body = tiersSchema.parse(req.body);
+      const tiers = await backendsStore.setTiers(body);
+      if (eventBus) eventBus.publish('backends.updated', {});
+      res.json({ tiers });
+    } catch (err) {
+      if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));
+      next(err);
+    }
+  });
+
   // 모든 에이전트의 backendId 를 한 번에 바꾼다. 응답의 previous 맵을 그대로
   // restore 로 다시 POST 하면 원상복구된다 (실수했을 때의 탈출구).
   router.post('/apply-to-agents', async (req, res, next) => {
     try {
       if (!configStore) throw new HttpError(503, 'config store not available', 'NO_CONFIG_STORE');
-      const { backendId, projectId, restore } = applyToAgentsSchema.parse(req.body);
+      const { backendId, modelTier, projectId, restore, restoreTiers } = applyToAgentsSchema.parse(req.body);
       if (backendId != null && !backendsStore.getBackend(backendId)) {
         throw new HttpError(404, `Backend ${backendId} not found`, 'BACKEND_NOT_FOUND');
       }
+      // 등록되지 않은 티어를 박아 두면 런타임에 조용히 models.default 로 새어
+      // "적용했는데 아무것도 안 바뀐" 상태가 된다 → 여기서 막는다.
+      // getPublic() 은 백엔드마다 cred 파일을 뒤지므로 여기선 raw + 정규화로 충분하다.
+      const knownTiers = normalizeTiers(backendsStore.getRaw()?.tiers).order;
+      const badTier = [modelTier, ...Object.values(restoreTiers ?? {})]
+        .find((t) => t != null && !knownTiers.includes(t));
+      if (badTier) {
+        throw new HttpError(404, `Tier ${badTier} not found`, 'TIER_NOT_FOUND');
+      }
+
+      const touchBackend = backendId !== undefined || !!restore;
+      const touchTier = modelTier !== undefined || !!restoreTiers;
 
       const agents = configStore.getAgents() ?? {};
-      const targets = restore
-        ? Object.keys(restore).filter((id) => agents[id])
+      const restoreMap = restore ?? restoreTiers ?? null;
+      const targets = restoreMap
+        ? Object.keys(restoreMap).filter((id) => agents[id])
         : Object.keys(agents).filter((id) => {
             if (!projectId) return true;
             return metadataStore?.getAgent(id)?.projectId === projectId;
           });
 
       const previous = {};
+      const previousTiers = {};
       const changed = [];
       for (const id of targets) {
-        // accountId 는 backendId 의 구버전 별칭인데 계정 스케줄러에서는 오히려
-        // 우선순위가 높다. 남겨두면 backendId 만 바꿔도 실제 spawn 은 옛 계정으로
-        // 가므로, 실효값을 previous 에 담고 적용 시엔 제거한다.
-        const before = agents[id]?.backendId ?? agents[id]?.accountId ?? null;
-        const after = restore ? (restore[id] ?? null) : backendId;
-        previous[id] = before;
-        if (before === after && agents[id]?.accountId == null) continue;
+        const patch = {};
+        if (touchBackend) {
+          // accountId 는 backendId 의 구버전 별칭인데 계정 스케줄러에서는 오히려
+          // 우선순위가 높다. 남겨두면 backendId 만 바꿔도 실제 spawn 은 옛 계정으로
+          // 가므로, 실효값을 previous 에 담고 적용 시엔 제거한다.
+          const before = agents[id]?.backendId ?? agents[id]?.accountId ?? null;
+          const after = restore ? (restore[id] ?? null) : backendId;
+          previous[id] = before;
+          if (before !== after || agents[id]?.accountId != null) {
+            patch.backendId = after;
+            patch.accountId = null;
+          }
+        }
+        if (touchTier) {
+          const beforeTier = agents[id]?.modelTier ?? null;
+          const afterTier = restoreTiers ? (restoreTiers[id] ?? null) : modelTier;
+          previousTiers[id] = beforeTier;
+          if (beforeTier !== afterTier) patch.modelTier = afterTier;
+        }
+        if (Object.keys(patch).length === 0) continue;
         // config.json 은 파일 락 하나를 공유하므로 순차 갱신. 병렬로 돌리면
         // 락 재시도 폭주로 오히려 느려지고 일부가 조용히 유실된다.
-        await configStore.updateAgent(id, { backendId: after, accountId: null });
+        await configStore.updateAgent(id, patch);
         changed.push(id);
       }
 
       if (eventBus && changed.length) eventBus.publish('agents.updated', {});
       res.json({
         applied: restore ? 'restore' : (backendId ?? null),
+        appliedTier: restoreTiers ? 'restore' : (modelTier ?? null),
         scope: projectId ?? 'all',
         total: targets.length,
         // updated 는 클라이언트 토스트가 읽는 실제 변경 건수. changed 는 대상 id 목록.
         updated: changed.length,
         changed,
-        previous
+        previous,
+        previousTiers
       });
     } catch (err) {
       if (err.name === 'ZodError') return next(new HttpError(400, 'Invalid body', 'INVALID_BODY'));

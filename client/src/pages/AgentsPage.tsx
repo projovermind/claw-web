@@ -34,6 +34,7 @@ export default function AgentsPage() {
       });
       // skillIds / backendId 는 metadata overlay — create 후 PATCH 로 적용
       const patch: Record<string, unknown> = {};
+      if (form.modelTier) patch.modelTier = form.modelTier;
       if (form.skillIds.length > 0) patch.skillIds = form.skillIds;
       if (form.backend && form.backend !== 'claude') patch.backendId = form.backend;
       if (form.backendId) patch.backendId = form.backendId;
@@ -69,6 +70,7 @@ export default function AgentsPage() {
           name: form.name,
           avatar: form.avatar,
           model: form.model,
+          modelTier: form.modelTier || null,
           backendId: form.backendId || (form.backend === 'claude' ? null : form.backend),
           systemPrompt: form.systemPrompt,
           skillIds: form.skillIds,

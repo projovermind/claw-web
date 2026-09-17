@@ -90,12 +90,13 @@ export function findClaudeSessionFile(workingDir, sessionId, configDir = null) {
   return null;
 }
 
-// 봇과 동일한 MODEL_ID_MAP
+// 백엔드 models 맵이 없을 때의 최후 별칭표. 값은 backends.json 의 claude 백엔드
+// 현행 매핑과 맞춘다 — 여기가 낡으면 존재하지 않는 모델 ID 가 전선에 실린다.
 const MODEL_ID_MAP = {
-  fable: 'claude-fable-5',
-  opus: 'claude-opus-4-7',
-  sonnet: 'claude-sonnet-4-6',
-  haiku: 'claude-sonnet-4-6', // haiku banned → sonnet fallback
+  fable: 'claude-fable-5-1',
+  opus: 'claude-opus-5',
+  sonnet: 'claude-sonnet-5',
+  haiku: 'claude-haiku-4-6',
   // GLM 계열 — 그대로 통과
   'glm-5.1': 'glm-5.1',
   'glm-4-5': 'glm-4-5',
@@ -213,7 +214,7 @@ export function startClaudeRun({
     ?? backendModels?.[rawModel]
     ?? (rawModel.startsWith('glm-') ? agent.model : null)
     ?? agent.model
-    ?? 'claude-opus-4-6';
+    ?? 'claude-opus-5';
 
   // ⚠️ 핵심: --model 플래그만으로는 -p 모드에서 무시될 수 있음
   // ANTHROPIC_MODEL 환경변수로도 동시에 세팅 (봇 bot.js 라인 2408-2410)
