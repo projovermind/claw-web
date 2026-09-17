@@ -322,6 +322,12 @@ export interface BackendUsage {
   reason?: string;
   /** error/unauthorized 일 때의 HTTP 상태코드. */
   httpStatus?: number;
+  /**
+   * 이번 조회는 실패했지만 fiveHour/sevenDay 는 직전 성공 때의 수치라는 뜻.
+   * 일시적 429 등으로 행이 사라지지 않도록, 클라이언트는 흐리게 표시하고 '갱신 실패'를 알린다.
+   */
+  stale?: boolean;
+  /** 이 수치를 실제로 받아온 시각. stale 이면 마지막 성공 시각. */
   fetchedAt?: string;
 }
 

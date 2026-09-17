@@ -35,6 +35,14 @@ const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const OAUTH_BETA = 'oauth-2025-04-20';
 const DEFAULT_TTL_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 10_000;
+/** 일시적 실패는 짧게만 캐시해서 빨리 재시도한다. */
+const ERROR_TTL_MS = 10_000;
+/** Retry-After 를 존중하되 이 이상은 기다리지 않는다. */
+const MAX_RETRY_AFTER_MS = 5 * 60_000;
+/** 마지막 ok 값을 stale 로 대신 내주는 최대 기간. 넘으면 실패를 그대로 노출한다. */
+const STALE_MAX_MS = 15 * 60_000;
+/** 재시도로 회복될 수 있는 상태. 그 외(expired/no-credentials)는 실제 상태 변화다. */
+const TRANSIENT_STATUSES = new Set(['error', 'unauthorized']);
 const execFileP = promisify(execFile);
 
 /** Claude CLI 가 configDir 에 대해 사용하는 키체인 서비스명. */
@@ -210,6 +218,21 @@ function normalizeExtraUsage(e) {
 }
 
 /**
+ * 429 의 Retry-After 를 ms 로. 초 단위 숫자와 HTTP-date 를 모두 받는다.
+ * 헤더가 없거나 해석 불가면 null.
+ */
+function parseRetryAfter(res, nowMs) {
+  if (res?.status !== 429) return null;
+  const raw = res.headers?.get?.('retry-after');
+  if (!raw) return null;
+  const secs = Number(raw);
+  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
+  const at = Date.parse(raw);
+  if (Number.isNaN(at)) return null;
+  return Math.max(0, at - nowMs);
+}
+
+/**
  * 하나의 백엔드에 대한 사용량 조회 (캐시 없음).
  * @returns {Promise<object>} 정규화된 결과. 실패해도 throw 하지 않는다.
  */
@@ -316,7 +339,16 @@ export async function fetchBackendUsage(id, backend, {
     };
   }
   if (!res.ok) {
-    return { ...meta, status: 'error', account: acct, tokenSource, httpStatus: res.status, reason: `HTTP ${res.status}` };
+    const retryAfterMs = parseRetryAfter(res, now());
+    return {
+      ...meta,
+      status: 'error',
+      account: acct,
+      tokenSource,
+      httpStatus: res.status,
+      ...(retryAfterMs != null ? { retryAfterMs } : {}),
+      reason: `HTTP ${res.status}`
+    };
   }
 
   let body;
@@ -343,6 +375,10 @@ export async function fetchBackendUsage(id, backend, {
 
 /**
  * 60초 캐시 + in-flight 중복 제거를 얹은 리더.
+ *
+ * 실패는 성공과 다르게 다룬다: error/unauthorized 는 직전 ok 값을 덮어쓰지 않고
+ * stale:true 로 대신 내주며(최대 15분), 실패 자체는 10초(429 면 Retry-After)만
+ * 캐시해 빨리 재시도한다.
  */
 export function createBackendUsageReader({
   backendsStore,
@@ -350,7 +386,8 @@ export function createBackendUsageReader({
   now = () => Date.now(),
   ...deps
 } = {}) {
-  const cache = new Map();   // id -> { at, value }
+  const cache = new Map();   // id -> { at, value, ttl }
+  const lastOk = new Map();  // id -> { at, value } — 실패 시 대신 내줄 직전 성공값
   const inflight = new Map(); // id -> Promise
 
   /**
@@ -380,19 +417,57 @@ export function createBackendUsageReader({
     return { getPool, credsCache };
   }
 
+  /**
+   * 일시적 실패는 직전 ok 값을 stale 로 대신 내준다. 그래야 API 가 한 번 흔들릴 때
+   * UI 에서 한도 게이지가 통째로 사라지지 않는다.
+   */
+  function staleOr(id, failure) {
+    const prev = lastOk.get(id);
+    if (!prev) return failure;
+    const age = now() - prev.at;
+    if (age > STALE_MAX_MS) {
+      lastOk.delete(id);
+      return failure;
+    }
+    return {
+      ...prev.value,
+      stale: true,
+      staleAgeMs: age,
+      staleStatus: failure.status,
+      staleReason: failure.reason ?? null
+    };
+  }
+
+  /** 결과를 캐시에 반영하고, 호출자에게 실제로 내줄 값을 돌려준다. */
+  function record(id, value) {
+    const at = now();
+    if (value.status === 'ok') {
+      lastOk.set(id, { at, value });
+      cache.set(id, { at, value, ttl: ttlMs });
+      return value;
+    }
+    if (!TRANSIENT_STATUSES.has(value.status)) {
+      // 로그아웃/만료 같은 실제 상태 변화 — 옛 성공값을 되살리면 안 된다.
+      lastOk.delete(id);
+      cache.set(id, { at, value, ttl: ttlMs });
+      return value;
+    }
+    const served = staleOr(id, value);
+    const ttl = Math.min(Math.max(value.retryAfterMs ?? ERROR_TTL_MS, ERROR_TTL_MS), MAX_RETRY_AFTER_MS);
+    cache.set(id, { at, value: served, ttl });
+    return served;
+  }
+
   async function getOne(id, backend, { force = false, round } = {}) {
     if (!force) {
       const hit = cache.get(id);
-      if (hit && now() - hit.at < ttlMs) return { ...hit.value, cached: true };
+      if (hit && now() - hit.at < hit.ttl) return { ...hit.value, cached: true };
     }
     if (inflight.has(id)) return inflight.get(id);
 
     const { getPool, credsCache } = round ?? newRound();
     const p = fetchBackendUsage(id, backend, { ...deps, now, getPool, credsCache })
-      .then((value) => {
-        cache.set(id, { at: now(), value });
-        return value;
-      })
+      .then((value) => record(id, value))
       .finally(() => inflight.delete(id));
     inflight.set(id, p);
     return p;
@@ -410,6 +485,7 @@ export function createBackendUsageReader({
     },
     clearCache() {
       cache.clear();
+      lastOk.clear();
     }
   };
 }

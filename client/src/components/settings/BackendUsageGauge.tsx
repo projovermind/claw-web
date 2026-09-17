@@ -34,6 +34,19 @@ export function sharedAccountCounts(map: Record<string, BackendUsage> | null | u
   return out;
 }
 
+/** 창 하나라도 숫자 utilization 이 있으면 true — 그릴 수치가 남아 있다는 뜻. */
+export function hasUsageWindows(u?: BackendUsage | null): boolean {
+  return typeof u?.fiveHour?.utilization === 'number' || typeof u?.sevenDay?.utilization === 'number';
+}
+
+/**
+ * 조회는 실패했지만 직전 수치가 남아 있는 상태(서버가 stale:true 로 내려준다).
+ * 일시적 429 로 게이지가 통째로 사라지는 걸 막기 위해, 숨기지 않고 흐리게 표시한다.
+ */
+export function isStaleUsage(u?: BackendUsage | null): boolean {
+  return u?.stale === true && hasUsageWindows(u);
+}
+
 /** 사용률(0~100)에 따른 바 색. 70% 주황, 90% 빨강. */
 function barColor(pct: number): string {
   if (pct >= 90) return 'bg-red-500';
@@ -113,8 +126,13 @@ export function BackendUsageGauge({ usage, sharedCount }: { usage?: BackendUsage
   const t = useT();
   if (!usage) return null;
 
-  // unsupported = 한도 개념 없는 백엔드, error = 조회 실패 — 둘 다 조용히 숨김
-  if (usage.status === 'unsupported' || usage.status === 'error') return null;
+  // 직전 성공 수치가 남아 있으면 조회 실패라도 계속 보여준다(흐리게).
+  const stale = isStaleUsage(usage);
+
+  // unsupported = 한도 개념 없는 백엔드, error = 조회 실패 — 둘 다 조용히 숨김.
+  // 단 error 라도 직전 수치가 있으면 아래 게이지로 내려보낸다.
+  if (usage.status === 'unsupported') return null;
+  if (usage.status === 'error' && !stale) return null;
 
   // 같은 계정을 쓰면 한도가 합산되므로, 게이지든 뱃지든 옆에 같이 붙인다.
   const shared = usage.tokenSource === 'shared' || (sharedCount ?? 0) >= 2;
@@ -137,11 +155,15 @@ export function BackendUsageGauge({ usage, sharedCount }: { usage?: BackendUsage
     );
   }
 
-  if (usage.status !== 'ok') return null;
+  if (usage.status !== 'ok' && !stale) return null;
   if (!usage.fiveHour && !usage.sevenDay) return null;
 
+  const staleTip = stale
+    ? `${t('backendUsage.stale')}${usage.fetchedAt ? ` (${new Date(usage.fetchedAt).toLocaleString()})` : ''}`
+    : undefined;
+
   return withShared(
-    <div className="space-y-1">
+    <div className={stale ? 'space-y-1 opacity-50' : 'space-y-1'} title={staleTip}>
       <UsageBar label={t('backendUsage.fiveHour')} win={usage.fiveHour} />
       <UsageBar label={t('backendUsage.sevenDay')} win={usage.sevenDay} />
     </div>

@@ -228,6 +228,121 @@ describe('createBackendUsageReader 캐시', () => {
   });
 });
 
+describe('createBackendUsageReader 실패 폴백', () => {
+  let configDir;
+  beforeEach(() => { configDir = makeConfigDir(liveCreds); });
+  afterEach(() => { fs.rmSync(configDir, { recursive: true, force: true }); });
+
+  const store = (backends) => ({ getRaw: () => ({ backends }) });
+  const noKeychain = () => vi.fn(async () => { throw new Error('not found'); });
+
+  /** 첫 호출은 성공, 그 뒤부터는 주어진 실패 응답. */
+  function okThen(fail) {
+    let n = 0;
+    return vi.fn(async () => (n++ === 0 ? { ok: true, status: 200, json: async () => API_BODY } : fail()));
+  }
+
+  const httpFail = (status, headers) => () => ({
+    ok: false,
+    status,
+    ...(headers ? { headers: new Headers(headers) } : {})
+  });
+
+  function reader(fetchImpl, nowFn) {
+    return createBackendUsageReader({
+      backendsStore: store({ acc: { type: 'claude-cli', configDir } }),
+      fetchImpl, execFileAsync: noKeychain(), now: nowFn
+    });
+  }
+
+  it('에러 응답이 직전 ok 값을 덮어쓰지 않고 stale 로 유지된다', async () => {
+    let t = 1_000_000;
+    const fetchImpl = okThen(httpFail(500));
+    const r = reader(fetchImpl, () => t);
+
+    expect((await r.getAll()).acc.fiveHour.utilization).toBe(74);
+
+    t += 61_000;
+    const after = (await r.getAll()).acc;
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(after.status).toBe('ok');
+    expect(after.stale).toBe(true);
+    expect(after.staleStatus).toBe('error');
+    expect(after.fiveHour.utilization).toBe(74);
+  });
+
+  it('unauthorized 도 stale 로 가려진다', async () => {
+    let t = 1_000_000;
+    const r = reader(okThen(httpFail(401)), () => t);
+    await r.getAll();
+    t += 61_000;
+    const after = (await r.getAll()).acc;
+    expect(after.status).toBe('ok');
+    expect(after.staleStatus).toBe('unauthorized');
+  });
+
+  it('실패는 10초만 캐시해서 빨리 재시도한다', async () => {
+    let t = 1_000_000;
+    const fetchImpl = okThen(httpFail(500));
+    const r = reader(fetchImpl, () => t);
+    await r.getAll();
+
+    t += 61_000;
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    t += 9_000; // 아직 에러 ttl 안
+    expect((await r.getAll()).acc.cached).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    t += 2_000; // 10초 초과 → 재시도
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('429 는 Retry-After 만큼 기다린다', async () => {
+    let t = 1_000_000;
+    const fetchImpl = okThen(httpFail(429, { 'retry-after': '30' }));
+    const r = reader(fetchImpl, () => t);
+    await r.getAll();
+
+    t += 61_000;
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    t += 20_000; // Retry-After 30초 안 → 재시도하지 않는다
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    t += 11_000;
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('stale 이 15분을 넘으면 실패를 그대로 노출한다', async () => {
+    let t = 1_000_000;
+    const r = reader(okThen(httpFail(500)), () => t);
+    await r.getAll();
+
+    t += 16 * 60_000;
+    const after = (await r.getAll()).acc;
+    expect(after.status).toBe('error');
+    expect(after.stale).toBeUndefined();
+  });
+
+  it('로그아웃(no-credentials) 은 stale 로 가리지 않는다', async () => {
+    let t = 1_000_000;
+    const r = reader(okFetch(), () => t);
+    expect((await r.getAll()).acc.status).toBe('ok');
+
+    fs.rmSync(path.join(configDir, '.credentials.json'));
+    t += 61_000;
+    const after = (await r.getAll()).acc;
+    expect(after.status).toBe('no-credentials');
+    expect(after.stale).toBeUndefined();
+  });
+});
+
 describe('계정 공유 토큰 (accountUuid)', () => {
   const UUID = 'fbbcae4a-50f4-42da-8c09-869be421d0d0';
   const OTHER_UUID = '11111111-2222-3333-4444-555555555555';

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { BackendUsage, BackendUsageWindow } from '../../lib/types';
 import { useT } from '../../lib/i18n';
-import { useBackendUsage } from '../settings/BackendUsageGauge';
+import { hasUsageWindows, isStaleUsage, useBackendUsage } from '../settings/BackendUsageGauge';
 
 const SIZE = 18;
 const STROKE = 2.5;
@@ -73,7 +73,8 @@ function toSlot(
 
 /**
  * 사이드바 하단 구분선 위의 백엔드별 잔여 한도.
- * status==='ok' 인 백엔드마다 한 줄 — 왼쪽 이름, 오른쪽에 [5시간 도넛+%] [주간 도넛+%].
+ * 수치가 있는 백엔드마다 한 줄 — 왼쪽 이름, 오른쪽에 [5시간 도넛+%] [주간 도넛+%].
+ * 조회가 실패해도 직전 수치가 있으면 흐리게 유지하고 툴팁에 '갱신 실패'를 붙인다.
  * 접힌 상태에서는 도넛만 가로로 붙여 그린다.
  *
  * 툴팁은 native title 대신 직접 그린다. 사이드바 래퍼가 overflow-hidden 이라
@@ -87,11 +88,15 @@ export default function SidebarUsage({ collapsed }: { collapsed: boolean }) {
 
   if (!usage) return null;
 
+  // status==='ok' 이거나, 실패했어도 직전 수치(stale)가 남아 있으면 계속 보여준다.
+  // 성공 이력이 아예 없는 백엔드만 숨긴다 — 일시적 429 에 행이 사라지지 않도록.
   const rows = Object.entries(usage)
-    .filter((e): e is [string, BackendUsage] => e[1]?.status === 'ok')
+    .filter((e): e is [string, BackendUsage] =>
+      !!e[1] && hasUsageWindows(e[1]) && (e[1].status === 'ok' || isStaleUsage(e[1])))
     .map(([id, u]) => ({
       id,
       label: backendsQ.data?.backends?.[id]?.label ?? id,
+      stale: isStaleUsage(u),
       slots: [toSlot('backendUsage.fiveHourLimit', u.fiveHour, t), toSlot('backendUsage.sevenDayLimit', u.sevenDay, t)]
         .filter((s): s is Slot => s !== null)
     }))
@@ -108,7 +113,10 @@ export default function SidebarUsage({ collapsed }: { collapsed: boolean }) {
   return (
     <div className={collapsed ? 'px-1 pb-2 space-y-1.5' : 'px-2 pb-2 space-y-1'}>
       {rows.map((r) => (
-        <div key={r.id} className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2'}`}>
+        <div
+          key={r.id}
+          className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2'}${r.stale ? ' opacity-50' : ''}`}
+        >
           {!collapsed && (
             <span className="min-w-0 truncate whitespace-nowrap text-[0.6875rem] text-zinc-500">{r.label}</span>
           )}
@@ -117,7 +125,9 @@ export default function SidebarUsage({ collapsed }: { collapsed: boolean }) {
               <div
                 key={i}
                 className="flex items-center gap-1 cursor-default"
-                onMouseEnter={(e) => showTip(e, `${r.label} — ${s.tip}`)}
+                onMouseEnter={(e) =>
+                  showTip(e, `${r.label} — ${s.tip}${r.stale ? ` · ${t('backendUsage.stale')}` : ''}`)
+                }
                 onMouseLeave={() => setTip(null)}
               >
                 <Donut pct={s.pct} />
