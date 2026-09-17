@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Plus, X } from 'lucide-react';
 import { useChatStore, type PaneCount, type Workspace } from '../../store/chat-store';
+import DelegationIndicator from '../layout/DelegationStatusBar';
 
 /**
  * 실제 레이아웃 배치 그대로를 그려주는 미니 SVG 아이콘.
@@ -97,6 +98,9 @@ export default function SplitToolbar() {
 
   return (
     <div className="hidden lg:flex items-center gap-1 px-2 py-1 border-b border-zinc-800 bg-zinc-950/60">
+      {/* 위임 표시등 */}
+      <DelegationIndicator />
+
       {/* Workspace tabs */}
       <div className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto">
         {workspaces.map((ws) => (

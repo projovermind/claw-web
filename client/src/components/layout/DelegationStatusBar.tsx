@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDelegationStore, type DelegationEntry } from '../../store/delegation-store';
 import { api } from '../../lib/api';
 
@@ -6,118 +6,13 @@ const REMOVE_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 30_000;   // 30초마다 세션 상태 확인
 const STUCK_THRESHOLD_MS = 10 * 60 * 1000; // 활동 신호 무변화 10분 → stuck
 
-function DelegationItem({ entry }: { entry: DelegationEntry }) {
-  const fail = useDelegationStore((s) => s.fail);
-  const isDone = entry.status === 'completed' || entry.status === 'failed';
+const isDoneEntry = (d: DelegationEntry) => d.status === 'completed' || d.status === 'failed';
 
-  // 마지막으로 확인된 활동 신호 + 그 시각의 실제 Date.now()
-  const lastActivitySignal = useRef<string | null>(null);
-  const lastChangedAt = useRef<number>(Date.now());
-  const [isStuck, setIsStuck] = useState(false);
-
-  useEffect(() => {
-    if (isDone) {
-      setIsStuck(false);
-      return;
-    }
-
-    const check = async () => {
-      try {
-        const session = await api.session(entry.targetSessionId);
-
-        // 세션이 더 이상 실행 중이 아니면 stuck 해제
-        if (!session.isRunning) {
-          setIsStuck(false);
-          return;
-        }
-
-        // 툴 실행만 하는 긴 턴은 updatedAt이 멈추므로 러너 하트비트를 우선 사용
-        const signal = session.lastActivityAt ?? session.updatedAt ?? null;
-        if (signal !== lastActivitySignal.current) {
-          lastActivitySignal.current = signal;
-          lastChangedAt.current = Date.now();
-          setIsStuck(false);
-        } else {
-          // 활동 신호 무변화 — 경과 시간 체크
-          const silentMs = Date.now() - lastChangedAt.current;
-          setIsStuck(silentMs > STUCK_THRESHOLD_MS);
-        }
-      } catch {
-        // 세션 조회 실패 시 무시
-      }
-    };
-
-    check(); // 즉시 1회
-    const t = setInterval(check, POLL_INTERVAL_MS);
-    return () => clearInterval(t);
-  }, [isDone, entry.targetSessionId]);
-
-  // 보고는 서버 abortChat 이 플래너에게 자동 전송한다
-  const handleStop = async () => {
-    if (!confirm(`'${entry.targetAgentId}' 워커를 중단하고 지금까지의 결과를 플래너에게 보고할까요?`)) return;
-    try { await api.abortChat(entry.targetSessionId); } catch { /* 이미 종료 */ }
-    fail(entry.id);
-  };
-
-  return (
-    <div
-      className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium transition-all duration-300 ${
-        isDone
-          ? 'bg-zinc-800/60 text-zinc-500'
-          : isStuck
-          ? 'bg-amber-900/40 border border-amber-700/50 text-amber-200'
-          : 'bg-zinc-800 text-zinc-200'
-      }`}
-    >
-      {/* 상태 아이콘 */}
-      {isDone ? (
-        <span className={entry.status === 'failed' ? 'text-red-400' : 'text-emerald-400'}>
-          {entry.status === 'failed' ? '✕' : '✓'}
-        </span>
-      ) : isStuck ? (
-        <span className="text-amber-400">⚠</span>
-      ) : (
-        <span className="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
-      )}
-
-      {/* 에이전트명 */}
-      <span className={`font-semibold truncate max-w-[80px] ${isStuck ? 'text-amber-300' : 'text-blue-300'}`}>
-        {entry.targetAgentId}
-      </span>
-
-      {/* 태스크 요약 */}
-      <span className="text-zinc-400 truncate max-w-[160px]">
-        {entry.task.slice(0, 40)}{entry.task.length > 40 ? '…' : ''}
-      </span>
-
-      {/* 뱃지 or stuck 버튼 */}
-      {isDone ? (
-        <span
-          className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${
-            entry.status === 'failed'
-              ? 'bg-red-900/60 text-red-400'
-              : 'bg-emerald-900/60 text-emerald-400'
-          }`}
-        >
-          {entry.status === 'failed' ? '실패' : '완료'}
-        </span>
-      ) : isStuck ? (
-        <button
-          onClick={handleStop}
-          className="pointer-events-auto px-2 py-0.5 rounded text-[10px] font-bold bg-amber-700/60 hover:bg-amber-600/60 text-amber-200 whitespace-nowrap"
-        >
-          중단
-        </button>
-      ) : (
-        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-blue-900/60 text-blue-300">
-          진행 중
-        </span>
-      )}
-    </div>
-  );
-}
-
-export default function DelegationStatusBar() {
+/**
+ * 위임 목록 수명 관리 — 새로고침 시 서버 복원 + 완료 3초 후 제거.
+ * 앱에서 한 번만 호출할 것 (ChatPage).
+ */
+export function useDelegationLifecycle() {
   const delegations = useDelegationStore((s) => s.delegations);
   const hydrate = useDelegationStore((s) => s.hydrate);
   const removeRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -130,7 +25,7 @@ export default function DelegationStatusBar() {
   useEffect(() => {
     const timers = removeRef.current;
     for (const d of delegations) {
-      if ((d.status === 'completed' || d.status === 'failed') && !timers.has(d.id)) {
+      if (isDoneEntry(d) && !timers.has(d.id)) {
         const t = setTimeout(() => {
           useDelegationStore.setState((s) => ({
             delegations: s.delegations.filter((x) => x.id !== d.id)
@@ -149,28 +44,211 @@ export default function DelegationStatusBar() {
       }
     };
   }, [delegations]);
+}
+
+/**
+ * 진행 중인 위임들의 활동 신호를 폴링해 stuck 여부를 판정한다.
+ * 팝오버가 닫혀 있어도 계속 돌아야 하므로 목록이 아니라 인디케이터에서 관리한다.
+ */
+function useStuckWatcher(delegations: DelegationEntry[]) {
+  const [stuckIds, setStuckIds] = useState<Set<string>>(() => new Set());
+  // id → { 마지막 활동 신호, 그 신호를 처음 본 시각 }
+  const signals = useRef<Map<string, { signal: string | null; changedAt: number }>>(new Map());
+  const listRef = useRef(delegations);
+  listRef.current = delegations;
+
+  const activeKey = delegations
+    .filter((d) => !isDoneEntry(d))
+    .map((d) => `${d.id}:${d.targetSessionId}`)
+    .join(',');
+
+  useEffect(() => {
+    if (!activeKey) {
+      signals.current.clear();
+      setStuckIds(new Set());
+      return;
+    }
+
+    const check = async () => {
+      const entries = listRef.current.filter((d) => !isDoneEntry(d));
+      const alive = new Set(entries.map((e) => e.id));
+      for (const id of signals.current.keys()) {
+        if (!alive.has(id)) signals.current.delete(id);
+      }
+
+      const next = new Set<string>();
+      await Promise.all(entries.map(async (entry) => {
+        try {
+          const session = await api.session(entry.targetSessionId);
+
+          // 세션이 더 이상 실행 중이 아니면 stuck 해제
+          if (!session.isRunning) {
+            signals.current.delete(entry.id);
+            return;
+          }
+
+          // 툴 실행만 하는 긴 턴은 updatedAt이 멈추므로 러너 하트비트를 우선 사용
+          const signal = session.lastActivityAt ?? session.updatedAt ?? null;
+          const prev = signals.current.get(entry.id);
+          if (!prev || prev.signal !== signal) {
+            signals.current.set(entry.id, { signal, changedAt: Date.now() });
+          } else if (Date.now() - prev.changedAt > STUCK_THRESHOLD_MS) {
+            // 활동 신호 무변화 — 경과 시간 초과
+            next.add(entry.id);
+          }
+        } catch {
+          // 세션 조회 실패 시 무시
+        }
+      }));
+      setStuckIds(next);
+    };
+
+    check(); // 즉시 1회
+    const t = setInterval(check, POLL_INTERVAL_MS);
+    return () => clearInterval(t);
+  }, [activeKey]);
+
+  return stuckIds;
+}
+
+function DelegationItem({ entry, isStuck }: { entry: DelegationEntry; isStuck: boolean }) {
+  const fail = useDelegationStore((s) => s.fail);
+  const isDone = isDoneEntry(entry);
+
+  // 보고는 서버 abortChat 이 플래너에게 자동 전송한다
+  const handleStop = async () => {
+    if (!confirm(`'${entry.targetAgentId}' 워커를 중단하고 지금까지의 결과를 플래너에게 보고할까요?`)) return;
+    try { await api.abortChat(entry.targetSessionId); } catch { /* 이미 종료 */ }
+    fail(entry.id);
+  };
+
+  return (
+    <div
+      className={`flex items-center gap-2 px-3 py-2 text-xs font-medium transition-colors duration-300 ${
+        isDone
+          ? 'text-zinc-500'
+          : isStuck
+          ? 'bg-amber-900/30 text-amber-200'
+          : 'text-zinc-200'
+      }`}
+    >
+      {/* 상태 아이콘 */}
+      {isDone ? (
+        <span className={entry.status === 'failed' ? 'text-red-400' : 'text-emerald-400'}>
+          {entry.status === 'failed' ? '✕' : '✓'}
+        </span>
+      ) : isStuck ? (
+        <span className="text-amber-400">⚠</span>
+      ) : (
+        <span className="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin shrink-0" />
+      )}
+
+      {/* 에이전트명 */}
+      <span className={`font-semibold truncate max-w-[100px] ${isStuck ? 'text-amber-300' : 'text-blue-300'}`}>
+        {entry.targetAgentId}
+      </span>
+
+      {/* 태스크 요약 */}
+      <span className="text-zinc-400 truncate flex-1 min-w-0">
+        {entry.task.slice(0, 60)}{entry.task.length > 60 ? '…' : ''}
+      </span>
+
+      {/* 뱃지 or stuck 버튼 */}
+      {isDone ? (
+        <span
+          className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${
+            entry.status === 'failed'
+              ? 'bg-red-900/60 text-red-400'
+              : 'bg-emerald-900/60 text-emerald-400'
+          }`}
+        >
+          {entry.status === 'failed' ? '실패' : '완료'}
+        </span>
+      ) : isStuck ? (
+        <button
+          onClick={handleStop}
+          className="shrink-0 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-700/60 hover:bg-amber-600/60 text-amber-200 whitespace-nowrap"
+        >
+          중단
+        </button>
+      ) : (
+        <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-blue-900/60 text-blue-300">
+          진행 중
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 파란 점멸등 + 건수 뱃지. 클릭하면 위임 목록 팝오버가 열린다.
+ * 위임이 없으면 아무것도 그리지 않는다.
+ */
+export default function DelegationIndicator({ align = 'left' }: { align?: 'left' | 'right' }) {
+  const delegations = useDelegationStore((s) => s.delegations);
+  const stuckIds = useStuckWatcher(delegations);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+
+  const activeCount = useMemo(
+    () => delegations.filter((d) => !isDoneEntry(d)).length,
+    [delegations]
+  );
+  const hasStuck = stuckIds.size > 0;
+
+  // 위임이 모두 사라지면 팝오버도 닫는다
+  useEffect(() => {
+    if (delegations.length === 0) setOpen(false);
+  }, [delegations.length]);
 
   if (delegations.length === 0) return null;
 
-  const active = delegations.filter(d => d.status !== 'completed' && d.status !== 'failed');
-  const primary = active[0] ?? delegations[0];
-  const mobileExtra = delegations.length - 1;
+  const allDone = activeCount === 0;
 
   return (
-    <div className="absolute top-3 right-3 z-20 flex flex-wrap gap-2 justify-end max-w-[60%] pointer-events-none">
-      <div className="flex items-center gap-2 lg:hidden">
-        <DelegationItem entry={primary} />
-        {mobileExtra > 0 && (
-          <span className="px-2 py-1 rounded-full text-[10px] font-bold bg-zinc-800 text-zinc-400">
-            외 {mobileExtra}건
-          </span>
-        )}
-      </div>
-      <div className="hidden lg:flex flex-wrap gap-2 justify-end">
-        {delegations.map((entry) => (
-          <DelegationItem key={entry.id} entry={entry} />
-        ))}
-      </div>
+    <div ref={ref} className="relative shrink-0">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title={`위임 ${activeCount}건 진행 중${hasStuck ? ' — 응답 없는 워커 있음' : ''}`}
+        className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[11px] font-semibold transition-colors ${
+          hasStuck
+            ? 'bg-amber-900/40 border-amber-700/60 text-amber-200 hover:bg-amber-900/60'
+            : allDone
+            ? 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:bg-zinc-800'
+            : 'bg-blue-950/50 border-blue-800/60 text-blue-200 hover:bg-blue-900/50'
+        }`}
+      >
+        <span
+          className={`w-2 h-2 rounded-full shrink-0 ${
+            hasStuck ? 'bg-amber-400 animate-pulse' : allDone ? 'bg-emerald-400' : 'bg-blue-400 animate-pulse'
+          }`}
+        />
+        <span className="font-mono">{activeCount || delegations.length}</span>
+      </button>
+
+      {open && (
+        <div
+          className={`absolute top-full mt-1 z-50 w-[min(22rem,calc(100vw-1.5rem))] max-h-80 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl divide-y divide-zinc-800 ${
+            align === 'right' ? 'right-0' : 'left-0'
+          }`}
+        >
+          <div className="px-3 py-1.5 text-[11px] text-zinc-500 sticky top-0 bg-zinc-900">
+            위임 {delegations.length}건 · 진행 중 {activeCount}건
+          </div>
+          {delegations.map((entry) => (
+            <DelegationItem key={entry.id} entry={entry} isStuck={stuckIds.has(entry.id)} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

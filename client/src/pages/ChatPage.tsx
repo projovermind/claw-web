@@ -18,7 +18,7 @@ import { resolveContextWindow } from '../lib/context-window';
 import TodoWidget from '../components/chat/TodoWidget';
 import { ChatSidebar } from '../components/chat/ChatSidebar';
 import { FrameworkActions } from '../components/chat/FrameworkActions';
-import DelegationStatusBar from '../components/layout/DelegationStatusBar';
+import DelegationIndicator, { useDelegationLifecycle } from '../components/layout/DelegationStatusBar';
 import SplitToolbar from '../components/chat/SplitToolbar';
 import WorkspaceGrid from '../components/chat/WorkspaceGrid';
 import ChatPane from '../components/chat/ChatPane';
@@ -79,6 +79,9 @@ export default function ChatPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  // 위임 목록 수명 관리 (서버 복원 + 완료 3초 후 제거) — 앱에서 여기 한 곳만
+  useDelegationLifecycle();
 
   const agentsQ = useQuery({ queryKey: ['agents'], queryFn: api.agents });
   const projectsQ = useQuery({ queryKey: ['projects'], queryFn: api.projects });
@@ -458,7 +461,6 @@ export default function ChatPage() {
 
           {/* Workspace grid */}
           <div className="relative flex-1 min-h-0 flex flex-col">
-            <DelegationStatusBar />
             <div className="flex-1 min-h-0">
               {activeWs && (
                 <WorkspaceGrid
@@ -842,6 +844,8 @@ function MobileHeader({
           </div>
         )}
       </div>
+
+      <DelegationIndicator align="right" />
 
       {currentSessionId && (
         <button
