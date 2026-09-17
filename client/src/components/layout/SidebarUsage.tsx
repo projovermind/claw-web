@@ -1,3 +1,7 @@
+import { useState } from 'react';
+import { createPortal } from 'react-dom';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../lib/api';
 import type { BackendUsage, BackendUsageWindow } from '../../lib/types';
 import { useT } from '../../lib/i18n';
 import { useBackendUsage } from '../settings/BackendUsageGauge';
@@ -52,6 +56,7 @@ function resetAtLabel(resetsAt: string | null | undefined): string | null {
 }
 
 type Slot = { pct: number; tip: string };
+type Tip = { text: string; x: number; y: number };
 
 /** 창 하나 → 도넛 1개분. utilization 이 없으면 null(=그 쌍 생략). */
 function toSlot(
@@ -66,23 +71,19 @@ function toSlot(
   return { pct, tip };
 }
 
-function Pair({ slot }: { slot: Slot }) {
-  return (
-    <div className="flex items-center gap-1 cursor-default" title={slot.tip}>
-      <Donut pct={slot.pct} />
-      <span className="font-mono text-[0.6875rem] text-zinc-400">{slot.pct}%</span>
-    </div>
-  );
-}
-
 /**
  * 사이드바 하단 구분선 위의 백엔드별 잔여 한도.
- * status==='ok' 인 백엔드마다 한 줄, 한 줄에 [5시간 도넛+%] [주간 도넛+%].
+ * status==='ok' 인 백엔드마다 한 줄 — 왼쪽 이름, 오른쪽에 [5시간 도넛+%] [주간 도넛+%].
  * 접힌 상태에서는 도넛만 가로로 붙여 그린다.
+ *
+ * 툴팁은 native title 대신 직접 그린다. 사이드바 래퍼가 overflow-hidden 이라
+ * absolute 패널은 잘리므로, body 로 portal 해서 fixed 좌표로 띄운다.
  */
 export default function SidebarUsage({ collapsed }: { collapsed: boolean }) {
   const t = useT();
   const usage = useBackendUsage();
+  const backendsQ = useQuery({ queryKey: ['backends'], queryFn: api.backends, staleTime: 60_000 });
+  const [tip, setTip] = useState<Tip | null>(null);
 
   if (!usage) return null;
 
@@ -90,6 +91,7 @@ export default function SidebarUsage({ collapsed }: { collapsed: boolean }) {
     .filter((e): e is [string, BackendUsage] => e[1]?.status === 'ok')
     .map(([id, u]) => ({
       id,
+      label: backendsQ.data?.backends?.[id]?.label ?? id,
       slots: [toSlot('backendUsage.fiveHourLimit', u.fiveHour, t), toSlot('backendUsage.sevenDayLimit', u.sevenDay, t)]
         .filter((s): s is Slot => s !== null)
     }))
@@ -97,21 +99,44 @@ export default function SidebarUsage({ collapsed }: { collapsed: boolean }) {
 
   if (rows.length === 0) return null;
 
+  // 행 오른쪽 8px 지점, 세로 중앙에 패널을 건다.
+  const showTip = (e: React.MouseEvent<HTMLElement>, text: string) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setTip({ text, x: r.right + 8, y: r.top + r.height / 2 });
+  };
+
   return (
     <div className={collapsed ? 'px-1 pb-2 space-y-1.5' : 'px-2 pb-2 space-y-1'}>
       {rows.map((r) => (
-        <div key={r.id} className={`flex items-center ${collapsed ? 'justify-center gap-1' : 'gap-3'}`}>
-          {r.slots.map((s, i) =>
-            collapsed ? (
-              <div key={i} title={s.tip} className="cursor-default">
-                <Donut pct={s.pct} />
-              </div>
-            ) : (
-              <Pair key={i} slot={s} />
-            )
+        <div key={r.id} className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2'}`}>
+          {!collapsed && (
+            <span className="min-w-0 truncate whitespace-nowrap text-[0.6875rem] text-zinc-500">{r.label}</span>
           )}
+          <div className={`flex items-center ${collapsed ? 'gap-1' : 'ml-auto gap-3'}`}>
+            {r.slots.map((s, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-1 cursor-default"
+                onMouseEnter={(e) => showTip(e, `${r.label} — ${s.tip}`)}
+                onMouseLeave={() => setTip(null)}
+              >
+                <Donut pct={s.pct} />
+                {!collapsed && <span className="font-mono text-[0.6875rem] text-zinc-400">{s.pct}%</span>}
+              </div>
+            ))}
+          </div>
         </div>
       ))}
+      {tip &&
+        createPortal(
+          <div
+            className="fixed z-50 -translate-y-1/2 pointer-events-none rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-[11px] text-zinc-200 whitespace-nowrap shadow-lg"
+            style={{ left: tip.x, top: tip.y }}
+          >
+            {tip.text}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }
