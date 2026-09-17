@@ -13,7 +13,17 @@ set -uo pipefail
 
 REPO="${CLAW_WEB_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PORT=20128
-LABEL="cc.subinggrae.omniroute"
+# 표준 레이블은 com.claw-web.omniroute. 다만 구버전 설치본이 cc.subinggrae.omniroute 로
+# 이미 등록돼 있으면 그 레이블을 그대로 쓴다 — 바꾸면 같은 게이트웨이가 두 번 등록된다.
+# 구 → 표준 리네임은 scripts/migrate-launchagent-labels.sh 참고.
+LABEL="${CLAW_WEB_OMNIROUTE_LABEL:-}"
+if [ -z "$LABEL" ]; then
+  if [ -f "$HOME/Library/LaunchAgents/cc.subinggrae.omniroute.plist" ]; then
+    LABEL="cc.subinggrae.omniroute"
+  else
+    LABEL="com.claw-web.omniroute"
+  fi
+fi
 SERVICE="omniroute"
 ENVF="$HOME/.omniroute/.env"
 LOGDIR="$HOME/Library/Logs/omniroute"

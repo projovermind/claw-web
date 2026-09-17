@@ -21,8 +21,22 @@ LOG_DIR="$REPO_DIR/data/user/logs"
 LOG="$LOG_DIR/self-update.log"
 TRACKER="$LOG_DIR/running-processes.json"
 SERVICE="claw-web"
-MAC_LABEL="cc.subinggrae.claw-web"          # 맥 LaunchAgent (서버 본체)
-MAC_UPDATE_LABEL="cc.subinggrae.claw-web-update"
+
+# ── 맥 LaunchAgent 레이블 (하드코딩 금지) ─────────────────
+# 표준 레이블은 com.claw-web.* 다. 다만 구버전 개인 설치본은 cc.subinggrae.* 로
+# 깔려 있어서, 하드 치환하면 그 기계들의 재시작/자동업데이트가 통째로 깨진다.
+# 그래서 "깔려 있는 것을 그대로 쓰고, 아무것도 없으면 표준" 순으로 고른다.
+#   우선순위: 환경변수 > 표준 plist 존재 > 구 plist 존재 > 표준(기본)
+# 구 → 표준 리네임은 scripts/migrate-launchagent-labels.sh 참고.
+detect_label() { # detect_label <표준레이블> <구레이블> [환경변수값]
+  local std="$1" legacy="$2" override="${3:-}" dir="$HOME/Library/LaunchAgents"
+  if [ -n "$override" ]; then echo "$override"; return 0; fi
+  if [ -f "$dir/$std.plist" ]; then echo "$std"; return 0; fi
+  if [ -f "$dir/$legacy.plist" ]; then echo "$legacy"; return 0; fi
+  echo "$std"
+}
+MAC_LABEL="$(detect_label com.claw-web.server cc.subinggrae.claw-web "${CLAW_WEB_LABEL:-}")"
+MAC_UPDATE_LABEL="$(detect_label com.claw-web.update cc.subinggrae.claw-web-update "${CLAW_WEB_UPDATE_LABEL:-}")"
 CHECK_ONLY=0
 [[ "${1:-}" == "--check" ]] && CHECK_ONLY=1
 

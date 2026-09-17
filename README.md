@@ -160,15 +160,18 @@ CLI 출력에서 rate limit 문구(`usage limit`, `try again in N hours`, `5-hou
 
 | 항목 | 값 |
 |------|-----|
-| 앱 LaunchAgent | `cc.subinggrae.claw-web` |
-| 터널 LaunchAgent | `cc.subinggrae.cloudflared` (named tunnel `claw-web`, HTTP/2 강제) |
+| 앱 LaunchAgent | `com.claw-web.server` |
+| 터널 LaunchAgent | `com.claw-web.tunnel` (named tunnel `claw-web`, HTTP/2 강제) |
 | 앱 로그 | `~/Library/Logs/claw-web/` |
 | 터널 로그 | `~/Library/Logs/cloudflared/` |
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/cc.subinggrae.claw-web    # 재시작
-npm run soft-restart                                          # 진행 중 턴을 죽이지 않는 재기동
+launchctl kickstart -k gui/$(id -u)/com.claw-web.server    # 재시작
+npm run soft-restart                                      # 진행 중 턴을 죽이지 않는 재기동
 ```
+
+> 구버전 개인 설치본은 레이블이 `cc.subinggrae.*` 일 수 있다. 스크립트들이 알아서 감지해 쓰지만,
+> 표준 레이블로 옮기려면 `bash scripts/migrate-launchagent-labels.sh` (기본 드라이런, `--apply` 로 수행).
 
 > ⚠️ claw-web 안에서 돌고 있는 세션은 자기 자신을 재시작하면 안 된다 (자기 러너가 같이 죽는다).
 > 호스팅된 세션에서의 재시작은 사용자에게 요청한다.

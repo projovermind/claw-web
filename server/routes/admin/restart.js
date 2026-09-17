@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { logger } from '../../lib/logger.js';
 
 // 이 파일 경로 기준으로 REPO_ROOT 고정 — process.cwd() 는 launchd 설정에 따라
-// /Users/subinggrae 일 수 있어 index.js 의 `REPO_ROOT + /logs` 와 불일치 위험.
+// 홈 디렉터리일 수 있어 index.js 의 `REPO_ROOT + /logs` 와 불일치 위험.
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 
@@ -25,7 +25,8 @@ export function registerRestartRoute(router, { runner }) {
       const launchAgentsDir = path.join(os.homedir(), 'Library', 'LaunchAgents');
       try {
         const files = fssync.readdirSync(launchAgentsDir);
-        // 실제 레이블은 cc.subinggrae.claw-web — com.claw-web.* 만 보면 항상 오탐이었다.
+        // 레이블은 설치본마다 다르다(표준 com.claw-web.server, 구버전 cc.subinggrae.claw-web).
+        // 그래서 접두사로 못 박지 않고 파일명에 claw-web 이 들어가는지만 본다.
         const found = files.some(f => /claw-web.*\.plist$/.test(f) && !f.endsWith('.bak'));
         if (!found) warning = 'LaunchAgent 미감지 — 재시작 후 수동 기동 필요';
       } catch {
