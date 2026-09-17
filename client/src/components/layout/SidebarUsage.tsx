@@ -1,97 +1,114 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '../../lib/api';
-import type { BackendUsageWindow } from '../../lib/types';
+import type { BackendUsage, BackendUsageWindow } from '../../lib/types';
 import { useT } from '../../lib/i18n';
-import { useBackendUsage, untilReset } from '../settings/BackendUsageGauge';
+import { useBackendUsage } from '../settings/BackendUsageGauge';
 
 const SIZE = 18;
 const STROKE = 2.5;
 const R = (SIZE - STROKE) / 2;
 const C = 2 * Math.PI * R;
 
-/** 지름 18px 도넛 링 — 회색 트랙 위에 보라→파랑 그라디언트 arc. */
-function Donut({ pct, gradId }: { pct: number; gradId: string }) {
-  const clamped = Math.max(0, Math.min(100, pct));
+/** BackendUsageGauge 의 barColor 와 같은 임계값 — 70% 주황, 90% 빨강. */
+function arcColor(pct: number): string {
+  if (pct >= 90) return '#ef4444';
+  if (pct >= 70) return '#f59e0b';
+  return '#10b981';
+}
+
+/** 지름 18px 도넛 링 — 회색 트랙 위에 사용률만큼 단색 arc. */
+function Donut({ pct }: { pct: number }) {
   return (
     <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} className="shrink-0 -rotate-90">
-      <defs>
-        <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#c26ef2" />
-          <stop offset="100%" stopColor="#6fb0f7" />
-        </linearGradient>
-      </defs>
       <circle cx={SIZE / 2} cy={SIZE / 2} r={R} fill="none" stroke="#3f3f46" strokeWidth={STROKE} />
-      {clamped > 0 && (
+      {pct > 0 && (
         <circle
           cx={SIZE / 2}
           cy={SIZE / 2}
           r={R}
           fill="none"
-          stroke={`url(#${gradId})`}
+          stroke={arcColor(pct)}
           strokeWidth={STROKE}
           strokeLinecap="round"
           strokeDasharray={C}
-          strokeDashoffset={C * (1 - clamped / 100)}
+          strokeDashoffset={C * (1 - pct / 100)}
         />
       )}
     </svg>
   );
 }
 
-/** '5시간 42% · 03:12 리셋 (9/17 오후 8:00)' 한 줄. 값이 없으면 null. */
-function windowLine(
-  label: string,
+/**
+ * 리셋 시각. 24시간 이내면 시각만('오후 8:00'), 넘으면 날짜까지('9/20 오전 3:00').
+ * 값이 없거나 이미 지났으면 null.
+ */
+function resetAtLabel(resetsAt: string | null | undefined): string | null {
+  if (!resetsAt) return null;
+  const d = new Date(resetsAt);
+  const ms = d.getTime() - Date.now();
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const time = { hour: 'numeric', minute: '2-digit' } as const;
+  return ms < 86_400_000
+    ? d.toLocaleTimeString(undefined, time)
+    : d.toLocaleString(undefined, { month: 'numeric', day: 'numeric', ...time });
+}
+
+type Slot = { pct: number; tip: string };
+
+/** 창 하나 → 도넛 1개분. utilization 이 없으면 null(=그 쌍 생략). */
+function toSlot(
+  labelKey: string,
   win: BackendUsageWindow | null | undefined,
   t: (k: string, v?: Record<string, string | number>) => string
-): string | null {
+): Slot | null {
   if (!win || typeof win.utilization !== 'number') return null;
-  const parts = [`${label} ${Math.round(win.utilization)}%`];
-  const left = untilReset(win.resetsAt, t);
-  if (left) parts.push(t('backendUsage.reset', { time: left }));
-  const line = parts.join(' · ');
-  return win.resetsAt ? `${line} (${new Date(win.resetsAt).toLocaleString()})` : line;
+  const pct = Math.round(Math.max(0, Math.min(100, win.utilization)));
+  const at = resetAtLabel(win.resetsAt);
+  const tip = `${t(labelKey)} ${pct}%${at ? ` · ${t('backendUsage.resetAt', { time: at })}` : ''}`;
+  return { pct, tip };
+}
+
+function Pair({ slot }: { slot: Slot }) {
+  return (
+    <div className="flex items-center gap-1 cursor-default" title={slot.tip}>
+      <Donut pct={slot.pct} />
+      <span className="font-mono text-[0.6875rem] text-zinc-400">{slot.pct}%</span>
+    </div>
+  );
 }
 
 /**
- * 사이드바 하단의 백엔드별 잔여 한도. status==='ok' 인 백엔드만, fiveHour 기준으로 그린다.
- * 접힌 상태에서는 도넛만 세로로 쌓는다.
+ * 사이드바 하단 구분선 위의 백엔드별 잔여 한도.
+ * status==='ok' 인 백엔드마다 한 줄, 한 줄에 [5시간 도넛+%] [주간 도넛+%].
+ * 접힌 상태에서는 도넛만 가로로 붙여 그린다.
  */
 export default function SidebarUsage({ collapsed }: { collapsed: boolean }) {
   const t = useT();
   const usage = useBackendUsage();
-  const backendsQ = useQuery({ queryKey: ['backends'], queryFn: api.backends, staleTime: 60_000 });
 
   if (!usage) return null;
 
   const rows = Object.entries(usage)
-    .filter(([, u]) => u?.status === 'ok' && typeof u.fiveHour?.utilization === 'number')
-    .map(([id, u]) => {
-      const pct = Math.round(Math.max(0, Math.min(100, u.fiveHour!.utilization)));
-      const tip = [
-        windowLine(t('backendUsage.fiveHour'), u.fiveHour, t),
-        windowLine(t('backendUsage.sevenDay'), u.sevenDay, t)
-      ]
-        .filter(Boolean)
-        .join('\n');
-      return { id, label: backendsQ.data?.backends?.[id]?.label ?? id, pct, tip };
-    });
+    .filter((e): e is [string, BackendUsage] => e[1]?.status === 'ok')
+    .map(([id, u]) => ({
+      id,
+      slots: [toSlot('backendUsage.fiveHourLimit', u.fiveHour, t), toSlot('backendUsage.sevenDayLimit', u.sevenDay, t)]
+        .filter((s): s is Slot => s !== null)
+    }))
+    .filter((r) => r.slots.length > 0);
 
   if (rows.length === 0) return null;
 
   return (
-    <div className={collapsed ? 'flex flex-col items-center gap-1.5 mb-2' : 'space-y-1 mb-2'}>
+    <div className={collapsed ? 'px-1 pb-2 space-y-1.5' : 'px-2 pb-2 space-y-1'}>
       {rows.map((r) => (
-        <div
-          key={r.id}
-          title={`${r.label}\n${r.tip}`}
-          className={`flex items-center ${collapsed ? 'justify-center' : 'gap-2 px-2'} cursor-default`}
-        >
-          <Donut pct={r.pct} gradId={`sidebar-usage-${r.id.replace(/[^a-zA-Z0-9_-]/g, '-')}`} />
-          {!collapsed && (
-            <>
-              <span className="flex-1 min-w-0 truncate whitespace-nowrap text-[0.6875rem] text-zinc-500">{r.label}</span>
-              <span className="shrink-0 font-mono text-[0.6875rem] text-zinc-400">{r.pct}%</span>
-            </>
+        <div key={r.id} className={`flex items-center ${collapsed ? 'justify-center gap-1' : 'gap-3'}`}>
+          {r.slots.map((s, i) =>
+            collapsed ? (
+              <div key={i} title={s.tip} className="cursor-default">
+                <Donut pct={s.pct} />
+              </div>
+            ) : (
+              <Pair key={i} slot={s} />
+            )
           )}
         </div>
       ))}

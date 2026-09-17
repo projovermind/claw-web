@@ -214,9 +214,9 @@ export default function Sidebar() {
         ))}
         <DeviceSwitcher collapsed={isCollapsed} />
       </nav>
+      <SidebarUsage collapsed={isCollapsed} />
       {(!isCollapsed || authEnabled || version) && (
         <div className={`${isCollapsed ? 'p-1' : 'p-2'} border-t border-zinc-800`}>
-          <SidebarUsage collapsed={isCollapsed} />
           {!isCollapsed && (
             <>
               <div className="flex items-center gap-1 text-[0.6875rem] text-zinc-500 mb-1 px-2">
