@@ -25,6 +25,10 @@
   powershell -ExecutionPolicy Bypass -File .\claw-web-win-remote.ps1
 
 .EXAMPLE
+  # 같은 랜에서 직접 SSH 할 뒷문도 함께 연다 (터널이 죽었을 때의 복구 경로)
+  powershell -ExecutionPolicy Bypass -File .\claw-web-win-remote.ps1 -LanSshCidr '192.168.0.0/24'
+
+.EXAMPLE
   # 아무것도 바꾸지 않고 지금 상태만 본다
   powershell -ExecutionPolicy Bypass -File .\claw-web-win-remote.ps1 -Diagnose
 
@@ -44,6 +48,9 @@ param(
   [string]$PubKey      = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILxG7ps1Aqqfw7+YZnmvWDVZJo8ymDX5KJCYgqGMDPfk clawweb-mac-to-win',
   [string]$TunnelId    = '10461111-e2eb-468f-bbb8-d7bf853dbf10',
   [string]$Distro      = '',                # 비우면 자동탐지
+  # 터널이 죽었을 때 같은 랜에서 직접 SSH 로 들어올 뒷문. 비우면 방화벽을 건드리지 않는다.
+  # 예: -LanSshCidr '192.168.0.0/24'  (쉼표로 여러 개도 가능)
+  [string]$LanSshCidr  = '',
   [switch]$Diagnose                          # 고치지 않고 지금 상태만 뽑아본다
 )
 
@@ -64,6 +71,7 @@ $ProxyPs1    = Join-Path $StateDir 'portproxy.ps1'
 $AnchorTask  = 'claw-web WSL anchor'
 $ProxyTask   = 'claw-web portproxy'
 $LegacyTasks = @('claw-web WSL')             # recover 스크립트가 걸어둔 -AtLogOn 작업
+$SshFwRule   = 'claw-web SSH (LAN)'          # -LanSshCidr 를 줬을 때만 만든다
 
 function Info { param($m) Write-Host "    $m" }
 function Ok   { param($m) Write-Host "    [OK] $m"  -ForegroundColor Green }
@@ -172,6 +180,30 @@ function Get-CloudflaredExe {
 
 # 작업의 트리거 종류를 사람이 읽을 수 있게. MSFT_TaskBootTrigger = AtStartup,
 # MSFT_TaskLogonTrigger = AtLogOn. 이 구분이 이 스크립트의 존재 이유다.
+# 서비스로 도는 cloudflared 는 journalctl 도 없고, 즉시 죽으면 logfile 이 생기지도 않는다.
+# 그때 원인이 남는 유일한 곳이 Application 이벤트 로그다. binPath 도 같이 찍는다 —
+# "--config 가 빠져서 설정 없이 등록됨" 이 여기서 제일 자주 걸린다.
+function Show-CfEventLog {
+  param([int]$Count = 8)
+  $bp = (Get-CimInstance Win32_Service -Filter "Name='cloudflared'" -ErrorAction SilentlyContinue).PathName
+  if ($bp) { Info "binPath: $bp" } else { Warn "binPath 를 읽지 못했다 (서비스가 등록돼 있지 않다)" }
+  $evts = @()
+  try {
+    $evts = @(Get-EventLog -LogName Application -Source 'cloudflared' -Newest $Count -ErrorAction Stop)
+  } catch {
+    Warn "Application 이벤트 로그에서 cloudflared 항목을 읽지 못했다 (소스 미등록이거나 기록 없음)"
+    return
+  }
+  if ($evts.Count -eq 0) { Warn "Application 이벤트 로그에 cloudflared 항목이 없다"; return }
+  Info "이벤트 로그 (Application/cloudflared, 최근 $($evts.Count)건):"
+  foreach ($e in $evts) {
+    # 이벤트 메시지는 여러 줄이라 그냥 찍으면 화면을 덮는다. 한 줄로 접고 잘라서 본다.
+    $msg = ((($e.Message -split "`r?`n") | Where-Object { $_.Trim() }) -join ' ').Trim()
+    if ($msg.Length -gt 300) { $msg = $msg.Substring(0, 300) + '...' }
+    Write-Host ("      {0:yyyy-MM-dd HH:mm:ss} [{1}] {2}" -f $e.TimeGenerated, $e.EntryType, $msg)
+  }
+}
+
 function Show-Tasks {
   $tasks = Get-ScheduledTask -TaskName 'claw-web*' -ErrorAction SilentlyContinue
   if (-not $tasks) { Info "등록된 claw-web 작업 없음"; return }
@@ -223,8 +255,7 @@ if ($Diagnose) {
   if ($svc) {
     Write-Host "    상태: $($svc.Status) / 시작유형: $($svc.StartType)"
     # binPath 에 --config 가 없으면 서비스는 Running 인데 ingress 가 비어 전 호스트가 404 다.
-    $dbp = (Get-CimInstance Win32_Service -Filter "Name='cloudflared'" -ErrorAction SilentlyContinue).PathName
-    if ($dbp) { Write-Host "    binPath: $dbp" } else { Warn "binPath 를 읽지 못했다" }
+    Show-CfEventLog
   } else { Warn "cloudflared 윈도우 서비스가 없다 — 터널이 아직 WSL 안에 있다" }
 
   Info "cloudflared 로그 (최근 40줄)"
@@ -457,7 +488,8 @@ else {
 # ── 7. SSH 원격 채널 ─────────────────────────────────────
 # 이 기계엔 원격 채널이 전혀 없었다. 고장나면 사용자가 그 앞에 앉아야 했다.
 # 터널의 ssh:// ingress + 윈도우 OpenSSH 서버로 맥에서 직접 붙을 수 있게 만든다.
-# 방화벽은 건드리지 않는다 — 접속은 터널을 통해 127.0.0.1 로만 들어온다.
+# 기본적으로 방화벽은 건드리지 않는다 — 접속은 터널을 통해 127.0.0.1 로만 들어온다.
+# -LanSshCidr 을 준 경우에만 그 대역에 22 번을 열어 준다 (터널이 죽었을 때의 뒷문).
 Step "7/9  SSH 원격 채널"
 $cap = Get-WindowsCapability -Online -Name 'OpenSSH.Server*' -ErrorAction SilentlyContinue
 if ($cap -and $cap.State -ne 'Installed') {
@@ -511,6 +543,36 @@ if (Test-Path $scPath) {
   Ok "sshd_config: 키 인증만 허용 (비밀번호 차단)"
 } else {
   Warn "sshd_config 이 없다 — sshd 가 한 번도 안 떴을 수 있다"
+}
+
+# 랜 뒷문 (선택). 터널이 죽으면 ssh:// ingress 도 같이 죽어 이 기계에 손이 안 닿는다.
+# 같은 랜에서 들어올 길을 하나 열어 두면 그때 원격으로 복구할 수 있다.
+# 비밀번호 인증은 위에서 이미 막아 뒀으므로, 열려도 키 없이는 못 들어온다.
+if ($LanSshCidr) {
+  $cidrs = @($LanSshCidr -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  $bad = @($cidrs | Where-Object { $_ -notmatch '^\d{1,3}(\.\d{1,3}){3}(/\d{1,2})?$' -and $_ -notmatch '^[\da-fA-F:]+(/\d{1,3})?$' })
+  if ($bad.Count -gt 0) {
+    Warn "LanSshCidr 형식이 이상하다: $($bad -join ', ') — 방화벽 규칙을 건너뛴다"
+  } else {
+    try {
+      # 멱등: 같은 이름의 규칙이 있으면 대역만 갈아끼운다. New 를 또 부르면 중복 규칙이 쌓인다.
+      $rule = Get-NetFirewallRule -DisplayName $SshFwRule -ErrorAction SilentlyContinue
+      if ($rule) {
+        Set-NetFirewallRule -DisplayName $SshFwRule -Enabled True -Action Allow `
+          -RemoteAddress $cidrs -Profile Any
+        Ok "방화벽 규칙 갱신: '$SshFwRule' — TCP 22 ← $($cidrs -join ', ')"
+      } else {
+        New-NetFirewallRule -DisplayName $SshFwRule -Direction Inbound -Action Allow `
+          -Protocol TCP -LocalPort 22 -RemoteAddress $cidrs -Profile Any -Enabled True `
+          -Description 'claw-web: 터널이 죽었을 때 같은 랜에서 들어올 복구 경로' | Out-Null
+        Ok "방화벽 규칙 생성: '$SshFwRule' — TCP 22 ← $($cidrs -join ', ')"
+      }
+    } catch {
+      Warn "방화벽 규칙 설정 실패: $($_.Exception.Message)"
+    }
+  }
+} else {
+  Info "방화벽 미변경 (랜에서 직접 SSH 하려면 -LanSshCidr '192.168.0.0/24')"
 }
 
 # ── 8. 자동기동 전면 교체 (로그인 불필요) ────────────────
@@ -655,7 +717,11 @@ try {
 
 $svc = Get-Service cloudflared -ErrorAction SilentlyContinue
 if ($svc -and $svc.Status -eq 'Running') { Ok "cloudflared 서비스 Running" }
-else { $fail += "cloudflared 서비스가 Running 이 아니다 ($($svc.Status))"; Warn $fail[-1] }
+else {
+  $fail += "cloudflared 서비스가 Running 이 아니다 ($($svc.Status))"; Warn $fail[-1]
+  # 서비스가 바로 죽으면 아래에서 찍는 $CfLog 이 생기지도 않는다. 그땐 이벤트 로그뿐이다.
+  Show-CfEventLog
+}
 
 if (Get-NetTCPConnection -LocalPort 22 -State Listen -ErrorAction SilentlyContinue) { Ok "SSH 22 번 리스닝" }
 else { $fail += "22 번 포트가 리스닝 상태가 아니다 — sshd 확인"; Warn $fail[-1] }
