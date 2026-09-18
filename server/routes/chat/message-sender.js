@@ -451,7 +451,7 @@ export function createMessageSender(ctx) {
     // silently roll back another session's live work on deploy. Self-gating
     // (emits nothing on a clean, synced tree with no recent deploys).
     try {
-      let guard = buildDeployGuardContext(agent.workingDir);
+      let guard = buildDeployGuardContext(agent.workingDir, { sessionId });
       if (guard) {
         // Substitute the real project id + auth header into the logging curl example.
         // The deploy-log endpoint requires the Bearer token when auth is enabled;
@@ -565,7 +565,10 @@ export function createMessageSender(ctx) {
       agent,
       message,
       claudeSessionId: claudeSessionId ?? session.claudeSessionId,
-      envOverrides,
+      // lease-guard 훅은 claw-web 세션 id 로 임대 소유자를 가른다. stdin 의
+      // session_id 는 Claude CLI 세션 id 라 압축·resume 때 갈리고 deploy-guard 가
+      // 보여 주는 id 와도 다르다 — 그래서 env 로 진짜 소유자를 내려보낸다.
+      envOverrides: { ...envOverrides, CLAW_WEB_SESSION_ID: sessionId, CLAW_WEB_AGENT_ID: session.agentId },
       backendType,
       backendConfig,
       callbacks: {

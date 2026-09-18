@@ -13,10 +13,12 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { logger } from './logger.js';
 import { recentDeployLog } from './deploy-log-store.js';
+import { list as listLeases, fmtAge } from './file-leases.js';
 
 const MAX_FILE_BYTES = 64 * 1024;        // 64 KB per file
 const MAX_TOTAL_BYTES = 256 * 1024;      // 256 KB across all pinned files
 const MAX_DIFF_BYTES = 32 * 1024;        // 32 KB for git diff
+const MAX_LEASE_LINES = 10;              // 임대 현황은 최신 편집 순으로 이만큼만
 
 /**
  * Build <attached-files> block from agent.pinnedFiles.
@@ -211,9 +213,10 @@ const MAX_LEDGER_LINES = 8;
  * nothing to collide with, so no tokens spent.
  *
  * @param {string} workingDir
+ * @param {{sessionId?: string}} [opts]  주면 임대 현황에서 '내 임대' 를 구분해 표시한다
  * @returns {string|null}
  */
-export function buildDeployGuardContext(workingDir) {
+export function buildDeployGuardContext(workingDir, opts = {}) {
   if (!workingDir) return null;
   // fail-fast: is it a git repo?
   if (git(workingDir, ['rev-parse', '--is-inside-work-tree']) !== 'true') return null;
@@ -234,8 +237,12 @@ export function buildDeployGuardContext(workingDir) {
 
   const ledger = recentDeployLog(workingDir);
 
-  // Nothing to warn about → skip (clean, synced, no recent deploys).
-  if (dirtyCount === 0 && unpushed.length === 0 && ledger.length === 0) return null;
+  // 파일 임대 — 지금 다른 세션이 쥐고 있는 파일. 없으면 섹션 자체를 만들지 않는다.
+  let leases = [];
+  try { leases = listLeases(workingDir); } catch { /* 원장이 없거나 깨짐 — 없는 셈 친다 */ }
+
+  // Nothing to warn about → skip (clean, synced, no leases, no recent deploys).
+  if (dirtyCount === 0 && unpushed.length === 0 && ledger.length === 0 && leases.length === 0) return null;
 
   const recentCommits = git(workingDir, ['log', '--oneline', '--no-color', '-n', '5']) || '(none)';
 
@@ -268,6 +275,22 @@ export function buildDeployGuardContext(workingDir) {
       return `- ${when}${who}${tgt}${cm}${note}`;
     });
     parts.push('\n최근 배포 이력 (모든 세션 공유):\n' + lines.join('\n'));
+  }
+
+  if (leases.length > 0) {
+    const now = Date.now();
+    const mine = opts.sessionId;
+    const lines = leases
+      .slice()
+      .sort((a, b) => b.touchedAt - a.touchedAt)
+      .slice(0, MAX_LEASE_LINES)
+      .map((l) => {
+        const who = l.sessionId === mine ? '나' : (l.label || l.agentId || l.sessionId);
+        return `- \`${l.rel}\` ← ${who} · 마지막 편집 ${fmtAge(now - l.touchedAt)} 전 · 만료까지 ${fmtAge(l.expiresAt - now)}`;
+      });
+    const extra = leases.length > MAX_LEASE_LINES ? `\n- ... (+${leases.length - MAX_LEASE_LINES}건 더)` : '';
+    parts.push('\n현재 파일 임대 (편집 중인 세션이 쥐고 있음):\n' + lines.join('\n') + extra);
+    parts.push('위 파일 중 \'나\' 가 아닌 것은 편집하지 마세요 — PreToolUse 훅이 Edit/Write 와 `sed -i`/`cat >`/`tee` 를 모두 차단합니다.');
   }
 
   parts.push('\n[배포/파괴적 작업 규칙]');
