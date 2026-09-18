@@ -54,7 +54,7 @@ describe('workspace-layout-store (v2, per-view)', () => {
     expect(reloaded.get('b').workspaces[0].id).toBe('wb');
   });
 
-  it('seeds an unknown view from the most recently updated one', async () => {
+  it('does not seed an unknown view from another one', async () => {
     await fs.writeFile(filePath, JSON.stringify({
       version: 2,
       views: {
@@ -64,10 +64,7 @@ describe('workspace-layout-store (v2, per-view)', () => {
     }));
     const store = await createWorkspaceLayoutStore(filePath);
 
-    const seeded = store.get('never-seen');
-    expect(seeded.seeded).toBe(true);
-    expect(seeded.viewId).toBe('never-seen');
-    expect(seeded.workspaces[0].id).toBe('w-new');
+    expect(store.get('never-seen')).toBeNull();
   });
 
   it('defaults a missing viewId to "default"', async () => {

@@ -177,33 +177,45 @@ export function ChatSidebar({
     [agents]
   );
 
-  // Select a project → lead 에이전트(tier:'project') 세션 우선, 없으면 최근 세션 폴백
-  const selectProject = (project: Project) => {
+  // 프로젝트 선택이 연달아 일어나면 먼저 시작한 조회의 늦은 응답이 나중 선택을
+  // 덮어쓰지 않도록 토큰으로 무시한다.
+  const selectProjectSeqRef = useRef(0);
+
+  /**
+   * Select a project → lead 에이전트(tier:'project') 의 최근 세션으로 이동.
+   * 전역 세션 목록(limit 100 페이지)에는 리드 세션이 없을 수 있으므로 리드
+   * 에이전트의 세션을 직접 조회한다. 리드 세션이 없으면 애드온 세션으로
+   * 흘러가지 않고 빈 세션 상태로 둔다. (ChatPage 의 selectProject 와 동일)
+   */
+  const selectProject = async (project: Project) => {
     const lead = agents.find((a) => a.projectId === project.id && a.tier === 'project');
-    const projectAgentIds = new Set(
-      agents.filter((a) => a.projectId === project.id).map((a) => a.id)
-    );
-    const projectSessions = (allSessionsData?.sessions ?? [])
-      .filter((s: SessionMeta) => projectAgentIds.has(s.agentId) && !s.isDelegation)
-      .sort((a: SessionMeta, b: SessionMeta) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
-
-    // lead 세션 우선, 없으면 가장 최근 세션
-    const leadSession = lead ? projectSessions.find((s) => s.agentId === lead.id) : undefined;
-    const lastSession = leadSession ?? projectSessions[0];
-
-    if (lastSession) {
-      setCurrentAgent(lastSession.agentId);
-      setCurrentSession(lastSession.id);
-    } else {
-      if (lead) {
-        setCurrentAgent(lead.id);
-      } else {
-        const first = agents.find((a) => a.projectId === project.id);
-        if (first) setCurrentAgent(first.id);
-      }
-      setCurrentSession(null);
-    }
+    const target = lead ?? agents.find((a) => a.projectId === project.id);
     setProjectPickerOpen(false);
+    if (!target) return;
+
+    const seq = ++selectProjectSeqRef.current;
+    setCurrentAgent(target.id);
+    if (!lead) {
+      setCurrentSession(null);
+      return;
+    }
+
+    let leadSessions: SessionMeta[] = [];
+    try {
+      leadSessions = await qc.fetchQuery({
+        queryKey: ['sessions', lead.id],
+        queryFn: () => api.sessions(lead.id),
+        staleTime: 5_000
+      });
+    } catch {
+      /* 조회 실패 — 세션 없는 것과 동일하게 처리 */
+    }
+    if (seq !== selectProjectSeqRef.current) return;
+
+    const latest = leadSessions
+      .filter((s) => !s.isDelegation)
+      .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))[0];
+    setCurrentSession(latest ? latest.id : null);
   };
 
   const selectGlobalAgent = (agent: Agent) => {

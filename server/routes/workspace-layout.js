@@ -5,9 +5,8 @@ import { normalizeViewId } from '../lib/workspace-layout-store.js';
 /**
  * Workspace layout sync (창별 분리 — viewId).
  *
- * GET /api/workspace-layout?viewId=  → 해당 뷰의 레이아웃. 뷰가 없으면 가장
- *                                      최근 뷰를 seeded:true 로 내려준다
- *                                      (새 창이 빈 화면으로 시작하지 않게).
+ * GET /api/workspace-layout?viewId=  → 해당 뷰의 레이아웃. 뷰가 없으면 빈
+ *                                      결과(seeded:false) 를 내려준다.
  * PUT /api/workspace-layout          → body.viewId 뷰 교체, 전 WS 클라이언트에
  *                                      브로드캐스트 (viewId·clientId 포함 —
  *                                      수신 측이 자기 창인지 판별)

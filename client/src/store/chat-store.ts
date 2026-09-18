@@ -177,18 +177,21 @@ const defaultWorkspace = createWorkspace('워크스페이스 1');
 // 각 브라우저 탭마다 고유한 clientId — WS echo 무시용.
 const CLIENT_ID = nanoid(10);
 /**
- * 창(탭) 식별자. sessionStorage 라 새로고침·탭 복원에는 살아남고, 새 창을
- * 열면 새로 발급된다 → 창마다 레이아웃이 독립적으로 저장/복원된다.
- * (탭 복제는 sessionStorage 를 복사하므로 같은 viewId 를 공유한다 — 의도된 동작.)
+ * 뷰(브라우저) 식별자. localStorage 라 새 창/탭을 열거나 브라우저를 껐다 켜도
+ * 같은 값이 유지된다 → 서버에 저장된 레이아웃을 그대로 이어받는다.
+ * (sessionStorage 를 쓰던 시절에는 창을 새로 열 때마다 새 viewId 가 발급돼
+ * 레이아웃이 초기화된 것처럼 보였다. 기존 값이 있으면 그대로 승계한다.)
  */
 export const VIEW_ID: string = (() => {
+  const KEY = 'claw-view-id';
   try {
-    const KEY = 'claw-view-id';
-    const existing = sessionStorage.getItem(KEY);
+    const existing = localStorage.getItem(KEY);
     if (existing) return existing;
-    const fresh = nanoid(10);
-    sessionStorage.setItem(KEY, fresh);
-    return fresh;
+    // 구버전(sessionStorage) 값 마이그레이션 — 같은 창이면 레이아웃이 유지된다.
+    const legacy = sessionStorage.getItem(KEY);
+    const next = legacy ?? nanoid(10);
+    localStorage.setItem(KEY, next);
+    return next;
   } catch {
     return nanoid(10);
   }
@@ -528,26 +531,6 @@ export const useChatStore = create<ChatState>()(
               queueMicrotask(() => {
                 remoteApplyDepth = Math.max(0, remoteApplyDepth - 1);
               });
-            }
-            // 처음 보는 창이라 다른 창 레이아웃을 복제해 받은 경우(seeded),
-            // 곧바로 자기 viewId 로 저장해 둔다 — 이후 변경이 원본 창을
-            // 덮어쓰지 않도록.
-            if (r.seeded) {
-              const cur = useChatStore.getState();
-              lastSavedSnapshot = JSON.stringify({
-                workspaces: cur.workspaces,
-                activeWorkspaceId: cur.activeWorkspaceId
-              });
-              api
-                .setWorkspaceLayout({
-                  viewId: VIEW_ID,
-                  workspaces: cur.workspaces,
-                  activeWorkspaceId: cur.activeWorkspaceId,
-                  clientId: CLIENT_ID
-                })
-                .catch(() => {
-                  lastSavedSnapshot = '';
-                });
             }
           }
         } catch {

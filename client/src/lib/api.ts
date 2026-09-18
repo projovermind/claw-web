@@ -541,8 +541,9 @@ export const api = {
 
   delegations: () => get<{ delegations: import('./types').DelegationEntry[] }>('/delegations').then(r => r.delegations),
 
-  // Workspace layout sync — 창(viewId) 단위. seeded:true 면 다른 창의
-  // 레이아웃을 복제해 받은 것이므로 수신 측이 자기 viewId 로 다시 저장해야 한다.
+  // Workspace layout sync — 뷰(viewId) 단위. 처음 보는 viewId 는 다른 뷰의
+  // 레이아웃을 복제해 주지 않고 빈 결과를 내려준다(seeded 는 항상 false —
+  // 복제 시드 기능이 사라진 뒤 남은 호환용 필드라 클라이언트는 쓰지 않는다).
   getWorkspaceLayout: (viewId: string) =>
     get<{
       viewId: string;

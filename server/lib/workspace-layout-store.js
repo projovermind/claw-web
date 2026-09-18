@@ -7,9 +7,8 @@ import path from 'node:path';
  *
  * 클라이언트(zustand)의 workspaces / activeWorkspaceId 를 **창(view) 단위**로
  * 저장한다. 브라우저 탭마다 sessionStorage 에 심어 둔 viewId 가 키다.
- * 처음 보는 viewId 는 가장 최근에 갱신된 뷰를 seeded:true 로 복제해 내려주고,
- * 클라이언트가 곧바로 자기 viewId 로 PUT 한다 → 새 창은 익숙한 레이아웃으로
- * 시작하되 그 뒤론 창끼리 서로를 덮어쓰지 않는다.
+ * 처음 보는 viewId 는 빈 결과(seeded:false) — 창끼리 서로의 레이아웃을
+ * 복제하지 않는다.
  *
  * atomic write (.tmp + rename) — proper-lockfile 까진 불필요
  * (쓰기 빈도 ≪ 1Hz, 마지막 쓰기 승리).
@@ -61,13 +60,6 @@ export async function createWorkspaceLayoutStore(filePath) {
     await fs.rename(tmp, filePath);
   }
 
-  /** 가장 최근에 갱신된 뷰 (자기 자신 제외). */
-  function newest(exceptId) {
-    let found = null;
-    for (const [id, v] of views) if (id !== exceptId) found = v;
-    return found;
-  }
-
   function prune() {
     while (views.size > MAX_VIEWS) {
       const oldest = views.keys().next().value;
@@ -76,17 +68,11 @@ export async function createWorkspaceLayoutStore(filePath) {
   }
 
   return {
-    /**
-     * 해당 창의 레이아웃. 처음 보는 창이면 가장 최근 창의 레이아웃을
-     * seeded:true 로 복제해 돌려준다 (저장은 클라이언트의 PUT 시점에).
-     * 저장된 레이아웃이 하나도 없으면 null.
-     */
+    /** 해당 창의 레이아웃. 없으면 null. */
     get(viewId) {
       const id = normalizeViewId(viewId);
       const own = views.get(id);
       if (own) return { ...own, viewId: id, seeded: false };
-      const seed = newest(id);
-      if (seed) return { ...seed, viewId: id, seeded: true };
       return null;
     },
 

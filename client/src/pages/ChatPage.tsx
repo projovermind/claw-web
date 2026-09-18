@@ -11,6 +11,7 @@ import type { Session, SessionMeta, ChatMessage, Agent, Project } from '../lib/t
 import { isSessionBusy, isSessionRunning } from '../lib/visibility';
 import { useChatStore, selectActiveWorkspace } from '../store/chat-store';
 import { useProgressToastStore } from '../store/progress-toast-store';
+import { useToastStore } from '../store/toast-store';
 import { useT } from '../lib/i18n';
 import ChatInput from '../components/chat/ChatInput';
 import ContextUsageBadge from '../components/chat/ContextUsageBadge';
@@ -40,18 +41,62 @@ export default function ChatPage() {
   const swapPanes = useChatStore((s) => s.swapPanes);
 
   const { startTask, completeTask, failTask } = useProgressToastStore();
+  const addToast = useToastStore((s) => s.add);
 
   // 푸시 알림 액션 버튼(승인/거부) 은 같은 reqId 로 두 번 도착할 수 있다 —
   // 이미 처리한 요청은 건너뛴다.
   const handledApprovalsRef = useRef<Set<string>>(new Set());
+  // agent/session 딥링크도 같은 조합이 두 번 들어오면(뒤로가기 등) 한 번만 적용한다.
+  const handledDeepLinksRef = useRef<Set<string>>(new Set());
+  // 첫 effect 실행 = 콜드 스타트(알림 링크로 앱이 열린 경우). 이후 실행은
+  // "이미 열려 있는 앱에 파라미터가 들어온 것" 이라 취급이 다르다.
+  const didMountRef = useRef(false);
 
   useEffect(() => {
     const agentParam = searchParams.get('agent');
     const sessionParam = searchParams.get('session');
     const approvalParam = searchParams.get('approval');
     const decisionParam = searchParams.get('decision');
-    if (agentParam) setCurrentAgent(agentParam);
-    if (sessionParam) setCurrentSession(sessionParam);
+
+    // 딥링크는 활성 pane 을 덮어쓰지 않는다 — 이미 그 세션을 띄운 pane 이 있으면
+    // 그쪽을, 없으면 빈 pane 을 쓴다. 둘 다 없으면 현재 pane 을 덮는 수밖에 없는데
+    // (pane 1개인 모바일이 항상 여기 해당), 그건 콜드 스타트일 때만 허용한다.
+    // 앱을 이미 보고 있는 중이라면 보던 대화를 말없이 바꾸지 않고 토스트로 알린다.
+    if (agentParam || sessionParam) {
+      const key = `${agentParam ?? ''}:${sessionParam ?? ''}`;
+      if (!handledDeepLinksRef.current.has(key)) {
+        handledDeepLinksRef.current.add(key);
+        const state = useChatStore.getState();
+        const ws = state.workspaces.find((w) => w.id === state.activeWorkspaceId) ?? state.workspaces[0];
+        const visible = ws ? ws.panes.slice(0, ws.count) : [];
+        const shown = sessionParam ? visible.find((p) => p.sessionId === sessionParam) : undefined;
+        const empty = visible.find((p) => !p.agentId && !p.sessionId);
+        const target = shown ?? empty ?? visible.find((p) => p.id === ws?.activePaneId) ?? visible[0];
+        const overwritesActivePane = !shown && !empty;
+
+        const openDeepLink = () => {
+          if (!target) {
+            if (agentParam) setCurrentAgent(agentParam);
+            if (sessionParam) setCurrentSession(sessionParam);
+            return;
+          }
+          setActivePane(target.id);
+          setPaneSession(
+            target.id,
+            agentParam ?? target.agentId,
+            sessionParam ?? target.sessionId
+          );
+        };
+
+        if (!didMountRef.current || !overwritesActivePane) {
+          openDeepLink();
+        } else {
+          addToast('info', '알림에서 다른 세션을 가리키고 있습니다', {
+            action: { label: '세션 열기', onClick: openDeepLink }
+          });
+        }
+      }
+    }
 
     // 알림 액션으로 들어온 권한 결정 — 기존 approval 엔드포인트로 그대로 처리.
     if (sessionParam && approvalParam && (decisionParam === 'approve' || decisionParam === 'deny')) {
@@ -77,6 +122,7 @@ export default function ChatPage() {
     if (agentParam || sessionParam || approvalParam || decisionParam) {
       setSearchParams({}, { replace: true });
     }
+    didMountRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -301,28 +347,45 @@ export default function ChatPage() {
     staleTime: 5_000
   });
 
-  const selectProject = (project: Project) => {
-    const lead = (agentsQ.data ?? []).find(
-      (a) => a.projectId === project.id && a.tier === 'project'
-    );
-    const projectAgentIds = new Set(
-      (agentsQ.data ?? []).filter((a) => a.projectId === project.id).map((a) => a.id)
-    );
-    const projectSessions = (projectSelectAllSessionsQ.data?.sessions ?? [])
-      .filter((s) => projectAgentIds.has(s.agentId) && !s.isDelegation)
-      .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+  // 프로젝트 선택이 연달아 일어나면 먼저 시작한 조회의 늦은 응답이 나중 선택을
+  // 덮어쓰지 않도록 토큰으로 무시한다.
+  const selectProjectSeqRef = useRef(0);
 
-    const leadSession = lead ? projectSessions.find((s) => s.agentId === lead.id) : undefined;
-    const lastSession = leadSession ?? projectSessions[0];
+  /**
+   * 프로젝트 선택 → 리드(tier==='project') 에이전트의 최근 세션으로 이동.
+   * 전역 세션 목록(limit 100 페이지)에는 리드 세션이 없을 수 있으므로 리드
+   * 에이전트의 세션을 직접 조회한다. 리드 세션이 없으면 애드온 세션으로
+   * 흘러가지 않고 빈 세션 상태로 둔다.
+   */
+  const selectProject = async (project: Project) => {
+    const agents = agentsQ.data ?? [];
+    const lead = agents.find((a) => a.projectId === project.id && a.tier === 'project');
+    const target = lead ?? agents.find((a) => a.projectId === project.id);
+    if (!target) return;
 
-    if (lastSession) {
-      setCurrentAgent(lastSession.agentId);
-      setCurrentSession(lastSession.id);
+    const seq = ++selectProjectSeqRef.current;
+    setCurrentAgent(target.id);
+    if (!lead) {
+      setCurrentSession(null);
       return;
     }
-    const target = lead ?? (agentsQ.data ?? []).find((a) => a.projectId === project.id);
-    if (target) setCurrentAgent(target.id);
-    setCurrentSession(null);
+
+    let leadSessions: SessionMeta[] = [];
+    try {
+      leadSessions = await qc.fetchQuery({
+        queryKey: ['sessions', lead.id],
+        queryFn: () => api.sessions(lead.id),
+        staleTime: 5_000
+      });
+    } catch {
+      /* 조회 실패 — 세션 없는 것과 동일하게 처리 */
+    }
+    if (seq !== selectProjectSeqRef.current) return;
+
+    const latest = leadSessions
+      .filter((s) => !s.isDelegation)
+      .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))[0];
+    setCurrentSession(latest ? latest.id : null);
   };
 
   // DnD sensors — 5px movement threshold so clicks still work
