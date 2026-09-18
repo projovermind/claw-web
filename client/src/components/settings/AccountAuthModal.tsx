@@ -154,6 +154,9 @@ function ReauthTab({ backend }: { backend: ClaudeCliBackend }) {
         <div className="font-semibold mb-1">⚡ 가장 빠른 재인증 — 2단계</div>
         토큰이 만료됐을 때 제일 간단합니다. Terminal 에서 <code className="text-sky-300">claude setup-token</code> 을 실행하고,
         출력된 <code className="text-sky-300">sk-ant-oat01-…</code> 토큰을 아래에 붙여넣으면 끝.
+        <div className="mt-1 text-sky-300/70">
+          ※ 백엔드 상태가 "한도 조회 불가"(회색)이면 이미 이 토큰으로 정상 동작 중입니다 — setup-token 에는 사용량 게이지 조회 스코프가 없을 뿐이니, 게이지까지 보려면 <code className="text-sky-300">claude login</code> 으로 다시 인증하세요.
+        </div>
       </div>
 
       <div className="space-y-1.5">

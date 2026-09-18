@@ -149,6 +149,13 @@ export function BackendUsageGauge({ usage, sharedCount }: { usage?: BackendUsage
   if (usage.status === 'unauthorized') {
     return withShared(<StatusBadge tone="red" label={t('backendUsage.unauthorized')} />);
   }
+  // 저장된 OAuth 토큰으로는 돌아가지만 그 토큰에 조회 스코프가 없는 경우.
+  // 재인증이 필요한 상태가 아니므로 빨강이 아니라 중립 배지로 표시한다.
+  if (usage.status === 'token-only') {
+    return withShared(
+      <StatusBadge tone="zinc" label={t('backendUsage.tokenOnly')} tip={t('backendUsage.tokenOnlyTip')} />
+    );
+  }
   if (usage.status === 'no-credentials') {
     return withShared(
       <StatusBadge tone="zinc" label={t('backendUsage.noCredentials')} tip={t('backendUsage.noCredentialsTip')} />
