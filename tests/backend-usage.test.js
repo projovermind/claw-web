@@ -127,6 +127,58 @@ describe('fetchBackendUsage', () => {
     expect(r.status).toBe('no-credentials');
   });
 
+  it('토큰이 만료돼도 managed OAuth 토큰이 있고 403 이면 token-only', async () => {
+    const configDir = mk({ ...liveCreds, expiresAt: PAST }, { emailAddress: 'a@b.com' });
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}) }));
+    const r = await fetchBackendUsage('acc', { type: 'claude-cli', configDir }, {
+      fetchImpl, getManagedOAuth: () => 'sk-ant-oat01-MANAGED'
+    });
+
+    expect(r.status).toBe('token-only');
+    expect(r.account).toEqual({ email: 'a@b.com', organization: null, tier: 'max' });
+    expect(r.expiresAt).toBe(new Date(PAST).toISOString());
+    expect(fetchImpl.mock.calls[0][1].headers.authorization).toBe('Bearer sk-ant-oat01-MANAGED');
+    expect(JSON.stringify(r)).not.toContain('MANAGED');
+  });
+
+  it('자격증명이 아예 없어도 managed OAuth 토큰이 403 이면 token-only', async () => {
+    const configDir = mk(null, null);
+    const execFileAsync = vi.fn(async () => { throw new Error('not found'); });
+    const r = await fetchBackendUsage('acc', { type: 'claude-cli', configDir }, {
+      fetchImpl: vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}) })),
+      execFileAsync, platform: 'darwin', getManagedOAuth: () => 'tok'
+    });
+    expect(r.status).toBe('token-only');
+  });
+
+  it('managed OAuth 토큰이 200 이면 그대로 사용량을 읽는다', async () => {
+    const configDir = mk({ ...liveCreds, expiresAt: PAST });
+    const r = await fetchBackendUsage('acc', { type: 'claude-cli', configDir }, {
+      fetchImpl: okFetch(), getManagedOAuth: () => 'tok'
+    });
+    expect(r.status).toBe('ok');
+    expect(r.tokenSource).toBe('managed');
+  });
+
+  it('managed OAuth 토큰이 401 이면 (토큰 자체가 거부) unauthorized', async () => {
+    const configDir = mk({ ...liveCreds, expiresAt: PAST });
+    const r = await fetchBackendUsage('acc', { type: 'claude-cli', configDir }, {
+      fetchImpl: vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}) })),
+      getManagedOAuth: () => 'tok'
+    });
+    expect(r.status).toBe('unauthorized');
+  });
+
+  it('managed OAuth 토큰이 없으면 종전대로 expired', async () => {
+    const configDir = mk({ ...liveCreds, expiresAt: PAST });
+    const fetchImpl = okFetch();
+    const r = await fetchBackendUsage('acc', { type: 'claude-cli', configDir }, {
+      fetchImpl, getManagedOAuth: () => null
+    });
+    expect(r.status).toBe('expired');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('credentials.json 이 없으면 configDir 기반 키체인 항목을 읽는다', async () => {
     const configDir = mk(null, null);
     const execFileAsync = vi.fn(async () => ({

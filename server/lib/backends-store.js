@@ -172,6 +172,8 @@ export async function createBackendsStore(filePath, { secretsStore } = {}) {
     getRaw: () => cache,
     getPublic: publicView,
     getBackend: (id) => cache.backends?.[id] ?? null,
+    /** 이 백엔드에 저장된 managed OAuth 토큰(secrets.json 의 oauth.<id>). 없으면 null. */
+    getOAuthToken: (id) => secretsStore?.getOAuth?.(id) ?? null,
     onChange: (cb) => emitter.on('change', cb),
 
     async createBackend(id, data) {

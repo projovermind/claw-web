@@ -18,8 +18,11 @@ import { logger } from './logger.js';
  * 디렉터리에는 sha256(configDir) 앞 8자를 붙인다. 이 규칙 덕분에 멀티 계정이
  * 서로 다른 키체인 항목을 갖는다.
  *
- * ⚠️ secrets.json 의 oauth.* (setup-token 으로 발급) 은 여기에 쓸 수 없다.
+ * ⚠️ secrets.json 의 oauth.* (setup-token 으로 발급) 은 보통 여기에 쓸 수 없다.
  *    그 토큰에는 `user:profile` 스코프가 없어서 /api/oauth/usage 가 403 이다.
+ *    다만 configDir 토큰이 없거나 만료된 백엔드는 이 토큰으로 한 번 시도해 본다 —
+ *    403 이면 인증이 죽은 것이 아니라 조회만 안 되는 것이므로 status 를 'expired'
+ *    가 아니라 'token-only' 로 돌려준다(러너는 이 토큰으로 정상 동작한다).
  *
  * 한도는 configDir 이 아니라 Anthropic 계정(accountUuid) 단위다. 그래서 어떤
  * 백엔드의 configDir 에 유효한 토큰이 없더라도, 같은 accountUuid 로 로그인한
@@ -248,7 +251,9 @@ export async function fetchBackendUsage(id, backend, {
   /** accountUuid → 유효 자격증명 맵. 없으면 이 백엔드 + 기본 계정으로 즉석에서 만든다. */
   getPool,
   /** configDir → creds 라운드 캐시 (풀과 자기 토큰 조회가 중복되지 않게). */
-  credsCache
+  credsCache,
+  /** backendId → secrets.json 의 managed OAuth 토큰(setup-token). 없으면 null. */
+  getManagedOAuth
 } = {}) {
   const fetchedAt = new Date(now()).toISOString();
   const base = {
@@ -294,6 +299,20 @@ export async function fetchBackendUsage(id, backend, {
     }
   }
 
+  // configDir 토큰이 없거나 만료여도, 이 백엔드에 managed OAuth 토큰
+  // (secrets.json 의 oauth.<id>) 이 있으면 러너는 정상으로 뜬다. 인증이 죽은 것이
+  // 아니므로 'expired' 로 단정하지 않는다. 그 토큰으로 조회를 시도해 보고,
+  // user:profile 스코프가 없어 403 이면 'token-only' 로 남긴다.
+  let managedOnly = false;
+  if (!creds) {
+    const managed = getManagedOAuth?.(id) ?? null;
+    if (managed) {
+      creds = { accessToken: managed, subscriptionType: ownCreds?.subscriptionType ?? null };
+      tokenSource = 'managed';
+      managedOnly = true;
+    }
+  }
+
   if (!creds) {
     if (ownExpired) {
       // 대체 토큰도 없음 → 이 계정은 어디서도 유효한 세션이 없다. 갱신은 하지 않는다.
@@ -330,6 +349,21 @@ export async function fetchBackendUsage(id, backend, {
   } catch (err) {
     // err.message 는 토큰을 담지 않는다(요청 URL 만 포함).
     return { ...meta, status: 'error', account: acct, tokenSource, reason: err?.message ?? 'request failed' };
+  }
+
+  // managed OAuth 토큰만 있는 경우의 403 은 "토큰이 죽었다"가 아니라
+  // "이 토큰에 usage 조회 스코프(user:profile)가 없다" 다 — oauth_scope_insufficient.
+  // 러너는 이 토큰으로 정상 동작하므로 계정 정보를 유지한 채 token-only 로 보고한다.
+  // (401 은 토큰 자체가 거부된 것이므로 그대로 unauthorized.)
+  if (res.status === 403 && managedOnly) {
+    return {
+      ...meta,
+      status: 'token-only',
+      account: toAccount(account, ownCreds?.subscriptionType ?? null),
+      tokenSource,
+      ...(ownCreds?.expiresAt ? { expiresAt: ownCreds.expiresAt } : {}),
+      reason: 'OAuth 토큰은 있으나 사용량 조회 스코프가 없습니다 (setup-token)'
+    };
   }
 
   if (res.status === 401 || res.status === 403) {
@@ -396,6 +430,9 @@ export function createBackendUsageReader({
   persistPath = null,
   ...deps
 } = {}) {
+  /** 백엔드에 저장된 managed OAuth 토큰(secrets.json 의 oauth.<id>) 조회. */
+  const getManagedOAuth = (id) => backendsStore?.getOAuthToken?.(id) ?? null;
+
   const cache = new Map();   // id -> { at, value, ttl }
   const lastOk = new Map();  // id -> { at, value } — 실패 시 대신 내줄 직전 성공값
   const inflight = new Map(); // id -> Promise
@@ -519,7 +556,7 @@ export function createBackendUsageReader({
     if (inflight.has(id)) return inflight.get(id);
 
     const { getPool, credsCache } = round ?? newRound();
-    const p = fetchBackendUsage(id, backend, { ...deps, now, getPool, credsCache })
+    const p = fetchBackendUsage(id, backend, { getManagedOAuth, ...deps, now, getPool, credsCache })
       .then((value) => record(id, value))
       .finally(() => inflight.delete(id));
     inflight.set(id, p);
