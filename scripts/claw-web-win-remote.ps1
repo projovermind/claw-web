@@ -183,10 +183,26 @@ function Get-CloudflaredExe {
 # 서비스로 도는 cloudflared 는 journalctl 도 없고, 즉시 죽으면 logfile 이 생기지도 않는다.
 # 그때 원인이 남는 유일한 곳이 Application 이벤트 로그다. binPath 도 같이 찍는다 —
 # "--config 가 빠져서 설정 없이 등록됨" 이 여기서 제일 자주 걸린다.
+# binPath 와 "실제로 읽고 있는 config" 를 같이 찍는다. cloudflared 는 자동 업데이트를 마치면
+# 서비스를 자기 기준(systemprofile 홈의 config.yml)으로 다시 등록한다 — 우리가 그쪽에도 같은
+# 내용을 복사해 두므로 고장은 아니지만, 어느 파일을 고쳐야 하는지는 매번 헷갈린다.
+function Show-CfBinPath {
+  $bp = (Get-CimInstance Win32_Service -Filter "Name='cloudflared'" -ErrorAction SilentlyContinue).PathName
+  if (-not $bp) { Warn "binPath 를 읽지 못했다 (서비스가 등록돼 있지 않다)"; return '' }
+  Info "binPath: $bp"
+  if ($bp -match '--config\s+(?:"(?<p>[^"]+)"|(?<p>\S+))') {
+    $cfgPath = $Matches['p']
+    if (Test-Path $cfgPath) { Info "사용 중인 config: $cfgPath" }
+    else { Warn "binPath 가 가리키는 config 가 없다: $cfgPath" }
+  } else {
+    Warn "binPath 에 --config 가 없다 — ingress 가 비어 전 호스트가 404 로 떨어진다"
+  }
+  return $bp
+}
+
 function Show-CfEventLog {
   param([int]$Count = 8)
-  $bp = (Get-CimInstance Win32_Service -Filter "Name='cloudflared'" -ErrorAction SilentlyContinue).PathName
-  if ($bp) { Info "binPath: $bp" } else { Warn "binPath 를 읽지 못했다 (서비스가 등록돼 있지 않다)" }
+  Show-CfBinPath | Out-Null
   $evts = @()
   try {
     $evts = @(Get-EventLog -LogName Application -Source 'cloudflared' -Newest $Count -ErrorAction Stop)
@@ -360,6 +376,9 @@ if ($cf) {
 
 # ── 4. config.yml ────────────────────────────────────────
 # ingress 는 위에서부터 첫 일치가 이긴다. 마지막 404 는 없으면 cloudflared 가 뜨지 않는다.
+# no-autoupdate 는 여기에 둔다. 명령줄의 --no-autoupdate 는 전역 플래그가 아니라 tunnel
+# 하위 플래그라, `--config X --no-autoupdate tunnel run` 처럼 앞에 놓으면 먹지 않는다.
+# 그대로 두면 cloudflared 가 자동 업데이트 뒤 서비스를 자기 기준으로 다시 등록해 버린다.
 Step "4/9  config.yml"
 $yml = @"
 tunnel: $TunnelId
@@ -367,6 +386,7 @@ credentials-file: $CfCred
 protocol: http2
 logfile: $CfLog
 loglevel: info
+no-autoupdate: true
 
 ingress:
   - hostname: $Hostname
@@ -421,10 +441,11 @@ Step "6/9  cloudflared 윈도우 서비스"
 #    "C:\Program Files\cloudflared\cloudflared.exe" — 인자 하나 없이 — 로 등록해 버렸다.
 #    그러면 서비스는 뜨자마자 도움말만 찍고 종료하고, logfile 조차 생기지 않아 원인이
 #    어디에도 안 남은 채 sc failure 액션 때문에 5초마다 재시작만 반복한다.
-#    그래서 binPath 를 우리가 직접 조립해 New-Service 로 등록한다. 이 문자열은 실기에서
-#    'Registered tunnel connection' 2개 + https 200 까지 확인된 형태다.
-# --no-autoupdate: 서비스가 스스로 업데이트하며 재시작하면 그때마다 터널이 끊긴다.
-$CfBinPath = '"{0}" --config "{1}" --no-autoupdate tunnel run' -f $cf, $CfConfig
+#    그래서 binPath 를 우리가 직접 조립해 New-Service 로 등록한다. 이 형태로 실기에서
+#    'Registered tunnel connection' 2개 + https 200 까지 확인했다.
+# autoupdate 끄기는 여기에 넣지 않는다 — --no-autoupdate 는 tunnel 하위 플래그라
+# `--config X --no-autoupdate tunnel run` 위치에서는 무시된다. config.yml 에 넣었다(4단계).
+$CfBinPath = '"{0}" --config "{1}" tunnel run' -f $cf, $CfConfig
 
 $svc = Get-Service cloudflared -ErrorAction SilentlyContinue
 if ($svc) {
@@ -491,7 +512,7 @@ if ($svc -and $svc.Status -eq 'Running') {
   $fgErr = Join-Path $env:TEMP 'claw-cf-fg.err'
   try {
     $fg = Start-Process -FilePath $cf -PassThru -NoNewWindow `
-      -ArgumentList @('--config', "`"$CfConfig`"", '--no-autoupdate', 'tunnel', 'run') `
+      -ArgumentList @('--config', "`"$CfConfig`"", 'tunnel', 'run') `
       -RedirectStandardOutput $fgOut -RedirectStandardError $fgErr
     Wait-Process -Id $fg.Id -Timeout 8 -ErrorAction SilentlyContinue
     if (-not $fg.HasExited) { Stop-Process -Id $fg.Id -Force -ErrorAction SilentlyContinue }
@@ -525,6 +546,14 @@ else {
   Warn "45초 안에 등록되지 않았다 — 로그 꼬리:"
   if (Test-Path $CfLog) { Get-Content $CfLog -Tail 25 | ForEach-Object { Write-Host "      $_" } }
   else { Warn "$CfLog 이 생기지도 않았다 (서비스가 즉시 죽었을 수 있다)" }
+}
+
+# 여기서 binPath 를 한 번 더 본다. cloudflared 가 그사이 자동 업데이트를 마치고 서비스를
+# 자기 기준(systemprofile config)으로 다시 등록했을 수 있다. 그건 고장이 아니다 —
+# 4단계에서 그쪽에도 같은 config 를 복사해 뒀으니 --config 와 tunnel run 만 살아 있으면 된다.
+$binPath = Show-CfBinPath
+if ($binPath -and -not ($binPath -match '--config' -and $binPath -match 'tunnel\s+run')) {
+  Warn "binPath 가 그사이 인자 없는 형태로 바뀌었다 — 재부팅하면 터널이 뜨지 않는다"
 }
 
 # ── 7. SSH 원격 채널 ─────────────────────────────────────
@@ -758,7 +787,10 @@ try {
 }
 
 $svc = Get-Service cloudflared -ErrorAction SilentlyContinue
-if ($svc -and $svc.Status -eq 'Running') { Ok "cloudflared 서비스 Running" }
+if ($svc -and $svc.Status -eq 'Running') {
+  Ok "cloudflared 서비스 Running"
+  Show-CfBinPath | Out-Null    # 어느 config 를 물고 도는지 — 고칠 파일을 헷갈리지 않게
+}
 else {
   $fail += "cloudflared 서비스가 Running 이 아니다 ($($svc.Status))"; Warn $fail[-1]
   # 서비스가 바로 죽으면 아래에서 찍는 $CfLog 이 생기지도 않는다. 그땐 이벤트 로그뿐이다.
