@@ -416,58 +416,100 @@ WslRoot 'systemctl disable --now cloudflared >/dev/null 2>&1 || true' | Out-Null
 # 여기가 이 스크립트의 핵심이다. SYSTEM 계정 + 자동시작이라 로그인이 필요 없고,
 # WSL VM 이 꺼져도 터널은 계속 엣지에 붙어 있다.
 Step "6/9  cloudflared 윈도우 서비스"
+
+# ⚠️ `cloudflared service install` 에 등록을 맡기지 않는다. 실기에서 이 명령이 binPath 를
+#    "C:\Program Files\cloudflared\cloudflared.exe" — 인자 하나 없이 — 로 등록해 버렸다.
+#    그러면 서비스는 뜨자마자 도움말만 찍고 종료하고, logfile 조차 생기지 않아 원인이
+#    어디에도 안 남은 채 sc failure 액션 때문에 5초마다 재시작만 반복한다.
+#    그래서 binPath 를 우리가 직접 조립해 New-Service 로 등록한다. 이 문자열은 실기에서
+#    'Registered tunnel connection' 2개 + https 200 까지 확인된 형태다.
+# --no-autoupdate: 서비스가 스스로 업데이트하며 재시작하면 그때마다 터널이 끊긴다.
+$CfBinPath = '"{0}" --config "{1}" --no-autoupdate tunnel run' -f $cf, $CfConfig
+
 $svc = Get-Service cloudflared -ErrorAction SilentlyContinue
 if ($svc) {
-  Info "기존 서비스 제거 후 새 config 로 다시 설치"
+  Info "기존 서비스 제거 후 다시 등록"
   Stop-Service cloudflared -Force -ErrorAction SilentlyContinue
   # cloudflared 는 정상 진행 로그까지 stderr 로 쓴다. 게다가 서비스가 이미 없을 수도 있다.
-  # 그러니 종료코드가 무엇이든 실패로 보지 않고 기록만 남기고 넘어간다 — 어차피 다시 설치한다.
+  # 그러니 종료코드가 무엇이든 실패로 보지 않고 기록만 남기고 넘어간다 — 어차피 다시 만든다.
   $unins = Native $cf @('service', 'uninstall')
   Info "service uninstall → exit $($unins.ExitCode)$(Tail $unins)"
   Start-Sleep -Seconds 2
-}
-# --config 를 install 앞에 붙여야 한다. cloudflared 는 등록할 binPath 를 지금 받은 인자에서
-# 그대로 만들어 쓰기 때문에, 여기서 빠지면 서비스가 설정 없이 등록된다.
-$inst = Native $cf @('--config', $CfConfig, 'service', 'install')
-Start-Sleep -Seconds 2
-$svc = Get-Service cloudflared -ErrorAction SilentlyContinue
-if (-not $svc) { Die "cloudflared 서비스 등록 실패 (exit $($inst.ExitCode)).$(Tail $inst)" }
-
-# 등록된 binPath 를 직접 읽어 확인한다. 버전에 따라 --config 를 삼키는 경우가 있고,
-# 그러면 서비스는 Running 인데 ingress 가 비어서 전 호스트가 404 로 떨어진다.
-# "설치했으니 됐겠지" 로 넘어가면 이 증상을 못 잡는다.
-$binPath = (Get-CimInstance Win32_Service -Filter "Name='cloudflared'" -ErrorAction SilentlyContinue).PathName
-if (-not $binPath) {
-  Warn "서비스 binPath 를 읽지 못했다 — 확인을 건너뛴다"
-} elseif ($binPath -match '--config') {
-  Ok "binPath 에 --config 포함됨"
-  Info $binPath
-} else {
-  Warn "binPath 에 --config 가 없다 — 교정한다"
-  Info "이전: $binPath"
-  # 맨 앞 실행파일 토큰만 떼어내고 그 뒤에 --config 를 끼워 넣는다. 나머지 인자는 보존한다.
-  if ($binPath -match '^\s*(?:"(?<exe>[^"]+)"|(?<exe>\S+))\s*(?<rest>.*)$') {
-    $exe  = $Matches['exe']
-    $rest = $Matches['rest'].Trim()
-    if (-not $rest) { $rest = 'tunnel run' }
-    $newPath = '"{0}" --config "{1}" {2}' -f $exe, $CfConfig, $rest
-    $scCfg = Native 'sc.exe' @('config', 'cloudflared', 'binPath=', $newPath)
-    $binPath = (Get-CimInstance Win32_Service -Filter "Name='cloudflared'" -ErrorAction SilentlyContinue).PathName
-    if ($binPath -match '--config') { Ok "교정됨: $binPath" }
-    else { Warn "교정 실패 (exit $($scCfg.ExitCode)) — SYSTEM 홈($SysProfCfDir)의 config.yml 로 버틴다$(Tail $scCfg)" }
-  } else {
-    Warn "binPath 를 해석하지 못했다: $binPath"
+  if (Get-Service cloudflared -ErrorAction SilentlyContinue) {
+    $del = Native 'sc.exe' @('delete', 'cloudflared')
+    Info "sc delete → exit $($del.ExitCode)$(Tail $del)"
   }
+  # 삭제는 핸들이 닫힐 때까지 'marked for deletion' 으로 남는다. 바로 New-Service 하면 실패한다.
+  Start-Sleep -Seconds 3
 }
 
-Set-Service cloudflared -StartupType Automatic
+try {
+  New-Service -Name 'cloudflared' -BinaryPathName $CfBinPath `
+    -DisplayName 'Cloudflare Tunnel' -StartupType Automatic `
+    -Description 'claw-web: cloudflared 터널 (WSL 밖에서 SYSTEM 으로 상주)' | Out-Null
+} catch {
+  Die "New-Service 로 cloudflared 등록 실패: $($_.Exception.Message)"
+}
+$svc = Get-Service cloudflared -ErrorAction SilentlyContinue
+if (-not $svc) { Die "cloudflared 서비스가 등록되지 않았다 (New-Service 는 통과했는데 서비스가 없다)." }
+
+# 등록된 binPath 를 되읽어 단정한다. --config 가 없으면 ingress 가 비어 전 호스트가 404 고,
+# tunnel run 이 없으면 서비스가 즉시 죽는다. 둘 다 있어야만 넘어간다.
+$binPath = (Get-CimInstance Win32_Service -Filter "Name='cloudflared'" -ErrorAction SilentlyContinue).PathName
+if (-not ($binPath -match '--config' -and $binPath -match 'tunnel\s+run')) {
+  Warn "binPath 가 기대와 다르다 — sc.exe 로 한 번 더 교정한다"
+  Info "이전: $binPath"
+  $scCfg = Native 'sc.exe' @('config', 'cloudflared', 'binPath=', $CfBinPath)
+  if (-not $scCfg.Ok) { Warn "sc.exe config 실패 (exit $($scCfg.ExitCode))$(Tail $scCfg)" }
+  $binPath = (Get-CimInstance Win32_Service -Filter "Name='cloudflared'" -ErrorAction SilentlyContinue).PathName
+}
+if ($binPath -match '--config' -and $binPath -match 'tunnel\s+run') {
+  Ok "binPath 확인: $binPath"
+} else {
+  Show-CfEventLog
+  Die "binPath 에 --config / tunnel run 을 박지 못했다: $binPath"
+}
+
 # 죽으면 스스로 되살아나게. 이게 없으면 한 번 죽고 끝이다.
 $scFail = Native 'sc.exe' @('failure', 'cloudflared', 'reset=', '0',
                             'actions=', 'restart/5000/restart/5000/restart/5000')
 if (-not $scFail.Ok) { Warn "실패 시 재시작 정책 설정 실패 (exit $($scFail.ExitCode))$(Tail $scFail)" }
 if (Test-Path $CfLog) { Remove-Item $CfLog -Force -ErrorAction SilentlyContinue }
 Start-Service cloudflared -ErrorAction SilentlyContinue
-Ok "서비스 등록 (SYSTEM / 자동시작 / 실패 시 5초 뒤 재시작)"
+Start-Sleep -Seconds 2
+$svc = Get-Service cloudflared -ErrorAction SilentlyContinue
+if ($svc -and $svc.Status -eq 'Running') {
+  Ok "서비스 등록 (SYSTEM / 자동시작 / 실패 시 5초 뒤 재시작)"
+} else {
+  Warn "서비스가 Running 이 아니다 ($($svc.Status))"
+  Show-CfEventLog
+  # 서비스로는 오류 문장이 어디에도 안 남는다. 전경에서 직접 돌리면 첫 줄에 바로 나온다.
+  # `tunnel run` 은 스스로 끝나지 않으므로 8초만 돌리고 죽인다 — 그래서 여기만은 Native
+  # (프로세스 종료를 기다린다) 대신 Start-Process + 파일 리다이렉트를 쓴다.
+  Info "전경에서 8초만 직접 실행해 본다..."
+  $fgOut = Join-Path $env:TEMP 'claw-cf-fg.out'
+  $fgErr = Join-Path $env:TEMP 'claw-cf-fg.err'
+  try {
+    $fg = Start-Process -FilePath $cf -PassThru -NoNewWindow `
+      -ArgumentList @('--config', "`"$CfConfig`"", '--no-autoupdate', 'tunnel', 'run') `
+      -RedirectStandardOutput $fgOut -RedirectStandardError $fgErr
+    Wait-Process -Id $fg.Id -Timeout 8 -ErrorAction SilentlyContinue
+    if (-not $fg.HasExited) { Stop-Process -Id $fg.Id -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Seconds 1
+    foreach ($fp in @($fgOut, $fgErr, $CfLog)) {
+      if ((Test-Path $fp) -and ((Get-Item $fp).Length -gt 0)) {
+        Info "$fp (최근 15줄):"
+        Get-Content $fp -Tail 15 | ForEach-Object { Write-Host "      $_" }
+      }
+    }
+  } catch {
+    Warn "전경 실행도 실패했다: $($_.Exception.Message)"
+  } finally {
+    # 전경 실행이 남긴 'Registered tunnel connection' 이 로그에 남으면 아래 45초 대기가
+    # 서비스가 죽어 있는데도 성공으로 읽는다. 이미 화면에 찍었으니 지우고 간다.
+    Remove-Item $fgOut, $fgErr, $CfLog -Force -ErrorAction SilentlyContinue
+  }
+}
 
 # 서비스는 journalctl 이 없다. 등록 여부는 로그 파일로만 확인된다.
 Info "엣지 등록 확인 중 (최대 45초)..."
