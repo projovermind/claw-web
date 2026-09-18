@@ -5,7 +5,9 @@ import {
   buildCompactSummary,
   compactSession,
   stripCompactSuffix,
-  MIN_HEADROOM_TOKENS,
+  extractFilePaths,
+  renderToolCall,
+  MIN_COMPACTABLE_TOKENS,
   MIN_REGROWTH_TOKENS
 } from '../server/lib/compact.js';
 import { sessionContextUsage, resolveContextWindow, usedContextTokens } from '../server/lib/context-window.js';
@@ -76,9 +78,8 @@ describe('context-window (server port)', () => {
 });
 
 describe('shouldAutoCompact threshold', () => {
-  const usage = (pct) => ({ used: 1, max: 1, pct });
   /** 1M 창에서 pct% 를 쓴 상태 — 실제 운영 세션과 같은 모양. */
-  const wide = (pct) => ({ used: 1_000_000 * (pct / 100), max: 1_000_000, pct });
+  const usage = (pct) => ({ used: 1_000_000 * (pct / 100), max: 1_000_000, pct });
 
   it('is off when pct is 0 / unset', () => {
     expect(shouldAutoCompact(0, usage(99))).toBe(false);
@@ -95,24 +96,40 @@ describe('shouldAutoCompact threshold', () => {
     expect(shouldAutoCompact(70, null)).toBe(false);
   });
 
-  // 폭주 재현: 1M 창 + 임계 50 이면 여유가 480K 남았는데도 매 턴 압축됐다.
-  // (실측 sess_Pxq1fY3zXXTd — 15시간 32회, maxTokens 1000000 / usedPct 52)
-  it('holds off while the window still has real headroom', () => {
-    expect(shouldAutoCompact(50, wide(52))).toBe(false);
-    expect(shouldAutoCompact(50, { used: 524_990, max: 1_000_000, pct: 52.499 })).toBe(false);
-  });
+  describe('압축 가치 하한', () => {
+    it('skips a session too small to be worth the cold start', () => {
+      // 임계는 넘겼지만 쌓인 게 얼마 없다 — 캐시를 날릴 값어치가 없다.
+      expect(shouldAutoCompact(50, { used: MIN_COMPACTABLE_TOKENS - 1, max: 200_000, pct: 50 })).toBe(false);
+      // 200K 창의 90% 라도 20K 짜리 세션은 줄일 게 없다.
+      expect(shouldAutoCompact(80, { used: 20_000, max: 200_000, pct: 90 })).toBe(false);
+    });
 
-  it('fires once headroom drops below the absolute floor', () => {
-    const used = 1_000_000 - MIN_HEADROOM_TOKENS + 1;
-    expect(shouldAutoCompact(50, { used, max: 1_000_000, pct: (used / 1_000_000) * 100 })).toBe(true);
-    // 하한 경계 바로 위(여유가 딱 하한만큼 남음)는 아직 압축하지 않는다.
-    const atFloor = 1_000_000 - MIN_HEADROOM_TOKENS - 1;
-    expect(shouldAutoCompact(50, { used: atFloor, max: 1_000_000, pct: (atFloor / 1_000_000) * 100 })).toBe(false);
-  });
+    it('fires as soon as the value floor is met', () => {
+      expect(shouldAutoCompact(50, { used: MIN_COMPACTABLE_TOKENS, max: 200_000, pct: 50 })).toBe(true);
+    });
 
-  it('applies the same floor to a 200K window', () => {
-    // 200K 창의 90% = 180K 사용, 여유 20K → 압축
-    expect(shouldAutoCompact(80, { used: 180_000, max: 200_000, pct: 90 })).toBe(true);
+    it('lets the percentage alone decide the trigger on a 1M window', () => {
+      // 옛 여유 하한은 1M 창에서 pct 와 무관하게 used 800K 이전 압축을 막았다.
+      // 사용자가 85 로 잡았으면 850K 에서 압축돼야 한다.
+      expect(shouldAutoCompact(85, { used: 850_000, max: 1_000_000, pct: 85 })).toBe(true);
+      // 50 으로 잡았으면 500K 에서 — 여유가 500K 남아 있어도 사용자 설정이 우선이다.
+      expect(shouldAutoCompact(50, { used: 500_000, max: 1_000_000, pct: 50 })).toBe(true);
+      // 임계 미만은 여전히 안 한다.
+      expect(shouldAutoCompact(85, { used: 840_000, max: 1_000_000, pct: 84 })).toBe(false);
+    });
+
+    it('does not depend on the window size at all', () => {
+      // 창을 몰라도(0) 게이트는 used 만 본다.
+      expect(shouldAutoCompact(80, { used: 150_000, max: 0, pct: 90 })).toBe(true);
+      expect(shouldAutoCompact(80, { used: 50_000, max: 0, pct: 90 })).toBe(false);
+    });
+
+    it('leaves runaway prevention to the regrowth hysteresis', () => {
+      // 32회 폭주는 fork 버그였고 in-place 로 해결됐다. 재압축은 히스테리시스가 막는다.
+      const at = { used: 520_000, max: 1_000_000, pct: 52 };
+      expect(shouldAutoCompact(50, at)).toBe(true);
+      expect(shouldAutoCompact(50, at, { lastAutoCompact: { postCompactTokens: 500_000 } })).toBe(false);
+    });
   });
 
   it('will not re-compact until the context regrew past the last compact point', () => {
@@ -346,5 +363,167 @@ describe('auto-compact hysteresis across cycles', () => {
     expect(settleAutoCompactBaseline({ lastAutoCompact: { postCompactTokens: null } }, null)).toBeNull();
     // 옛 형식(usedTokens 에 압축 전 값)은 건드리지 않는다 — 다음 압축 때 새 형식으로 교체된다.
     expect(settleAutoCompactBaseline({ lastAutoCompact: { at: 'old', usedTokens: 900_000 } }, usage)).toBeNull();
+  });
+});
+
+describe('buildCompactSummary — 신호 보존', () => {
+  const msg = (role, content, toolCalls) => ({ role, content, ts: '2026-09-18', ...(toolCalls ? { toolCalls } : {}) });
+
+  /** 앞 200자 뒤에 결론이 숨어 있는, 실제 워커 응답을 닮은 메시지. */
+  const padded = (head, tail) => `${head}\n${'x'.repeat(400)}\n${tail}`;
+
+  function sessionWith(extra = []) {
+    return {
+      id: 'sess-x',
+      title: 'T',
+      agentId: 'cw_server',
+      messages: [
+        ...extra,
+        // RECENT(10) 를 채워 extra 가 '이전 대화' 로 밀리게 한다.
+        ...Array.from({ length: 10 }, (_, i) => msg(i % 2 ? 'assistant' : 'user', `recent-${i}`))
+      ]
+    };
+  }
+
+  it('keeps a decision that sits past the old 200-char cutoff', () => {
+    const s = sessionWith([msg('assistant', padded('시작합니다', '결론: worktree 대신 in-place 로 가기로 했습니다'))]);
+    const summary = buildCompactSummary(s);
+    expect(summary).toContain('## 주요 결정');
+    expect(summary).toContain('worktree 대신 in-place 로 가기로 했습니다');
+  });
+
+  it('keeps unresolved items that sit past the old 200-char cutoff', () => {
+    const s = sessionWith([msg('assistant', padded('작업 중', 'TODO: backend-usage 캐시 만료가 아직 실패합니다'))]);
+    const summary = buildCompactSummary(s);
+    expect(summary).toContain('## 미해결 항목');
+    expect(summary).toContain('backend-usage 캐시 만료가 아직 실패합니다');
+  });
+
+  it('collects file paths from both prose and tool inputs, skipping URLs', () => {
+    const s = sessionWith([
+      msg('assistant', padded('수정', '고친 곳은 server/lib/compact.js:207 입니다. 참고 https://example.com/a/b.html'), [
+        { name: 'Edit', input: { file_path: '/Volumes/Core/claw-web/server/routes/sessions.js' } },
+        { name: 'Bash', input: { command: 'npx vitest run tests/auto-compact.test.js' } }
+      ])
+    ]);
+    const summary = buildCompactSummary(s);
+    expect(summary).toContain('## 관련 파일');
+    expect(summary).toContain('server/lib/compact.js');
+    expect(summary).toContain('/Volumes/Core/claw-web/server/routes/sessions.js');
+    expect(summary).toContain('tests/auto-compact.test.js');
+    // URL 은 경로 목록에 섞이지 않는다 (본문 다이제스트에는 그대로 남는다).
+    const fileSection = summary.slice(summary.indexOf('## 관련 파일'), summary.indexOf('## 대화 요약'));
+    expect(fileSection).not.toContain('example.com');
+    expect(extractFilePaths('참고 https://example.com/a/b.html 와 src/a.ts')).toEqual(['src/a.ts']);
+  });
+
+  it('reports the current work state from the last turn on each side', () => {
+    const s = {
+      id: 'sess-y',
+      title: 'T',
+      agentId: 'a',
+      messages: [msg('user', '컴팩트 요약을 고쳐줘'), msg('assistant', '헤드룸 하한을 함수로 뺐습니다')]
+    };
+    const summary = buildCompactSummary(s);
+    expect(summary).toContain('## 작업 상태');
+    expect(summary).toContain('- 마지막 지시: 컴팩트 요약을 고쳐줘');
+    expect(summary).toContain('- 마지막 진행: 헤드룸 하한을 함수로 뺐습니다');
+  });
+
+  it('keeps recent tool calls verbatim instead of only counting them', () => {
+    const s = {
+      id: 'sess-z',
+      title: 'T',
+      agentId: 'a',
+      messages: [
+        msg('user', '테스트 돌려줘'),
+        msg('assistant', '실행했습니다', [{ name: 'Bash', input: { command: 'npx vitest run', description: '테스트 실행' } }])
+      ]
+    };
+    const summary = buildCompactSummary(s);
+    expect(summary).toContain('**툴 호출:**');
+    expect(summary).toContain('command=npx vitest run');
+    expect(summary).toContain('description=테스트 실행');
+    // 통계 표는 그대로 유지된다.
+    expect(summary).toContain('- Bash: 1회');
+  });
+
+  it('truncates a single oversized tool argument rather than the whole section', () => {
+    const huge = 'y'.repeat(5_000);
+    const rendered = renderToolCall({ name: 'Write', input: { file_path: '/tmp/a.txt', content: huge } });
+    expect(rendered).toContain('/tmp/a.txt');
+    expect(rendered).toContain('5000자 중 앞부분');
+    expect(rendered.length).toBeLessThan(2_000);
+  });
+
+  it('folds older recent-window tool calls when they blow the budget', () => {
+    // 실측 재현: 최근 10개 메시지에 툴 호출 385건(인자 114KB). 건당 상한만으로는
+    // 요약이 원본보다 커졌다.
+    const many = Array.from({ length: 385 }, (_, i) => ({ name: 'Bash', input: { command: `cmd-${i} ${'z'.repeat(300)}` } }));
+    const s = {
+      id: 's',
+      title: 'T',
+      agentId: 'a',
+      messages: [msg('user', '작업'), msg('assistant', '했습니다', many)]
+    };
+    const summary = buildCompactSummary(s);
+    expect(summary).toContain('건 접힘: Bash×');
+    // 가장 최근 호출은 원문으로 남는다.
+    expect(summary).toContain('cmd-384');
+    // 가장 오래된 호출은 접힌다.
+    expect(summary).not.toContain('cmd-0 ');
+    // 예산 상한(20K) + 본문 정도로 끝나야 한다.
+    expect(summary.length).toBeLessThan(40_000);
+  });
+
+  it('renders a tool call with no input', () => {
+    expect(renderToolCall({ name: 'ListAgents' })).toBe('`ListAgents`');
+    expect(renderToolCall({ name: 'ListAgents', input: {} })).toBe('`ListAgents`');
+  });
+
+  it('keeps the tail of an older message, where the outcome usually is', () => {
+    const s = sessionWith([msg('assistant', padded('착수', '최종 상태: 48 files / 532 tests 통과'))]);
+    const summary = buildCompactSummary(s);
+    expect(summary).toContain('48 files / 532 tests 통과');
+  });
+
+  it('notes tool usage inline in the older digest', () => {
+    const s = sessionWith([
+      msg('assistant', '고쳤습니다', [{ name: 'Edit', input: {} }, { name: 'Edit', input: {} }, { name: 'Bash', input: {} }])
+    ]);
+    expect(buildCompactSummary(s)).toContain('[Edit×2, Bash]');
+  });
+
+  it('caps the older listing so a 1000-message session cannot produce a giant summary', () => {
+    const many = Array.from({ length: 600 }, (_, i) => msg(i % 2 ? 'assistant' : 'user', `old-${i} `.repeat(100)));
+    const summary = buildCompactSummary(sessionWith(many));
+    expect(summary).toContain('### 이전 대화 (600개 메시지, 압축됨)');
+    expect(summary).toContain('앞쪽 480개는 목록에서 생략');
+    expect(summary).not.toContain('old-0 ');
+    expect(summary).toContain('old-599');
+  });
+
+  it('shrinks a realistic session well below its original size', () => {
+    const many = Array.from({ length: 300 }, (_, i) =>
+      msg(i % 2 ? 'assistant' : 'user', `메시지 ${i} `.repeat(200), [{ name: 'Bash', input: { command: `cmd-${i}` } }])
+    );
+    const s = sessionWith(many);
+    const originalChars = s.messages.reduce((n, m) => n + m.content.length, 0);
+    expect(buildCompactSummary(s).length).toBeLessThan(originalChars * 0.35);
+  });
+
+  it('omits extraction sections when there is nothing to extract', () => {
+    const s = { id: 's', title: 'T', agentId: 'a', messages: [msg('user', '안녕')] };
+    const summary = buildCompactSummary(s);
+    expect(summary).not.toContain('## 관련 파일');
+    expect(summary).not.toContain('## 주요 결정');
+    expect(summary).not.toContain('## 미해결 항목');
+  });
+
+  it('survives messages with null content and missing fields', () => {
+    const s = { id: 's', title: 'T', agentId: 'a', messages: [{ role: 'user' }, { role: 'assistant', content: null }] };
+    expect(() => buildCompactSummary(s)).not.toThrow();
+    expect(extractFilePaths(null)).toEqual([]);
+    expect(extractFilePaths(undefined)).toEqual([]);
   });
 });
