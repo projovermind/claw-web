@@ -76,6 +76,45 @@ $prevEnc = [Console]::OutputEncoding
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $env:WSL_UTF8 = '1'
 
+# ⚠️ Windows PowerShell 5.1 은 $ErrorActionPreference='Stop' 인 동안 네이티브 exe 가 stderr 에
+# 한 줄이라도 쓰면 그걸 종료성 오류(NativeCommandError)로 승격시킨다. cloudflared 는 정상
+# 진행 로그를 전부 stderr 로 쓰기 때문에 `*> $null` 로도 막히지 않고 스크립트가 통째로 죽는다.
+# 그래서 네이티브 호출은 전부 이 헬퍼를 거친다 — 출력과 종료코드를 값으로 돌려줄 뿐 아무것도
+# 던지지 않는다. 성공/실패 판단은 호출자가 ExitCode 로 한다.
+function Native {
+  param([string]$Exe, [string[]]$Arguments = @())
+  $old  = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $out  = ''
+  $code = 0
+  try {
+    $global:LASTEXITCODE = 0
+    $out  = (& $Exe @Arguments 2>&1 | Out-String)
+    $code = $LASTEXITCODE
+  } catch {
+    $out  = $_.Exception.Message
+    $code = -1
+  } finally {
+    $ErrorActionPreference = $old
+  }
+  if ($null -eq $code) { $code = 0 }      # 출력만 있고 종료코드를 안 남기는 exe 대비
+  return [pscustomobject]@{
+    Output   = (($out -replace "\x1b\[[0-9;]*[A-Za-z]", '') -replace "`0", '').TrimEnd()
+    ExitCode = [int]$code
+    Ok       = ([int]$code -eq 0)
+  }
+}
+
+# 실패 메시지에 붙일 꼬리. 원인이 안 보이는 Die 는 재현 불가능한 버그 리포트가 된다.
+function Tail {
+  param($Result, [int]$Count = 5)
+  if (-not $Result) { return '' }
+  $lines = @(($Result.Output -split "`r?`n") | Where-Object { $_.Trim() })
+  if ($lines.Count -eq 0) { return '' }
+  if ($lines.Count -gt $Count) { $lines = @($lines[($lines.Count - $Count)..($lines.Count - 1)]) }
+  return ("`n      " + ($lines -join "`n      "))
+}
+
 # ⚠️ Windows PowerShell 5.1 은 네이티브 exe 로 인자를 넘길 때 따옴표를 뭉갠다.
 # bash 안의 작은따옴표가 사라지면 awk '{print $1}' 의 $1 이 bash 위치인자로 해석돼
 # 빈 문자열이 된다. 그래서 스크립트를 base64 로 감싸 전선에는 따옴표를 아예 안 태운다.
@@ -87,18 +126,15 @@ function WslCmd {
 }
 function Wsl {
   param([string]$Cmd)
-  $out = & wsl.exe -d $Distro -- bash -lc (WslCmd $Cmd) 2>&1
-  return (($out | Out-String) -replace "\x1b\[[0-9;]*[A-Za-z]", '').Trim()
+  return (Native 'wsl.exe' @('-d', $Distro, '--', 'bash', '-lc', (WslCmd $Cmd))).Output.Trim()
 }
 function WslOk {
   param([string]$Cmd)
-  & wsl.exe -d $Distro -- bash -lc (WslCmd $Cmd) *> $null
-  return ($LASTEXITCODE -eq 0)
+  return (Native 'wsl.exe' @('-d', $Distro, '--', 'bash', '-lc', (WslCmd $Cmd))).Ok
 }
 function WslRoot {
   param([string]$Cmd)
-  $out = & wsl.exe -d $Distro -u root -- bash -lc (WslCmd $Cmd) 2>&1
-  return (($out | Out-String) -replace "\x1b\[[0-9;]*[A-Za-z]", '').Trim()
+  return (Native 'wsl.exe' @('-d', $Distro, '-u', 'root', '--', 'bash', '-lc', (WslCmd $Cmd))).Output.Trim()
 }
 
 # BOM 없는 UTF-8 로 쓴다. config.yml / sshd_config / authorized_keys 는 BOM 이 붙으면
@@ -112,7 +148,7 @@ function Save-Text {
 }
 
 function Get-WslDistro {
-  $raw = & wsl.exe -l -q 2>$null
+  $raw = (Native 'wsl.exe' @('-l', '-q')).Output -split "`r?`n"
   $names = @()
   foreach ($line in $raw) {
     $n = ($line -replace "`0", '').Trim()      # WSL_UTF8 이 안 먹는 옛 빌드 대비
@@ -186,6 +222,9 @@ if ($Diagnose) {
   $svc = Get-Service cloudflared -ErrorAction SilentlyContinue
   if ($svc) {
     Write-Host "    상태: $($svc.Status) / 시작유형: $($svc.StartType)"
+    # binPath 에 --config 가 없으면 서비스는 Running 인데 ingress 가 비어 전 호스트가 404 다.
+    $dbp = (Get-CimInstance Win32_Service -Filter "Name='cloudflared'" -ErrorAction SilentlyContinue).PathName
+    if ($dbp) { Write-Host "    binPath: $dbp" } else { Warn "binPath 를 읽지 못했다" }
   } else { Warn "cloudflared 윈도우 서비스가 없다 — 터널이 아직 WSL 안에 있다" }
 
   Info "cloudflared 로그 (최근 40줄)"
@@ -202,7 +241,7 @@ if ($Diagnose) {
   Show-Tasks
 
   Info "포트포워딩"
-  & netsh interface portproxy show v4tov4
+  Write-Host ((Native 'netsh.exe' @('interface', 'portproxy', 'show', 'v4tov4')).Output)
 
   Info "레포 상태"
   Write-Host (Wsl "cd ~/claw-web 2>/dev/null && git log --oneline -3 && echo '--- origin 과의 차이:' && git rev-list --left-right --count HEAD...origin/main 2>/dev/null && echo '--- 로컬 수정:' && git status --short --untracked-files=no | head -10")
@@ -213,8 +252,8 @@ if ($Diagnose) {
 
 # ── 1. WSL 깨우기 ────────────────────────────────────────
 Step "1/9  WSL"
-& wsl.exe -d $Distro -u root --exec /bin/true *> $null
-if (-not (WslOk 'true')) { Die "WSL 배포판 '$Distro' 에 접속할 수 없다. 'wsl -l -v' 로 이름을 확인하라." }
+$boot = Native 'wsl.exe' @('-d', $Distro, '-u', 'root', '--exec', '/bin/true')
+if (-not (WslOk 'true')) { Die "WSL 배포판 '$Distro' 에 접속할 수 없다. 'wsl -l -v' 로 이름을 확인하라.$(Tail $boot)" }
 Ok "WSL '$Distro' 응답함"
 if (-not (WslOk 'test -d /run/systemd/system')) {
   Warn "systemd 가 꺼져 있다 — claw-web 서비스가 안 뜰 수 있다 (/etc/wsl.conf 의 systemd=true 확인)"
@@ -267,8 +306,9 @@ if ($cf) {
 } else {
   Info "winget 으로 설치 시도..."
   if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
-    & winget.exe install --id Cloudflare.cloudflared -e --silent `
-      --accept-source-agreements --accept-package-agreements *> $null
+    $wg = Native 'winget.exe' @('install', '--id', 'Cloudflare.cloudflared', '-e', '--silent',
+                                '--accept-source-agreements', '--accept-package-agreements')
+    if (-not $wg.Ok) { Info "winget 종료코드 $($wg.ExitCode)$(Tail $wg)" }
     $cf = Get-CloudflaredExe
   }
   if (-not $cf) {
@@ -349,15 +389,18 @@ $svc = Get-Service cloudflared -ErrorAction SilentlyContinue
 if ($svc) {
   Info "기존 서비스 제거 후 새 config 로 다시 설치"
   Stop-Service cloudflared -Force -ErrorAction SilentlyContinue
-  & $cf service uninstall *> $null
+  # cloudflared 는 정상 진행 로그까지 stderr 로 쓴다. 게다가 서비스가 이미 없을 수도 있다.
+  # 그러니 종료코드가 무엇이든 실패로 보지 않고 기록만 남기고 넘어간다 — 어차피 다시 설치한다.
+  $unins = Native $cf @('service', 'uninstall')
+  Info "service uninstall → exit $($unins.ExitCode)$(Tail $unins)"
   Start-Sleep -Seconds 2
 }
 # --config 를 install 앞에 붙여야 한다. cloudflared 는 등록할 binPath 를 지금 받은 인자에서
 # 그대로 만들어 쓰기 때문에, 여기서 빠지면 서비스가 설정 없이 등록된다.
-& $cf --config $CfConfig service install *> $null
+$inst = Native $cf @('--config', $CfConfig, 'service', 'install')
 Start-Sleep -Seconds 2
 $svc = Get-Service cloudflared -ErrorAction SilentlyContinue
-if (-not $svc) { Die "cloudflared 서비스 등록 실패. '$cf --config $CfConfig service install' 을 직접 실행해 오류를 보라." }
+if (-not $svc) { Die "cloudflared 서비스 등록 실패 (exit $($inst.ExitCode)).$(Tail $inst)" }
 
 # 등록된 binPath 를 직접 읽어 확인한다. 버전에 따라 --config 를 삼키는 경우가 있고,
 # 그러면 서비스는 Running 인데 ingress 가 비어서 전 호스트가 404 로 떨어진다.
@@ -377,10 +420,10 @@ if (-not $binPath) {
     $rest = $Matches['rest'].Trim()
     if (-not $rest) { $rest = 'tunnel run' }
     $newPath = '"{0}" --config "{1}" {2}' -f $exe, $CfConfig, $rest
-    & sc.exe config cloudflared binPath= $newPath *> $null
+    $scCfg = Native 'sc.exe' @('config', 'cloudflared', 'binPath=', $newPath)
     $binPath = (Get-CimInstance Win32_Service -Filter "Name='cloudflared'" -ErrorAction SilentlyContinue).PathName
     if ($binPath -match '--config') { Ok "교정됨: $binPath" }
-    else { Warn "교정 실패 — SYSTEM 홈($SysProfCfDir)의 config.yml 로 버틴다" }
+    else { Warn "교정 실패 (exit $($scCfg.ExitCode)) — SYSTEM 홈($SysProfCfDir)의 config.yml 로 버틴다$(Tail $scCfg)" }
   } else {
     Warn "binPath 를 해석하지 못했다: $binPath"
   }
@@ -388,7 +431,9 @@ if (-not $binPath) {
 
 Set-Service cloudflared -StartupType Automatic
 # 죽으면 스스로 되살아나게. 이게 없으면 한 번 죽고 끝이다.
-& sc.exe failure cloudflared reset= 0 actions= restart/5000/restart/5000/restart/5000 *> $null
+$scFail = Native 'sc.exe' @('failure', 'cloudflared', 'reset=', '0',
+                            'actions=', 'restart/5000/restart/5000/restart/5000')
+if (-not $scFail.Ok) { Warn "실패 시 재시작 정책 설정 실패 (exit $($scFail.ExitCode))$(Tail $scFail)" }
 if (Test-Path $CfLog) { Remove-Item $CfLog -Force -ErrorAction SilentlyContinue }
 Start-Service cloudflared -ErrorAction SilentlyContinue
 Ok "서비스 등록 (SYSTEM / 자동시작 / 실패 시 5초 뒤 재시작)"
@@ -439,8 +484,9 @@ if ($keys | Where-Object { (($_ -split '\s+')[0..1] -join ' ') -eq $keyBody }) {
   Ok "공개키 등록 → $akPath"
 }
 # sshd 는 이 파일이 SYSTEM/Administrators 외에 쓰기 가능하면 통째로 무시한다.
-& icacls.exe $akPath /inheritance:r /grant 'SYSTEM:F' /grant 'BUILTIN\Administrators:F' *> $null
-Ok "ACL: SYSTEM + Administrators 만"
+$acl = Native 'icacls.exe' @($akPath, '/inheritance:r', '/grant', 'SYSTEM:F', '/grant', 'BUILTIN\Administrators:F')
+if ($acl.Ok) { Ok "ACL: SYSTEM + Administrators 만" }
+else { Warn "ACL 설정 실패 (exit $($acl.ExitCode)) — sshd 가 키 파일을 무시할 수 있다$(Tail $acl)" }
 
 # sshd_config — 지시자는 반드시 첫 Match 블록 *앞* 에 넣어야 한다.
 # 파일 끝에 붙이면 기본 sshd_config 마지막의 'Match Group administrators' 안으로
@@ -579,8 +625,12 @@ $wslIp = (Wsl "hostname -I | awk '{print `$1}'")
 if ($wslIp -match '^\d+\.\d+\.\d+\.\d+$') {
   Save-Text -Path $IpFile -Text $wslIp
   foreach ($la in @('0.0.0.0', '127.0.0.1')) {
-    & netsh.exe interface portproxy delete v4tov4 listenport=$Port listenaddress=$la *> $null
-    & netsh.exe interface portproxy add v4tov4 listenport=$Port listenaddress=$la connectport=$Port connectaddress=$wslIp *> $null
+    Native 'netsh.exe' @('interface', 'portproxy', 'delete', 'v4tov4',
+                         "listenport=$Port", "listenaddress=$la") | Out-Null
+    $pp = Native 'netsh.exe' @('interface', 'portproxy', 'add', 'v4tov4',
+                               "listenport=$Port", "listenaddress=$la",
+                               "connectport=$Port", "connectaddress=$wslIp")
+    if (-not $pp.Ok) { Warn "portproxy 등록 실패 ($la, exit $($pp.ExitCode))$(Tail $pp)" }
   }
   Ok "포트포워딩 지금 적용: 0.0.0.0:$Port / 127.0.0.1:$Port → ${wslIp}:$Port"
 } else {
