@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { computeDelegationTierStats } from '../lib/delegation-tier-stats.js';
 
 /** 완료 이력 응답 기본 개수 — 이력은 링버퍼(300)라 그 이상은 의미가 없다. */
 const DEFAULT_RECENT = 50;
@@ -22,7 +23,7 @@ function toTelemetry(entry) {
   };
 }
 
-export function createDelegationsRouter({ delegationTracker }) {
+export function createDelegationsRouter({ delegationTracker, sessionsStore }) {
   const router = Router();
   router.get('/', (req, res) => {
     const raw = Number(req.query.limit);
@@ -36,5 +37,12 @@ export function createDelegationsRouter({ delegationTracker }) {
       recent: limit > 0 ? delegationTracker.listRecent(limit).map(toTelemetry) : []
     });
   });
+
+  // 티어별 위임 건수·에스컬레이션(티어 오버라이드) 비율·토큰 소비 — 티어를
+  // 나눈 효과가 실제로 있는지 숫자로 보기 위한 집계.
+  router.get('/tier-stats', (req, res) => {
+    res.json(computeDelegationTierStats({ delegationTracker, sessionsStore }));
+  });
+
   return router;
 }

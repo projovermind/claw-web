@@ -21,7 +21,9 @@ import { logger } from './logger.js';
  *     depth: 1,
  *     groupId: "grp_1_..." | null,   // 같은 턴에 함께 발주된 위임 묶음
  *     tier: "middle" | null,         // 이 위임이 실제로 돌아간 모델 급
- *     tierOverridden: boolean,       // 위임 JSON 이 티어를 지정했는가(= 기본값이 아님)
+ *     tierOverridden: boolean,       // 위임 JSON 이 티어를 지정했는가(= 기본값이 아님) — 상위 티어를
+ *                                    // "요청"했다는 뜻일 뿐, 실제로 막혀서 escalate 했는지와는 다른 축
+ *     escalated: boolean,            // 워커가 <escalate> 를 남기고 완료됐는가 (complete() 가 기록)
  *     status: "running" | "completed" | "failed" | "orphaned",
  *     createdAt: ISO string,
  *     queuedAt: ISO string,          // 발주 접수 시각 (대기열에 들어간 순간)
@@ -203,6 +205,7 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
         // "상위 티어로 다시 맡길지" 판단의 기준선이 된다.
         tier,
         tierOverridden,
+        escalated: false,
         status: 'running',
         createdAt: startedAt,
         queuedAt: acceptedAt,
@@ -246,9 +249,12 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
     },
 
     /**
-     * Mark a delegation as completed with a result summary.
+     * Mark a delegation as completed with a result summary. `escalated` is
+     * true when the worker left an <escalate> tag — the only real signal
+     * that this tier was too weak for the task (distinct from tierOverridden,
+     * which just means a tier was explicitly requested).
      */
-    complete(targetSessionId, result, reportPath = null) {
+    complete(targetSessionId, result, reportPath = null, escalated = false) {
       const entry = active.get(targetSessionId);
       if (!entry) return null;
       entry.status = 'completed';
@@ -256,6 +262,7 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
       entry.durationMs = elapsedMs(entry.startedAt ?? entry.createdAt, entry.completedAt);
       entry.result = result;
       entry.reportPath = reportPath;
+      entry.escalated = !!escalated;
       active.delete(targetSessionId);
       retire(entry);
       releaseAgent(entry.targetAgentId);

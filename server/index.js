@@ -747,7 +747,7 @@ async function main() {
   app.use('/api/lsp', createLspRouter({ projectsStore }));
   app.use('/api/terraform', createTerraformRouter({ projectsStore, configStore, metadataStore, eventBus }));
   app.use('/api/undo', createUndoRouter({ configStore, metadataStore, sessionsStore, eventBus }));
-  app.use('/api/delegations', createDelegationsRouter({ delegationTracker }));
+  app.use('/api/delegations', createDelegationsRouter({ delegationTracker, sessionsStore }));
   app.use('/api/export-import', createExportImportRouter({ skillsStore, configStore }));
   app.use('/api/bridge', bridgeRouter);
   app.use('/api/workspace-layout', createWorkspaceLayoutRouter({ workspaceLayoutStore, eventBus }));

@@ -438,6 +438,28 @@ export interface DelegationEntry {
   result: string | null;
 }
 
+export interface DelegationTierStatsRow {
+  tier: string;
+  delegationCount: number;
+  /** 워커가 <escalate> 를 남기고 완료된 건수 — 이 티어로는 실제로 모자랐다는 신호. */
+  escalatedCount: number;
+  escalationRate: number;
+  /** 위임 JSON 이 티어를 명시적으로 지정한 건수 — 요청일 뿐 에스컬레이션과는 다른 축. */
+  tierSpecifiedCount: number;
+  totalTokens: number;
+}
+
+export interface DelegationTierStats {
+  tiers: DelegationTierStatsRow[];
+  totals: {
+    delegationCount: number;
+    escalatedCount: number;
+    escalationRate: number;
+    tierSpecifiedCount: number;
+    totalTokens: number;
+  };
+}
+
 /** CLI 권한 모드 — `auto` 는 분류기가 위험 행동만 차단 (CLI 2.1.259+). */
 export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'auto';
 

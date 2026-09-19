@@ -722,11 +722,12 @@ export function createMessageSender(ctx) {
                 const truncationWarning = extracted.structured
                   ? ''
                   : `⚠️ 워커가 <report> 블록을 출력하지 않아 아래 요약은 응답의 앞뒤만 잘라낸 것입니다 — 중간 내용이 빠져 있으니 판단 전에 원문을 확인하세요.\n`;
-                const completed = delegationTracker.complete(sessionId, summary, reportPath);
+                // 워커가 막혀서 <escalate> 를 남겼는가. loop 위임이 아니어도 리드가
+                // 알아야 한다 — 요약만 보면 "완료" 로 읽혀 다음 단계로 넘어간다. complete()
+                // 호출보다 먼저 뽑아야 tracker 엔트리에 실제 escalated 여부를 남길 수 있다.
+                const escalation = extractEscalation(fullText);
+                const completed = delegationTracker.complete(sessionId, summary, reportPath, !!escalation);
                 if (completed) {
-                  // 워커가 막혀서 <escalate> 를 남겼는가. loop 위임이 아니어도 리드가
-                  // 알아야 한다 — 요약만 보면 "완료" 로 읽혀 다음 단계로 넘어간다.
-                  const escalation = extractEscalation(fullText);
                   const escalationNotice = escalation
                     ? buildEscalationNotice({
                         reason: escalation.reason,

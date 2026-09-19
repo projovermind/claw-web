@@ -121,6 +121,28 @@ describe('delegationTracker — 실행 티어 기록', () => {
     expect(entry.tier).toBeNull();
     expect(entry.tierOverridden).toBe(false);
   });
+
+  it('create 는 escalated 를 항상 false 로 시작한다', () => {
+    const entry = tracker.create({
+      originSessionId: 'lead', targetSessionId: 'w3', targetAgentId: 'worker',
+      task: '구현', tier: 'high', tierOverridden: true
+    });
+    expect(entry.escalated).toBe(false);
+  });
+
+  it('complete 에 escalated 인자를 안 주면 false 로 남는다 (옛 호출부 호환)', () => {
+    tracker.create({ originSessionId: 'lead', targetSessionId: 'w4', targetAgentId: 'worker', task: '구현' });
+    expect(tracker.complete('w4', 'ok').escalated).toBe(false);
+  });
+
+  it('complete(..., true) 는 escalated=true 를 엔트리에 남긴다 — tierOverridden 과는 별개', () => {
+    // tierOverridden=false (agentDefaultTier 로 돌았음) 인데도 escalate 가 날 수 있다 —
+    // 두 필드가 서로 다른 축이라는 것을 보여준다.
+    tracker.create({ originSessionId: 'lead', targetSessionId: 'w5', targetAgentId: 'worker', task: '구현', tier: 'low', tierOverridden: false });
+    const completed = tracker.complete('w5', 'ok', null, true);
+    expect(completed.escalated).toBe(true);
+    expect(completed.tierOverridden).toBe(false);
+  });
 });
 
 describe('executeDelegation — 트래커에 실제 실행 티어를 남긴다', () => {

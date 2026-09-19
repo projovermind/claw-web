@@ -540,6 +540,7 @@ export const api = {
     del<{ ok: boolean }>(`/accounts/${id}/login/headless`),
 
   delegations: () => get<{ delegations: import('./types').DelegationEntry[] }>('/delegations').then(r => r.delegations),
+  delegationTierStats: () => get<import('./types').DelegationTierStats>('/delegations/tier-stats'),
 
   // Workspace layout sync — 뷰(viewId) 단위. 처음 보는 viewId 는 다른 뷰의
   // 레이아웃을 복제해 주지 않고 빈 결과를 내려준다(seeded 는 항상 false —

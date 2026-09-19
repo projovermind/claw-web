@@ -11,6 +11,7 @@ import { BackendUsageGauge, useBackendUsage, sharedAccountCounts } from './Backe
 import { ModelRow } from './ModelRow';
 import { InlineEditText } from './InlineEditText';
 import { TierModelMap } from './TierModelMap';
+import { DelegationTierStatsPanel } from './DelegationTierStatsPanel';
 import { AddBackendModal } from './AddBackendModal';
 import { AccountAuthModal } from './AccountAuthModal';
 import { ClaudeStatusCard } from './ClaudeStatusCard';
@@ -358,6 +359,8 @@ export function BackendsTab() {
           <div className="text-[10px] text-zinc-600">* Anthropic 계정의 실제 잔여 한도는 별도 확인 필요 (API로 조회 불가)</div>
         </div>
       )}
+
+      <DelegationTierStatsPanel />
 
       <div className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-4 space-y-3">
         <div className="text-sm font-semibold text-zinc-300">Global</div>
