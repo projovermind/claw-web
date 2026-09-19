@@ -316,6 +316,53 @@ export function extractChoices(
   return { body: text, choices: [] };
 }
 
+// 세션 요약 재시작 메시지 — 헤더 한 줄만 보이고 클릭 시 전체 표시.
+// 마지막 '[현재 요청]' 이후(실제 사용자 입력)는 항상 그대로 노출.
+const SUMMARY_PREFIXES = [
+  '[이전 대화 컨텍스트 — 세션이 새로 시작되어 요약으로 전달됨]',
+  '[이전 세션에서 이어짐]', // server/lib/compact.js:305 seedContent
+];
+const CURRENT_REQUEST_MARKER = '[현재 요청]';
+
+function SummaryCollapsible({ content, searchQuery }: { content: string; searchQuery?: string }) {
+  const [open, setOpen] = useState(false);
+  const { summary, rest } = useMemo(() => {
+    const lastIdx = content.lastIndexOf(CURRENT_REQUEST_MARKER);
+    if (lastIdx === -1) return { summary: content, rest: '' };
+    return { summary: content.slice(0, lastIdx), rest: content.slice(lastIdx) };
+  }, [content]);
+  const lineCount = useMemo(
+    () => summary.split('\n').filter((l) => l.trim().length > 0).length,
+    [summary]
+  );
+
+  const renderBody = (text: string) =>
+    searchQuery ? (
+      <HighlightText text={text} query={searchQuery} />
+    ) : (
+      <div className="markdown-body">
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={mdComponents} urlTransform={editorUrlTransform}>
+          {text}
+        </ReactMarkdown>
+      </div>
+    );
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-1.5 text-left text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors mb-1.5 px-2 py-1 rounded border border-dashed border-zinc-700 bg-zinc-900/30"
+      >
+        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        <span>🔄 이전 대화 요약 · {lineCount}줄 · {open ? '접기' : '펼치기'}</span>
+      </button>
+      {open && <div className="mb-2">{renderBody(summary)}</div>}
+      {rest && renderBody(rest)}
+    </div>
+  );
+}
+
 export interface WakeupInfo { seconds: number; reason: string }
 
 // 서버(server/routes/chat/wakeup.js)의 WAKEUP_RE 와 동일한 형태를 인식한다.
@@ -607,7 +654,9 @@ function MessageBubble({ message, searchQuery, onChoice, nextUserContent, hasLat
           </div>
         )}
         {isUser ? (
-          searchQuery ? (
+          SUMMARY_PREFIXES.some((p) => message.content.startsWith(p)) ? (
+            <SummaryCollapsible content={message.content} searchQuery={searchQuery} />
+          ) : searchQuery ? (
             <HighlightText text={message.content} query={searchQuery} />
           ) : (
             <div className="markdown-body">
