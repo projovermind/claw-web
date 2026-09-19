@@ -170,17 +170,25 @@ export function startClaudeRun({
   // 백엔드 스케줄러: backendsStore 기반 pickBackend 지원
   // agent 에 backendId/accountId 가 없으면 전역 active 백엔드로 해석된 id 를 사용한다.
   // (이게 없으면 default 백엔드에 저장한 managed 토큰이 주입되지 않아 옛 인증을 계속 씀)
-  let pickedBackendId = agent.backendId ?? agent.accountId ?? envOverrides?._resolvedBackendId ?? null;
+  //
+  // ⚠️ pickedAccountId 가 _resolvedBackendId 보다 우선해야 한다.
+  // 스케줄러가 계정 A 를 골라 CLAUDE_CONFIG_DIR 을 세팅해도, 여기서 전역 active
+  // 백엔드 B 의 id 가 잡히면 아래 managed 토큰 블록이 B 의 토큰을 주입하면서
+  // CLAUDE_CONFIG_DIR 을 지워 버린다 → 스케줄러의 계정 선택이 통째로 무효화되고
+  // 모든 spawn 이 B 계정으로 나간다. (로그에는 A 로 찍히는데 실제 인증은 B)
+  let pickedBackendId = agent.backendId ?? agent.accountId ?? pickedAccountId ?? envOverrides?._resolvedBackendId ?? null;
 
   // ── Managed OAuth 토큰 주입 ──
   // 백엔드별로 secrets.json 에 저장된 long-lived OAuth 토큰이 있으면 spawn env 에 주입.
   // 이 경우 configDir 인증보다 우선 — Anthropic Console 에서 발급한 토큰을 직접 사용.
   // (process.env 는 건드리지 않음 — 백엔드 간 토큰 충돌 방지)
   const _backendsStore = envOverrides?._backendsStore;
+  let usedManagedOAuth = false;
   if (_backendsStore && pickedBackendId) {
     try {
       const managedOAuth = _backendsStore.getOAuthToken?.(pickedBackendId);
       if (managedOAuth) {
+        usedManagedOAuth = true;
         cleanEnv.CLAUDE_CODE_OAUTH_TOKEN = managedOAuth;
         // managed 토큰을 쓸 때는 configDir 충돌 방지 — 토큰이 우선이므로 configDir 제거
         delete cleanEnv.CLAUDE_CONFIG_DIR;
@@ -198,6 +206,14 @@ export function startClaudeRun({
       inheritedOAuthToken) {
     cleanEnv.CLAUDE_CODE_OAUTH_TOKEN = inheritedOAuthToken;
   }
+
+  // ── 실제로 인증에 쓰인 백엔드 id ──
+  // agent.accountId 와 agent.backendId 가 서로 다르면 pickedAccountId(= CLAUDE_CONFIG_DIR 을
+  // 준 계정)와 pickedBackendId 가 갈린다. managed 토큰이 실렸을 때만 인증 주체가
+  // pickedBackendId 이고, 아니면 configDir 을 준 계정이 진짜 주체다. 이걸 구분하지 않아
+  // 쓰지도 않은 백엔드에 쿨다운이 걸리고(로그: accountId:claude / backendId:acc_xxx),
+  // 정작 한도에 걸린 계정은 계속 뽑혔다.
+  const authBackendId = usedManagedOAuth ? pickedBackendId : (pickedAccountId ?? pickedBackendId);
 
   // ── 모델 결정 (봇 bot.js 라인 2391-2410 동일) ──
   // 항상 MODEL_ID_MAP으로 변환 — Z.AI anthropic 프록시도 claude-sonnet-4-6을 받음
@@ -469,21 +485,22 @@ export function startClaudeRun({
     rateLimitText = text;
     const expiresAt = new Date(parseRateLimitExpiry(text)).toISOString();
 
-    // backendsStore 기반 쿨다운 (우선)
-    if (envOverrides?._backendsStore && pickedBackendId) {
-      envOverrides._backendsStore.setCooldown(pickedBackendId, expiresAt).catch(() => {});
-    } else if (accountScheduler && pickedAccountId) {
-      accountScheduler.setCooldown(pickedAccountId, expiresAt).catch(() => {});
+    // 쿨다운은 실제 인증에 쓰인 백엔드(authBackendId)에 건다.
+    if (envOverrides?._backendsStore && authBackendId) {
+      envOverrides._backendsStore.setCooldown(authBackendId, expiresAt).catch(() => {});
+    } else if (accountScheduler && authBackendId) {
+      accountScheduler.setCooldown(authBackendId, expiresAt).catch(() => {});
     }
 
     // Find next account synchronously (before async cooldown persists)
-    const nextAcc = accountScheduler?.pickNextAccount?.(pickedAccountId);
+    const nextAcc = accountScheduler?.pickNextAccount?.(authBackendId);
     const nextAccountId = nextAcc?.id ?? null;
     logger.warn(
-      { accountId: pickedAccountId, backendId: pickedBackendId, expiresAt, nextAccountId },
+      { accountId: pickedAccountId, backendId: pickedBackendId, authBackendId, expiresAt, nextAccountId },
       `[scheduler] rate-limited → next: ${nextAccountId ?? 'none'}`
     );
-    onRateLimit?.({ accountId: pickedAccountId, backendId: pickedBackendId, nextAccountId });
+    // UI 배지도 실제 쿨다운이 걸린 백엔드를 가리켜야 한다.
+    onRateLimit?.({ accountId: pickedAccountId, backendId: authBackendId, nextAccountId });
 
     // Kill process so caller can restart with new account (max 1 restart enforced by caller)
     if (!rateLimitRestartDone) {

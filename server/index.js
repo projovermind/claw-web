@@ -556,7 +556,14 @@ async function main() {
   } catch (err) {
     logger.warn({ err }, 'runner: reapOrphans failed (non-fatal)');
   }
-  const accountScheduler = createAccountScheduler({ accountsStore });
+  // 마지막 ok 사용량을 파일에 남겨 재기동 후에도 한도 게이지가 유지된다.
+  // 스케줄러와 /api/backends 가 같은 인스턴스를 공유해야 캐시가 중복 조회되지 않는다.
+  const usageReader = createBackendUsageReader({
+    backendsStore,
+    persistPath: path.join(USER_DIR, 'backend-usage-last.json')
+  });
+  // usageReader: 쿨다운 만료 복구 전에 실제 주간 잔량을 확인하려고 넘긴다.
+  const accountScheduler = createAccountScheduler({ accountsStore, usageReader });
   const runner = createRunner({ processTracker, accountScheduler });
   // MCP permission-prompt bridge — shared secret token for the stdio subprocess
   // to authenticate back to the loopback endpoint. Regenerated every boot so
@@ -716,12 +723,7 @@ async function main() {
     pushStore
   }));
   app.use('/api/backends', createBackendsRouter({
-    backendsStore, eventBus, webConfig, configStore, metadataStore,
-    // 마지막 ok 사용량을 파일에 남겨 재기동 후에도 한도 게이지가 유지되게 한다.
-    usageReader: createBackendUsageReader({
-      backendsStore,
-      persistPath: path.join(USER_DIR, 'backend-usage-last.json')
-    })
+    backendsStore, eventBus, webConfig, configStore, metadataStore, usageReader
   }));
   app.use('/api/accounts', createAccountsRouter({ accountsStore, eventBus, backendsStore }));
   app.use('/api/uploads', createUploadsRouter({ uploadsDir: UPLOADS_DIR, eventBus }));
