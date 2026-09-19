@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { startClaudeRun } from '../server/runners/claude-cli-runner.js';
 import { createAccountScheduler } from '../server/lib/account-scheduler.js';
 import { classifyError, resolveAgent } from '../server/routes/chat/utils.js';
@@ -232,5 +235,62 @@ describe('_startFallback — 폴백 백엔드 기준으로 모델 재해석', ()
       fallbackWith({ sonnet: 'oc/big-pickle' })
     );
     expect(fb.agent.model).toBe('claude-sonnet-4-6');
+  });
+});
+
+/**
+ * index.js 는 createAccountScheduler 에 backendsStore 를 넘기지 않는다(계정 래퍼만 넘긴다).
+ * 넘기면 계정 선택 결과가 바뀐다 — 그 차이를 고정해 둔다. 주입 여부를 바꾸려는 사람이
+ * 무엇이 달라지는지 이 테스트로 먼저 보게 하기 위한 것이다.
+ */
+describe('backendsStore 주입 여부 — pickAccount 결과가 갈린다', () => {
+  let dir;
+  let accounts;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sched-'));
+    accounts = ['claude', 'acc_sub'].map((id) => {
+      const configDir = path.join(dir, id);
+      fs.mkdirSync(configDir);
+      fs.writeFileSync(path.join(configDir, '.credentials.json'), '{}');
+      // acc_sub 가 더 오래 안 쓰여서 LRU 로는 acc_sub 가 먼저다.
+      return {
+        id, configDir, status: 'active', type: 'claude-cli',
+        lastUsedAt: id === 'claude' ? '2026-09-20T00:00:00Z' : '2026-09-19T00:00:00Z',
+      };
+    });
+  });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const accountsStore = () => ({
+    getAll: () => accounts,
+    getById: (id) => accounts.find((a) => a.id === id) ?? null,
+    update: async () => {},
+  });
+  const storeWithActive = (activeBackend) => ({
+    getBackend: (id) => accounts.find((a) => a.id === id) ?? null,
+    getRaw: () => ({ activeBackend, backends: Object.fromEntries(accounts.map((a) => [a.id, a])) }),
+    updateBackend: async () => {},
+    getOAuthToken: () => null,
+  });
+
+  it('미주입(현재 index.js): LRU 라운드로빈이 서브 계정을 고른다', () => {
+    const scheduler = createAccountScheduler({ accountsStore: accountsStore() });
+    expect(scheduler.pickAccount({ id: 'agent1' }).id).toBe('acc_sub');
+  });
+
+  it('주입: 전역 activeBackend 가 LRU 를 이겨 메인 계정으로 고정된다', () => {
+    const scheduler = createAccountScheduler({
+      accountsStore: accountsStore(), backendsStore: storeWithActive('claude'),
+    });
+    expect(scheduler.pickAccount({ id: 'agent1' }).id).toBe('claude');
+  });
+
+  it('주입 + 전역 active 가 쿨다운이면 라운드로빈으로 되돌아간다 (장애 시 승계는 유지)', () => {
+    accounts[0].cooldownUntil = new Date(Date.now() + 3_600_000).toISOString();
+    const scheduler = createAccountScheduler({
+      accountsStore: accountsStore(), backendsStore: storeWithActive('claude'),
+    });
+    expect(scheduler.pickAccount({ id: 'agent1' }).id).toBe('acc_sub');
   });
 });

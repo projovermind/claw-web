@@ -140,19 +140,49 @@ describe('autoRestoreCooldowns — 잔량 0 이면 복구하지 않는다', () =
 });
 
 /** 한도 메시지만 뱉고 끝나는 가짜 claude CLI. */
-function mockSpawn(line) {
+function mockSpawn({ stdout = [], stderr = [], exitCode = 0 }) {
   return () => {
     const proc = new EventEmitter();
     proc.stdout = new EventEmitter();
     proc.stderr = new EventEmitter();
     proc.kill = () => {};
     setImmediate(() => {
-      proc.stdout.emit('data', line + '\n');
-      proc.emit('close', 0);
+      for (const line of stdout) proc.stdout.emit('data', line + '\n');
+      for (const line of stderr) proc.stderr.emit('data', line + '\n');
+      proc.emit('close', exitCode);
     });
     return proc;
   };
 }
+
+/** setCooldown / updateBackend 호출을 기록하는 최소 backendsStore. */
+function fakeBackendsStore({ oauthFor = null } = {}) {
+  const cooldowns = [];
+  const updates = [];
+  return {
+    cooldowns,
+    updates,
+    getBackend: () => ({ type: 'claude-cli' }),
+    getOAuthToken: (id) => (id === oauthFor ? 'sk-managed' : null),
+    markUsed: async () => {},
+    setCooldown: async (id, expiresAt) => { cooldowns.push({ id, expiresAt }); },
+    updateBackend: async (id, patch) => { updates.push({ id, patch }); },
+  };
+}
+
+/** configDir 은 'claude' 계정이 주고, agent 는 다른 backendId 를 가리키는 상황. */
+function splitScheduler() {
+  return {
+    pickAccount: () => ({ id: 'claude', configDir: '/tmp/claude' }),
+    markUsed: async () => {},
+    pickNextAccount: () => null,
+    setCooldown: async () => {},
+  };
+}
+
+const SPLIT_AGENT = {
+  id: 'a', model: 'sonnet', workingDir: '/tmp', accountId: 'claude', backendId: 'acc_T1nxRYS',
+};
 
 function runRateLimited({ agent, accountScheduler, backendsStore }) {
   return new Promise((resolve) => {
@@ -164,40 +194,44 @@ function runRateLimited({ agent, accountScheduler, backendsStore }) {
       envOverrides: { _backendsStore: backendsStore },
       callbacks: {
         onRateLimit: (e) => { rateLimitEvent = e; },
+        onError: () => {},
         onExit: () => resolve(rateLimitEvent),
       },
-      spawn: mockSpawn(JSON.stringify({
-        type: 'result', is_error: true, result: WEEKLY_TEXT, session_id: 'c-1',
-      })),
+      spawn: mockSpawn({
+        stdout: [JSON.stringify({
+          type: 'result', is_error: true, result: WEEKLY_TEXT, session_id: 'c-1',
+        })],
+      }),
+    });
+  });
+}
+
+function runAuthExpired({ agent, accountScheduler, backendsStore }) {
+  return new Promise((resolve) => {
+    let authEvent = null;
+    startClaudeRun({
+      agent,
+      message: 'hi',
+      accountScheduler,
+      envOverrides: { _backendsStore: backendsStore },
+      callbacks: {
+        onAuthExpired: (e) => { authEvent = e; },
+        onError: () => {},
+        onExit: () => resolve(authEvent),
+      },
+      spawn: mockSpawn({
+        stderr: ['OAuth token has expired. Please run `claude login`.'],
+        exitCode: 1,
+      }),
     });
   });
 }
 
 describe('handleRateLimit — 실제 인증에 쓰인 백엔드에 쿨다운', () => {
-  /** setCooldown 호출을 기록하는 최소 backendsStore. */
-  function fakeBackendsStore({ oauthFor = null } = {}) {
-    const cooldowns = [];
-    return {
-      cooldowns,
-      getBackend: () => ({ type: 'claude-cli' }),
-      getOAuthToken: (id) => (id === oauthFor ? 'sk-managed' : null),
-      markUsed: async () => {},
-      setCooldown: async (id, expiresAt) => { cooldowns.push({ id, expiresAt }); },
-    };
-  }
-
   it('configDir 계정으로 돌았으면 backendId 가 아니라 그 계정에 건다', async () => {
     const backendsStore = fakeBackendsStore();
-    const accountScheduler = {
-      pickAccount: () => ({ id: 'claude', configDir: '/tmp/claude' }),
-      markUsed: async () => {},
-      pickNextAccount: () => null,
-      setCooldown: async () => {},
-    };
     const event = await runRateLimited({
-      agent: { id: 'a', model: 'sonnet', workingDir: '/tmp', accountId: 'claude', backendId: 'acc_T1nxRYS' },
-      accountScheduler,
-      backendsStore,
+      agent: SPLIT_AGENT, accountScheduler: splitScheduler(), backendsStore,
     });
     expect(backendsStore.cooldowns.map((c) => c.id)).toEqual(['claude']);
     expect(event.backendId).toBe('claude');
@@ -207,18 +241,52 @@ describe('handleRateLimit — 실제 인증에 쓰인 백엔드에 쿨다운', (
 
   it('managed 토큰이 실렸으면 그 백엔드에 건다', async () => {
     const backendsStore = fakeBackendsStore({ oauthFor: 'acc_T1nxRYS' });
-    const accountScheduler = {
-      pickAccount: () => ({ id: 'claude', configDir: '/tmp/claude' }),
-      markUsed: async () => {},
-      pickNextAccount: () => null,
-      setCooldown: async () => {},
-    };
     const event = await runRateLimited({
-      agent: { id: 'a', model: 'sonnet', workingDir: '/tmp', accountId: 'claude', backendId: 'acc_T1nxRYS' },
-      accountScheduler,
-      backendsStore,
+      agent: SPLIT_AGENT, accountScheduler: splitScheduler(), backendsStore,
     });
     expect(backendsStore.cooldowns.map((c) => c.id)).toEqual(['acc_T1nxRYS']);
     expect(event.backendId).toBe('acc_T1nxRYS');
+  });
+});
+
+describe('handleAuthExpired — 실제 인증에 쓰인 백엔드에 needs-relogin', () => {
+  it('configDir 계정으로 돌았으면 그 계정을 재로그인 대상으로 찍는다', async () => {
+    const backendsStore = fakeBackendsStore();
+    const event = await runAuthExpired({
+      agent: SPLIT_AGENT, accountScheduler: splitScheduler(), backendsStore,
+    });
+    expect(backendsStore.updates).toEqual([
+      { id: 'claude', patch: { status: 'needs-relogin' } },
+    ]);
+    expect(event).toEqual({ accountId: 'claude', backendId: 'claude' });
+  });
+
+  it('managed 토큰이 실렸으면 그 백엔드를 찍는다', async () => {
+    const backendsStore = fakeBackendsStore({ oauthFor: 'acc_T1nxRYS' });
+    const event = await runAuthExpired({
+      agent: SPLIT_AGENT, accountScheduler: splitScheduler(), backendsStore,
+    });
+    expect(backendsStore.updates).toEqual([
+      { id: 'acc_T1nxRYS', patch: { status: 'needs-relogin' } },
+    ]);
+    expect(event.backendId).toBe('acc_T1nxRYS');
+  });
+
+  it('한 번만 마킹한다 (같은 메시지가 여러 줄로 와도)', async () => {
+    const backendsStore = fakeBackendsStore();
+    await new Promise((resolve) => {
+      startClaudeRun({
+        agent: SPLIT_AGENT,
+        message: 'hi',
+        accountScheduler: splitScheduler(),
+        envOverrides: { _backendsStore: backendsStore },
+        callbacks: { onError: () => {}, onExit: resolve },
+        spawn: mockSpawn({
+          stderr: ['401 Unauthorized', 'Please re-authenticate'],
+          exitCode: 1,
+        }),
+      });
+    });
+    expect(backendsStore.updates).toHaveLength(1);
   });
 });

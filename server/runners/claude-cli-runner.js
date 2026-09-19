@@ -714,14 +714,15 @@ export function startClaudeRun({
     if (!AUTH_EXPIRED_PATTERNS.some((p) => p.test(text))) return;
     authExpiredDetected = true;
     logger.warn(
-      { accountId: pickedAccountId, backendId: pickedBackendId },
+      { accountId: pickedAccountId, backendId: pickedBackendId, authBackendId },
       '[runner] OAuth token expired — flagging backend for re-login'
     );
-    // 백엔드 status 를 needs-relogin 으로 마킹
-    if (_backendsStore && pickedBackendId) {
-      _backendsStore.updateBackend(pickedBackendId, { status: 'needs-relogin' }).catch(() => {});
+    // needs-relogin 도 쿨다운과 같은 기준 — 실제로 인증에 쓰인 백엔드(authBackendId)에 붙인다.
+    // 엉뚱한 백엔드를 막으면 멀쩡한 계정이 빠지고 진짜 만료된 계정은 계속 뽑힌다.
+    if (_backendsStore && authBackendId) {
+      _backendsStore.updateBackend(authBackendId, { status: 'needs-relogin' }).catch(() => {});
     }
-    onAuthExpired?.({ accountId: pickedAccountId, backendId: pickedBackendId });
+    onAuthExpired?.({ accountId: pickedAccountId, backendId: authBackendId });
   }
 
   proc.stderr.on('data', (d) => {
