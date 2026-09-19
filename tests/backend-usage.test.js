@@ -242,7 +242,7 @@ describe('createBackendUsageReader 캐시', () => {
 
   const store = (backends) => ({ getRaw: () => ({ backends }) });
 
-  it('60초 안에는 캐시로 응답하고 다시 호출하지 않는다', async () => {
+  it('3분 안에는 캐시로 응답하고 다시 호출하지 않는다', async () => {
     let t = 1_000_000;
     const fetchImpl = okFetch();
     const reader = createBackendUsageReader({
@@ -251,7 +251,7 @@ describe('createBackendUsageReader 캐시', () => {
     });
 
     expect((await reader.getAll()).acc.status).toBe('ok');
-    t += 59_000;
+    t += 179_000;
     expect((await reader.getAll()).acc.cached).toBe(true);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
@@ -314,7 +314,7 @@ describe('createBackendUsageReader 실패 폴백', () => {
 
     expect((await r.getAll()).acc.fiveHour.utilization).toBe(74);
 
-    t += 61_000;
+    t += 181_000;
     const after = (await r.getAll()).acc;
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(after.status).toBe('ok');
@@ -327,7 +327,7 @@ describe('createBackendUsageReader 실패 폴백', () => {
     let t = 1_000_000;
     const r = reader(okThen(httpFail(401)), () => t);
     await r.getAll();
-    t += 61_000;
+    t += 181_000;
     const after = (await r.getAll()).acc;
     expect(after.status).toBe('ok');
     expect(after.staleStatus).toBe('unauthorized');
@@ -339,7 +339,7 @@ describe('createBackendUsageReader 실패 폴백', () => {
     const r = reader(fetchImpl, () => t);
     await r.getAll();
 
-    t += 61_000;
+    t += 181_000;
     await r.getAll();
     expect(fetchImpl).toHaveBeenCalledTimes(2);
 
@@ -358,7 +358,7 @@ describe('createBackendUsageReader 실패 폴백', () => {
     const r = reader(fetchImpl, () => t);
     await r.getAll();
 
-    t += 61_000;
+    t += 181_000;
     await r.getAll();
     expect(fetchImpl).toHaveBeenCalledTimes(2);
 
@@ -369,6 +369,72 @@ describe('createBackendUsageReader 실패 폴백', () => {
     t += 11_000;
     await r.getAll();
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('429 retry-after 882초면 882초 내 fetchImpl 재호출 0회', async () => {
+    let t = 1_000_000;
+    const fetchImpl = okThen(httpFail(429, { 'retry-after': '882' }));
+    const r = reader(fetchImpl, () => t);
+    await r.getAll();
+
+    t += 181_000;
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // 캐시 ttl 초과 → 429 발생
+
+    t += 882_000 - 1_000;
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // 882초 안 → 재호출 없음
+
+    t += 1_000;
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(3); // 882초 경과 → 재시도
+  });
+
+  it('anthropic-ratelimit-requests-reset 로 Retry-After 없는 429 를 폴백 파싱한다', async () => {
+    let t = Date.parse('2026-09-17T06:00:00Z');
+    // 429 는 두 번째 호출(t += 181_000)에서 발생하므로, reset 시각은 그 시점 기준 120초 뒤로 잡는다.
+    const resetAt = new Date(t + 181_000 + 120_000).toISOString();
+    const fetchImpl = okThen(httpFail(429, { 'anthropic-ratelimit-requests-reset': resetAt }));
+    const r = reader(fetchImpl, () => t);
+    await r.getAll();
+
+    t += 181_000;
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    t += 119_000; // reset 시각 전 → 재시도 안 함
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    t += 2_000; // reset 시각 경과
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('헤더 없는 429 는 10초부터 2배씩 지수 백오프하고 ok 시 리셋된다', async () => {
+    let t = 1_000_000;
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0); // 지터 하한 고정
+    const fetchImpl = okThen(httpFail(429));
+    const r = reader(fetchImpl, () => t);
+    await r.getAll();
+
+    t += 181_000;
+    await r.getAll(); // 1번째 헤더 없는 429 → attempt 0, ttl = 10s/2 = 5s
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    t += 4_000; // 5초 안 → 재시도 안 함
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    t += 2_000; // 5초 경과 → 2번째 429, attempt 1, ttl = 20s/2 = 10s
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+
+    t += 9_000; // 10초 안 → 재시도 안 함
+    await r.getAll();
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+
+    randomSpy.mockRestore();
   });
 
   it('15분이 지나도 창이 살아 있으면 계속 stale 로 내준다', async () => {
@@ -414,7 +480,7 @@ describe('createBackendUsageReader 실패 폴백', () => {
     expect((await r.getAll()).acc.status).toBe('ok');
 
     fs.rmSync(path.join(configDir, '.credentials.json'));
-    t += 61_000;
+    t += 181_000;
     const after = (await r.getAll()).acc;
     expect(after.status).toBe('ok');
     expect(after.stale).toBe(true);
@@ -433,13 +499,13 @@ describe('createBackendUsageReader 실패 폴백', () => {
       path.join(configDir, '.credentials.json'),
       JSON.stringify({ claudeAiOauth: { ...liveCreds, expiresAt: 1_000 } })
     );
-    t += 61_000;
+    t += 181_000;
     const after = (await r.getAll()).acc;
     expect(after.status).toBe('ok');
     expect(after.staleStatus).toBe('expired');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
 
-    t += 30_000;                                   // 에러 ttl(10초)이 아니라 60초 ttl
+    t += 30_000;                                   // 에러 ttl(10초)이 아니라 180초 ttl
     expect((await r.getAll()).acc.cached).toBe(true);
   });
 

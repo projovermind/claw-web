@@ -37,12 +37,17 @@ import { logger } from './logger.js';
 
 const USAGE_URL = 'https://api.anthropic.com/api/oauth/usage';
 const OAUTH_BETA = 'oauth-2025-04-20';
-const DEFAULT_TTL_MS = 60_000;
+/** 3분 주기 — 백엔드당 상류 호출을 시간당 60회에서 20회로 낮춰 429를 피한다. */
+const DEFAULT_TTL_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 /** 일시적 실패는 짧게만 캐시해서 빨리 재시도한다. */
 const ERROR_TTL_MS = 10_000;
-/** Retry-After 를 존중하되 이 이상은 기다리지 않는다. */
-const MAX_RETRY_AFTER_MS = 5 * 60_000;
+/** Retry-After(또는 그 폴백)를 그대로 존중하되 이 이상은 기다리지 않는다. */
+const MAX_RETRY_AFTER_MS = 60 * 60_000;
+/** 헤더 없는 429 의 지수 백오프 시작값. */
+const BACKOFF_BASE_MS = 10_000;
+/** 헤더 없는 429 의 지수 백오프 상한. */
+const BACKOFF_MAX_MS = 5 * 60_000;
 /**
  * 마지막 ok 값을 stale 로 대신 내주는 최대 기간. 실제 상한은 창이 리셋되는 시각
  * (fiveHour.resetsAt)이고, 그게 없거나 더 멀면 이 값에서 끊는다.
@@ -225,18 +230,25 @@ function normalizeExtraUsage(e) {
 }
 
 /**
- * 429 의 Retry-After 를 ms 로. 초 단위 숫자와 HTTP-date 를 모두 받는다.
- * 헤더가 없거나 해석 불가면 null.
+ * 429 의 대기 시간을 ms 로. Retry-After(초 단위 숫자 또는 HTTP-date)를 우선하고,
+ * 없으면 anthropic-ratelimit-requests-reset(RFC3339 타임스탬프)으로 폴백한다.
+ * 429 가 아니거나 둘 다 해석 불가면 null 을 돌려주고, 상한(MAX_RETRY_AFTER_MS)에서 끊는다.
  */
 function parseRetryAfter(res, nowMs) {
   if (res?.status !== 429) return null;
   const raw = res.headers?.get?.('retry-after');
-  if (!raw) return null;
-  const secs = Number(raw);
-  if (Number.isFinite(secs)) return Math.max(0, secs * 1000);
-  const at = Date.parse(raw);
-  if (Number.isNaN(at)) return null;
-  return Math.max(0, at - nowMs);
+  if (raw) {
+    const secs = Number(raw);
+    if (Number.isFinite(secs)) return Math.min(Math.max(0, secs * 1000), MAX_RETRY_AFTER_MS);
+    const at = Date.parse(raw);
+    if (!Number.isNaN(at)) return Math.min(Math.max(0, at - nowMs), MAX_RETRY_AFTER_MS);
+  }
+  const resetRaw = res.headers?.get?.('anthropic-ratelimit-requests-reset');
+  if (resetRaw) {
+    const at = Date.parse(resetRaw);
+    if (!Number.isNaN(at)) return Math.min(Math.max(0, at - nowMs), MAX_RETRY_AFTER_MS);
+  }
+  return null;
 }
 
 /**
@@ -436,6 +448,7 @@ export function createBackendUsageReader({
   const cache = new Map();   // id -> { at, value, ttl }
   const lastOk = new Map();  // id -> { at, value } — 실패 시 대신 내줄 직전 성공값
   const inflight = new Map(); // id -> Promise
+  const backoff429 = new Map(); // id -> 연속 헤더 없는 429 횟수. ok 시 리셋.
 
   /**
    * 재기동 후에도 게이지를 유지하려고 마지막 ok 값을 파일에 남긴다.
@@ -530,21 +543,36 @@ export function createBackendUsageReader({
     };
   }
 
+  /**
+   * 재시도 주기. 서버가 알려준 대기 시간(retryAfterMs, Retry-After 또는 그 폴백)이
+   * 있으면 그대로 존중한다(상한은 parseRetryAfter 에서 이미 적용됨). 헤더 없는 429는
+   * 조기 재시도가 무조건 실패이므로 10초부터 2배씩 늘리는 지수 백오프 + 지터를 쓴다.
+   * 그 외 일시적 실패(500 등, unauthorized)는 기존처럼 10초 고정.
+   */
+  function retryTtl(id, value) {
+    if (!TRANSIENT_STATUSES.has(value.status)) return ttlMs;
+    if (value.retryAfterMs != null) return Math.max(value.retryAfterMs, ERROR_TTL_MS);
+    if (value.httpStatus === 429) {
+      const attempt = backoff429.get(id) ?? 0;
+      backoff429.set(id, attempt + 1);
+      const cap = Math.min(BACKOFF_BASE_MS * 2 ** attempt, BACKOFF_MAX_MS);
+      return cap / 2 + Math.random() * (cap / 2); // equal jitter
+    }
+    return ERROR_TTL_MS;
+  }
+
   /** 결과를 캐시에 반영하고, 호출자에게 실제로 내줄 값을 돌려준다. */
   function record(id, value) {
     const at = now();
     if (value.status === 'ok') {
+      backoff429.delete(id);
       lastOk.set(id, { at, value });
       saveLastOk();
       cache.set(id, { at, value, ttl: ttlMs });
       return value;
     }
     const served = staleOr(id, value);
-    // 재시도 주기는 상태에 따라 다르다 — 일시적 실패만 짧게 잡고 빨리 되묻는다.
-    const ttl = TRANSIENT_STATUSES.has(value.status)
-      ? Math.min(Math.max(value.retryAfterMs ?? ERROR_TTL_MS, ERROR_TTL_MS), MAX_RETRY_AFTER_MS)
-      : ttlMs;
-    cache.set(id, { at, value: served, ttl });
+    cache.set(id, { at, value: served, ttl: retryTtl(id, value) });
     return served;
   }
 
@@ -576,6 +604,7 @@ export function createBackendUsageReader({
     clearCache() {
       cache.clear();
       lastOk.clear();
+      backoff429.clear();
       saveLastOk();
     }
   };
