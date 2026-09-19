@@ -276,3 +276,70 @@ describe('worker session reuse', () => {
     expect(ctx.workerPoolStats()).toEqual({ keys: 0, sessions: 0 });
   });
 });
+
+/**
+ * 재사용 키에 '실제로 돌아간 급' 이 들어가는지. 빠지면 상위 티어 재위임이
+ * 하위 티어 세션을 resume 해서 — CLI 세션은 열릴 때의 모델을 이어 쓰므로 —
+ * 급이 전혀 올라가지 않는다(에스컬레이션이 무의미해진다).
+ */
+describe('worker session reuse — 티어별 분리', () => {
+  const delegateTier = (agentId, task, tier) =>
+    ctx.executeDelegation('lead', agentId, task, '{}', null, null, tier);
+
+  beforeEach(() => { ctx = makeCtx(); });
+
+  it('같은 티어면 재사용한다', async () => {
+    await delegateTier('worker', 'A', 'low');
+    finishWorker('sess_1');
+    await delegateTier('worker', 'B', 'low');
+
+    expect(dispatchedTo()).toEqual(['sess_1', 'sess_1']);
+  });
+
+  it('티어가 다르면 새 세션을 연다', async () => {
+    await delegateTier('worker', 'A', 'low');
+    finishWorker('sess_1');
+    await delegateTier('worker', 'A', 'high');
+
+    expect(dispatchedTo()).toEqual(['sess_1', 'sess_2']);
+    expect(ctx.workerPoolStats()).toEqual({ keys: 2, sessions: 2 });
+  });
+
+  it('티어 없는 위임과 티어 있는 위임은 세션을 섞지 않는다', async () => {
+    await delegateTier('worker', 'A', null);
+    finishWorker('sess_1');
+    await delegateTier('worker', 'B', 'high');
+
+    expect(dispatchedTo()).toEqual(['sess_1', 'sess_2']);
+  });
+
+  it('티어를 오가도 각 급의 세션으로 정확히 돌아간다', async () => {
+    await delegateTier('worker', 'A', 'low');
+    finishWorker('sess_1');
+    await delegateTier('worker', 'B', 'high');
+    finishWorker('sess_2');
+    await delegateTier('worker', 'C', 'low');
+    finishWorker('sess_1');
+    await delegateTier('worker', 'D', 'high');
+
+    expect(dispatchedTo()).toEqual(['sess_1', 'sess_2', 'sess_1', 'sess_2']);
+  });
+
+  it('중단된 세션은 어느 티어 키에서도 사라진다', async () => {
+    await delegateTier('worker', 'A', 'low');
+    ctx.sessions.get('sess_1').claudeSessionId = 'claude_sess_1';
+    await ctx.abandonDelegation('sess_1', '응답 없이 중단됨');
+
+    await delegateTier('worker', 'B', 'low');
+    expect(dispatchedTo()).toEqual(['sess_1', 'sess_2']);
+  });
+});
+
+describe('REUSE_TASK_PREFIX — 같은 작업 재시도를 막지 않는다', () => {
+  it('앞 작업 결과 재보고만 금지하고, 재시도는 명시적으로 허용한다', () => {
+    expect(REUSE_TASK_PREFIX).toContain('다시 보고하지 마세요');
+    expect(REUSE_TASK_PREFIX).toContain('재시도');
+    // 예전 문구는 "이전 작업을 이어서 하거나" 까지 금지해 재시도 위임을 무효화했다.
+    expect(REUSE_TASK_PREFIX).not.toContain('이전 작업을 이어서 하거나');
+  });
+});

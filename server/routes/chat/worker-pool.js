@@ -31,13 +31,21 @@ const MAX_CONTEXT_PCT = 50;
 const MAX_KEYS = 500;
 const MAX_PER_KEY = 10;
 
-/** 재사용 세션에 새 작업을 넣을 때 앞에 붙이는 경계선. */
+/**
+ * 재사용 세션에 새 작업을 넣을 때 앞에 붙이는 경계선.
+ *
+ * 막아야 하는 것은 "앞 작업의 결과를 다시 보고하는 것" 하나뿐이다. 예전 문구는
+ * "이전 작업을 이어서 하지 마세요" 까지 금지해서, 리드가 같은 작업을 다시 맡기는
+ * **재시도 위임**(에스컬레이션 후 재발주 등)이 오면 워커가 "이미 했다" 고 답하고
+ * 끝내 버렸다 — 재시도 지시가 프롬프트에 의해 무효화되는 상태였다.
+ */
 export const REUSE_TASK_PREFIX =
-  '[새 작업 — 앞의 작업은 이미 끝나 보고됐습니다. 이전 맥락(코드베이스 구조 등)은 참고만 하고, ' +
-  '이전 작업을 이어서 하거나 다시 보고하지 마세요. 아래 작업만 새로 수행하세요.]';
+  '[새 지시 — 앞의 작업은 이미 끝나 보고됐습니다. 이전 맥락(코드베이스 구조 등)은 참고만 하고, ' +
+  '앞 작업의 결과를 다시 보고하지 마세요. 아래 지시만 수행하세요. ' +
+  '아래가 앞과 같은 작업이면 재시도 지시입니다 — "이미 했습니다" 로 끝내지 말고 다시 수행하세요.]';
 
 export function createWorkerPool(ctx) {
-  /** `${originSessionId}::${agentId}` → [{ sessionId, uses, lastUsedAt }] (LRU 순서) */
+  /** `${originSessionId}::${agentId}::${tier}` → [{ sessionId, uses, lastUsedAt }] (LRU 순서) */
   const pool = new Map();
   const now = () => (typeof ctx.now === 'function' ? ctx.now() : Date.now());
 
@@ -52,8 +60,16 @@ export function createWorkerPool(ctx) {
     };
   }
 
-  function keyOf(originSessionId, targetAgentId) {
-    return `${originSessionId}::${targetAgentId}`;
+  /**
+   * 티어까지 키에 넣는다. 빼면 상위 티어로 다시 맡긴 작업이 **하위 티어로 돌던
+   * 그 세션을 resume** 해 버린다 — CLI 세션은 열릴 때의 모델을 이어 쓰므로 급이
+   * 올라가지 않고, 약한 모델이 쌓아 둔 실패 맥락까지 그대로 물려받는다.
+   *
+   * tier 는 '실제로 돌아간 급'(위임 지정 ?? 에이전트 기본)이어야 한다. 그래야
+   * 티어를 생략한 위임과 같은 급을 명시한 위임이 한 세션을 나눠 쓴다.
+   */
+  function keyOf(originSessionId, targetAgentId, tier = null) {
+    return `${originSessionId}::${targetAgentId}::${tier ?? '-'}`;
   }
 
   /** 최근 쓴 키를 뒤로 보내 LRU 순서를 유지한다(Map 은 삽입 순서를 지킨다). */
@@ -94,10 +110,10 @@ export function createWorkerPool(ctx) {
    *
    * @returns {{session: object, uses: number}|null}
    */
-  function acquireWorkerSession(originSessionId, targetAgentId) {
+  function acquireWorkerSession(originSessionId, targetAgentId, tier = null) {
     const cfg = settings();
     if (!cfg.enabled) return null;
-    const key = keyOf(originSessionId, targetAgentId);
+    const key = keyOf(originSessionId, targetAgentId, tier);
     const entries = pool.get(key);
     if (!entries?.length) return null;
 
@@ -109,7 +125,7 @@ export function createWorkerPool(ctx) {
       if (!reason) { picked = entry; kept.push(entry); continue; }
       if (TRANSIENT.has(reason)) { kept.push(entry); continue; }
       logger.debug(
-        { sessionId: entry.sessionId, targetAgentId, uses: entry.uses, reason },
+        { sessionId: entry.sessionId, targetAgentId, tier, uses: entry.uses, reason },
         'worker-pool: dropped candidate'
       );
     }
@@ -127,11 +143,11 @@ export function createWorkerPool(ctx) {
     return { session, uses: picked.uses };
   }
 
-  /** 새로 만든 워커 세션을 재사용 후보로 등록한다. */
-  function registerWorkerSession(originSessionId, targetAgentId, sessionId) {
+  /** 새로 만든 워커 세션을 재사용 후보로 등록한다. tier 는 이 세션이 돌아간 급. */
+  function registerWorkerSession(originSessionId, targetAgentId, sessionId, tier = null) {
     const cfg = settings();
     if (!cfg.enabled) return;
-    const key = keyOf(originSessionId, targetAgentId);
+    const key = keyOf(originSessionId, targetAgentId, tier);
     const entries = pool.get(key) ?? [];
     entries.push({ sessionId, uses: 1, lastUsedAt: now() });
     while (entries.length > MAX_PER_KEY) entries.shift();

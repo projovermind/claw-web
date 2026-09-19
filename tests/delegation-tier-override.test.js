@@ -6,7 +6,7 @@ import { createDelegationTracker } from '../server/lib/delegation-tracker.js';
 import { createQueue } from '../server/routes/chat/queue.js';
 import { createDelegation } from '../server/routes/chat/delegation.js';
 import { createWorkerPool } from '../server/routes/chat/worker-pool.js';
-import { createMessageSender } from '../server/routes/chat/message-sender.js';
+import { resolveAgent } from '../server/routes/chat/utils.js';
 import { createEventBus } from '../server/lib/event-bus.js';
 
 /**
@@ -157,26 +157,52 @@ describe('executeDelegation — 티어 오버라이드', () => {
 });
 
 describe('세션 재사용 — 이전 티어가 새지 않는다', () => {
-  it('재사용 세션에 티어 없는 위임이 오면 오버라이드가 지워진다', async () => {
+  it('같은 티어로 다시 위임하면 그 세션을 재사용한다', async () => {
     await ctx.handleDelegation('lead', '{"delegate": {"agent": "worker", "task": "1차", "tier": "low"}}');
     const first = lastWorkerSession();
     expect(first.modelTierOverride).toBe('low');
     finishWorker(first.id);
 
-    await ctx.handleDelegation('lead', '{"delegate": {"agent": "worker", "task": "2차"}}');
+    await ctx.handleDelegation('lead', '{"delegate": {"agent": "worker", "task": "2차", "tier": "low"}}');
     const second = lastWorkerSession();
-    expect(second.id).toBe(first.id); // 재사용됐는지 확인 — 아니면 이 테스트는 무의미
-    expect(second.modelTierOverride).toBe(null);
+    expect(second.id).toBe(first.id);
+    expect(second.modelTierOverride).toBe('low');
   });
 
-  it('재사용 세션에 다른 티어가 오면 새 값으로 덮인다', async () => {
+  it('티어를 빼면 앞의 티어 세션을 재사용하지 않는다 (급이 다르다)', async () => {
     await ctx.handleDelegation('lead', '{"delegate": {"agent": "worker", "task": "1차", "tier": "low"}}');
     const first = lastWorkerSession();
     finishWorker(first.id);
 
-    await ctx.handleDelegation('lead', '{"delegate": {"agent": "worker", "task": "2차", "tier": "high"}}');
+    await ctx.handleDelegation('lead', '{"delegate": {"agent": "worker", "task": "2차"}}');
+    const second = lastWorkerSession();
+    expect(second.id).not.toBe(first.id);
+    expect(second.modelTierOverride).toBe(null);
+  });
+
+  // 에스컬레이션 재위임의 핵심: resume 은 세션이 열릴 때의 모델을 이어 쓰므로,
+  // 상위 티어 재위임이 하위 티어 세션을 재사용하면 급이 전혀 올라가지 않는다.
+  it('상위 티어로 다시 위임하면 새 세션을 연다 (하위 티어 세션을 resume 하지 않는다)', async () => {
+    await ctx.handleDelegation('lead', '{"delegate": {"agent": "worker", "task": "1차", "tier": "low"}}');
+    const first = lastWorkerSession();
+    finishWorker(first.id);
+
+    await ctx.handleDelegation('lead', '{"delegate": {"agent": "worker", "task": "1차", "tier": "high"}}');
+    const second = lastWorkerSession();
+    expect(second.id).not.toBe(first.id);
+    expect(second.modelTierOverride).toBe('high');
+    // 새 세션이므로 재사용 경계선(앞 작업 안내)도 붙지 않는다 — 재시도 작업 그대로.
+    expect(ctx.dispatch.mock.calls.at(-1)[1].content).toBe('1차');
+  });
+
+  it('에이전트 기본 티어와 같은 티어를 명시하면 한 세션을 나눠 쓴다', async () => {
+    ctx = makeCtx({ agents: { worker: { name: 'worker', modelTier: 'middle' } } });
+    await ctx.handleDelegation('lead', '{"delegate": {"agent": "worker", "task": "1차"}}');
+    const first = lastWorkerSession();
+    finishWorker(first.id);
+
+    await ctx.handleDelegation('lead', '{"delegate": {"agent": "worker", "task": "2차", "tier": "middle"}}');
     expect(lastWorkerSession().id).toBe(first.id);
-    expect(lastWorkerSession().modelTierOverride).toBe('high');
   });
 });
 
@@ -205,31 +231,89 @@ describe('대기열 경유 — 티어 보존', () => {
   });
 });
 
-describe('applyTierOverride — 실행 시 모델 교체', () => {
-  const sender = (tiers) => createMessageSender({ backendsStore: fakeBackendsStore(tiers) });
-  const backendConfig = { backendName: 'claude' };
+/**
+ * 티어 오버라이드는 resolveAgent 안에서, 백엔드를 고르기 **전에** 적용돼야 한다.
+ * 나중에 agent.model 만 갈아끼우던 예전 방식은 tiers.backends(급별 제공자)를
+ * 통째로 무시했다 — 모델 이름만 바뀌고 요청은 옛 백엔드로 나갔다.
+ */
+describe('resolveAgent — 위임 티어 오버라이드', () => {
+  const BACKENDS_MULTI = {
+    claude: {
+      type: 'claude-cli',
+      models: { default: 'claude-opus-5' },
+      tierModels: { high: 'claude-opus-5', middle: 'claude-sonnet-5' }
+    },
+    zai: {
+      type: 'anthropic-compatible',
+      baseURL: 'https://api.z.ai/api/anthropic',
+      models: { default: 'glm-5.3' },
+      tierModels: { low: 'glm-4.5-air' }
+    }
+  };
 
-  it('오버라이드가 있으면 모델을 그 티어의 모델로 바꾼다', () => {
-    const agent = { id: 'worker', model: 'claude-opus-5' };
-    sender().applyTierOverride('s1', { modelTierOverride: 'low' }, agent, backendConfig);
-    expect(agent.model).toBe('claude-haiku-4-6');
+  function multiStore(tiers) {
+    return {
+      getRaw: () => ({ activeBackend: 'claude', backends: BACKENDS_MULTI, tiers }),
+      getBackend: (id) => BACKENDS_MULTI[id] ?? null
+    };
+  }
+
+  const resolve = (agentConfig, opts = {}) => resolveAgent('worker', {
+    configStore: { getAgent: () => agentConfig, getAgents: () => ({ worker: agentConfig }) },
+    backendsStore: multiStore({ order: ['high', 'middle', 'low'], labels: {}, backends: { low: 'zai' } }),
+    ...opts
+  });
+
+  it('오버라이드가 tiers.backends 가 가리키는 백엔드로 라우팅한다', () => {
+    const { agent, backendType, backendConfig, envOverrides } = resolve(
+      { name: 'w' }, { modelTierOverride: 'low' }
+    );
+    expect(backendConfig.backendName).toBe('zai');
+    expect(backendType).toBe('anthropic-compatible');
+    expect(agent.model).toBe('glm-4.5-air');
     // 폴백 백엔드에서 다시 풀 수 있도록 티어 이름을 남긴다
     expect(agent.modelAlias).toBe('low');
     expect(agent.modelTier).toBe('low');
+    // env 도 같은 백엔드를 따라가야 한다 — 모델만 바뀌고 옛 백엔드로 나가면 안 된다
+    expect(envOverrides.ANTHROPIC_BASE_URL).toBe('https://api.z.ai/api/anthropic');
+    expect(envOverrides._resolvedBackendId).toBe('zai');
   });
 
-  it('오버라이드가 없으면 아무것도 건드리지 않는다', () => {
-    const agent = { id: 'worker', model: 'claude-opus-5' };
-    sender().applyTierOverride('s1', {}, agent, backendConfig);
+  it('에이전트 저장 티어를 이긴다', () => {
+    const { agent, backendConfig } = resolve({ name: 'w', modelTier: 'low' }, { modelTierOverride: 'high' });
+    expect(backendConfig.backendName).toBe('claude');
     expect(agent.model).toBe('claude-opus-5');
-    expect(agent.modelAlias).toBeUndefined();
-    sender().applyTierOverride('s1', { modelTierOverride: null }, agent, backendConfig);
+  });
+
+  it('오버라이드가 없으면 에이전트 설정 그대로다', () => {
+    const { agent, backendConfig } = resolve({ name: 'w', modelTier: 'low' });
+    expect(backendConfig.backendName).toBe('zai');
+    expect(agent.modelTier).toBe('low');
+
+    const plain = resolve({ name: 'w', model: 'claude-opus-5' });
+    expect(plain.agent.model).toBe('claude-opus-5');
+    expect(plain.agent.modelAlias).toBeUndefined();
+  });
+
+  it('에이전트가 백엔드를 명시했으면 티어 라우팅이 그것을 뒤집지 않는다', () => {
+    const { backendConfig, agent } = resolve(
+      { name: 'w', backendId: 'claude' }, { modelTierOverride: 'low' }
+    );
+    expect(backendConfig.backendName).toBe('claude');
+    // 그 백엔드에 low 가 없으니 강등/기본값으로 풀린다 — 백엔드는 지켜진다
     expect(agent.model).toBe('claude-opus-5');
   });
 
   it('이 백엔드에서 풀리지 않는 티어면 기본 모델을 유지한다', () => {
-    const agent = { id: 'worker', model: 'claude-opus-5' };
-    sender().applyTierOverride('s1', { modelTierOverride: 'nope' }, agent, { backendName: 'ghost' });
+    const store = {
+      getRaw: () => ({ activeBackend: 'bare', backends: { bare: { type: 'claude-cli', models: {} } }, tiers: { order: ['high'], labels: {} } }),
+      getBackend: (id) => (id === 'bare' ? { type: 'claude-cli', models: {} } : null)
+    };
+    const { agent } = resolveAgent('worker', {
+      configStore: { getAgent: () => ({ name: 'w', model: 'claude-opus-5' }) },
+      backendsStore: store,
+      modelTierOverride: 'high'
+    });
     expect(agent.model).toBe('claude-opus-5');
     expect(agent.modelAlias).toBeUndefined();
   });

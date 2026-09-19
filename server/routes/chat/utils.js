@@ -299,7 +299,7 @@ export function resolveFallbackBackend(agent, backendsStore, primaryBackendId) {
 /**
  * Resolve an agent with full inheritance (skills, tools, backend).
  */
-export function resolveAgent(agentId, { configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore, accountsStore, modelOverride }) {
+export function resolveAgent(agentId, { configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore, accountsStore, modelOverride, modelTierOverride }) {
   const agentConfig = configStore.getAgent(agentId);
   if (!agentConfig) return null;
   const meta = metadataStore?.getAgent(agentId) ?? {};
@@ -309,6 +309,15 @@ export function resolveAgent(agentId, { configStore, metadataStore, projectsStor
   // 동작하도록 가장 먼저 덮어쓴다. (별칭 또는 raw 모델 ID 모두 허용)
   if (typeof modelOverride === 'string' && modelOverride.trim()) {
     agent.model = modelOverride.trim();
+  }
+
+  // 세션별 티어 오버라이드(위임 JSON 의 "tier"): 반드시 resolveBackend/buildBackendEnv
+  // **전에** 얹는다. 나중에 agent.model 만 갈아끼우면 tiers.backends 가 가리키는
+  // 백엔드로는 영영 못 가서, HIGH=Claude / LOW=Z.AI 처럼 급별 제공자를 섞어 쓰는
+  // 설정에서 위임 티어가 모델 이름만 바꾸고 제공자는 그대로였다.
+  // 여기서 얹으면 이 실행은 "그 티어로 설정된 에이전트" 와 완전히 동일하게 풀린다.
+  if (typeof modelTierOverride === 'string' && modelTierOverride.trim()) {
+    agent.modelTier = modelTierOverride.trim();
   }
 
   // 멀티 계정: accountId 지정 시 configDir 주입 → runner에서 CLAUDE_CONFIG_DIR로 사용

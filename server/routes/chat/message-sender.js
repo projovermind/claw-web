@@ -11,7 +11,7 @@ import { buildPaulContext } from '../../lib/paul-reader.js';
 import { buildPinnedFilesContext, buildGitDiffContext, buildBridgeContext, buildDeployGuardContext } from '../../lib/working-context-injector.js';
 import { findClaudeSessionFile } from '../../runners/claude-cli-runner.js';
 import { classifyError, resolveAgent, buildConversationSummary } from './utils.js';
-import { resolveTierModel, normalizeTiers } from '../../lib/model-tiers.js';
+import { normalizeTiers } from '../../lib/model-tiers.js';
 import { buildRoster, listProjectAgentIds } from '../../lib/agent-roster.js';
 import { extractEscalation, buildEscalationNotice, formatTierLine } from './delegation.js';
 import { writeHookSettingsFile, removeHookSettingsFile } from '../../lib/hook-settings.js';
@@ -266,27 +266,21 @@ export function createMessageSender(ctx) {
   }
 
   /**
-   * 위임 JSON 의 "tier" 로 이 실행의 모델만 갈아끼운다.
+   * 위임 티어 오버라이드가 실제로 적용됐는지 기록한다.
    *
-   * 에이전트 저장값(config.json 의 modelTier)은 건드리지 않는다 — 세션에 얹힌
-   * 오버라이드를 해석 결과 위에 덮어쓸 뿐이다. 티어 이름을 modelAlias 로 남겨야
-   * 폴백 백엔드에서도 그 백엔드의 tierModels 기준으로 다시 풀린다.
+   * 해석 자체는 resolveAgent 가 한다 — 백엔드 라우팅(tiers.backends)·env 까지
+   * 티어를 따라가야 해서 resolveBackend 보다 먼저 얹어야 하기 때문이다. 여기서는
+   * 결과만 본다: 티어가 풀렸으면 modelAlias 에 티어 이름이 남는다.
    */
-  function applyTierOverride(sessionId, session, agent, backendConfig) {
-    const tier = typeof session.modelTierOverride === 'string' ? session.modelTierOverride.trim() : '';
+  function logTierOverride(sessionId, tier, agent, backendConfig) {
     if (!tier) return;
-    const backendObj = backendsStore?.getBackend?.(backendConfig?.backendName) ?? null;
-    const hit = resolveTierModel({ backendObj, tier, tiers: backendsStore?.getRaw?.()?.tiers });
-    if (!hit) {
-      logger.warn({ sessionId, agent: agent.id, tier, backendId: backendConfig?.backendName },
+    if (agent.modelAlias !== tier) {
+      logger.warn({ sessionId, agent: agent.id, tier, backendId: backendConfig?.backendName, model: agent.model },
         'chat: 위임 티어를 이 백엔드에서 풀지 못함 — 에이전트 기본 모델로 실행');
       return;
     }
-    logger.info({ sessionId, agent: agent.id, tier, from: agent.model, to: hit.modelId },
+    logger.info({ sessionId, agent: agent.id, tier, model: agent.model, backendId: backendConfig?.backendName },
       'chat: 위임 티어 오버라이드 적용');
-    agent.modelTier = tier;
-    agent.model = hit.modelId;
-    agent.modelAlias = tier;
   }
 
   /**
@@ -297,14 +291,16 @@ export function createMessageSender(ctx) {
   function startRunner(sessionId, message, { claudeSessionId, onSettled } = {}) {
     const session = sessionsStore.get(sessionId);
     if (!session) return { started: false, reason: 'session_missing' };
+    const tierOverride = typeof session.modelTierOverride === 'string' ? session.modelTierOverride.trim() : '';
     const resolved = resolveAgent(session.agentId, {
       configStore, metadataStore, projectsStore, backendsStore, skillsStore, systemSkillsStore, accountsStore,
-      modelOverride: session.model || undefined
+      modelOverride: session.model || undefined,
+      modelTierOverride: tierOverride || undefined
     });
     if (!resolved) return { started: false, reason: `에이전트 ${session.agentId} 설정을 불러올 수 없습니다` };
     const { agent, envOverrides, backendType, backendConfig } = resolved;
 
-    applyTierOverride(sessionId, session, agent, backendConfig);
+    logTierOverride(sessionId, tierOverride, agent, backendConfig);
 
     // ── 슬롯 격리 cwd ──
     // 이 세션이 전용 worktree 를 배정받았으면 러너 cwd 를 그쪽으로 돌린다.
@@ -965,7 +961,5 @@ export function createMessageSender(ctx) {
     return { started: true };
   }
 
-  // applyTierOverride 도 함께 내보낸다 — 위임 티어 해석은 startRunner 전체를
-  // 세우지 않고 단독으로 검증할 수 있어야 한다.
-  return { startRunner, applyTierOverride };
+  return { startRunner };
 }

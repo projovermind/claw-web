@@ -317,20 +317,28 @@ export function createDelegation(ctx) {
 
       const wantsLoop = /"loop"\s*:\s*true/.test(rawText);
 
-      // 같은 플래너가 같은 에이전트에게 다시 위임하는 경우 직전 워커 세션을
-      // --resume 으로 재사용해 콜드스타트(페르소나 재주입 + 코드베이스 재탐색)를
-      // 없앤다. loop 위임은 세션에 loop 상태가 붙으므로 항상 새 세션.
-      const reuse = wantsLoop ? null : ctx.acquireWorkerSession?.(originSessionId, targetAgentId) ?? null;
       // 이 실행에만 적용할 모델 티어. 에이전트 저장값(config.json)은 건드리지 않고
       // 세션에만 얹는다. 재사용 세션에도 **매번** 써 넣어야(없으면 null) 앞 위임의
       // 티어가 다음 작업까지 따라가지 않는다.
       const tierOverride = resolveOverrideTier(tier, targetAgentId);
+      const agentDefaultTier = configStore.getAgent(targetAgentId)?.modelTier ?? null;
       if (tierOverride) {
         logger.info(
-          { agent: targetAgentId, from: configStore.getAgent(targetAgentId)?.modelTier ?? null, to: tierOverride },
+          { agent: targetAgentId, from: agentDefaultTier, to: tierOverride },
           'delegation: 이번 실행에만 모델 티어를 덮어씀'
         );
       }
+      // 이 실행이 실제로 돌아갈 급. 세션 재사용 키와 트래커 기록이 같은 값을 쓴다.
+      const effectiveTier = tierOverride ?? agentDefaultTier;
+
+      // 같은 플래너가 같은 에이전트에게 **같은 급으로** 다시 위임하는 경우에만 직전
+      // 워커 세션을 --resume 으로 재사용해 콜드스타트(페르소나 재주입 + 코드베이스
+      // 재탐색)를 없앤다. 급이 다르면 재사용하지 않는다 — resume 은 그 세션이 열릴
+      // 때의 모델을 이어 쓰므로, 재사용하면 상위 티어 재위임이 하위 티어 그대로
+      // 돌아간다. loop 위임은 세션에 loop 상태가 붙으므로 항상 새 세션.
+      const reuse = wantsLoop
+        ? null
+        : ctx.acquireWorkerSession?.(originSessionId, targetAgentId, effectiveTier) ?? null;
       let targetSession;
       if (reuse) {
         targetSession = reuse.session;
@@ -346,7 +354,7 @@ export function createDelegation(ctx) {
           modelTierOverride: tierOverride
         });
         eventBus.publish('session.created', { session: targetSession });
-        if (!wantsLoop) ctx.registerWorkerSession?.(originSessionId, targetAgentId, targetSession.id);
+        if (!wantsLoop) ctx.registerWorkerSession?.(originSessionId, targetAgentId, targetSession.id, effectiveTier);
       }
 
       // 슬롯 격리: 워커의 cwd 를 전용 worktree 로 준다. 경로는 세션에 박아 둔다 —
@@ -377,7 +385,7 @@ export function createDelegation(ctx) {
         groupId,
         queuedAt: acceptedAt,
         // 오버라이드가 없으면 에이전트 저장 티어가 실제 실행 급이다.
-        tier: tierOverride ?? configStore.getAgent(targetAgentId)?.modelTier ?? null,
+        tier: effectiveTier,
         tierOverridden: !!tierOverride
       });
       attached = ctx.attachGroupMember?.(groupId, entry) ?? false;
