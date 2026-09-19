@@ -238,6 +238,101 @@ describe('_startFallback — 폴백 백엔드 기준으로 모델 재해석', ()
   });
 });
 
+describe('폴백 차단 — 불건전한 폴백 대상 / 빈 출력', () => {
+  let createRunner;
+  let startClaudeRun2;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.doMock('../server/runners/claude-cli-runner.js', () => ({
+      startClaudeRun: vi.fn(() => ({ process: null, abort() {} }))
+    }));
+    ({ createRunner } = await import('../server/lib/runner.js'));
+    ({ startClaudeRun: startClaudeRun2 } = await import('../server/runners/claude-cli-runner.js'));
+  });
+
+  afterEach(() => {
+    vi.doUnmock('../server/runners/claude-cli-runner.js');
+  });
+
+  /** 폴백 대상의 현재 상태를 backendsStore 가 돌려주는 상황. */
+  function fallbackTo(backend) {
+    return {
+      backendId: 'sub',
+      backendType: 'claude-cli',
+      configDir: null,
+      envOverrides: {
+        _resolvedBackendId: 'sub',
+        _backendsStore: { getBackend: (id) => (id === 'sub' ? backend : null) },
+      },
+    };
+  }
+
+  /** 1차 실행이 errMsg 로 실패했을 때 폴백이 떴는지 / 에러가 그대로 나갔는지. */
+  function runAndFail(fallback, errMsg) {
+    const runner = createRunner();
+    const seen = { error: null, exit: null };
+    runner.start({
+      sessionId: 's1',
+      agent: { id: 'a', workingDir: '/tmp', model: 'claude-sonnet-4-6' },
+      message: 'hi',
+      backendType: 'claude-cli',
+      backendConfig: { backendName: 'main', fallback },
+      callbacks: { onError: (e) => { seen.error = e; }, onExit: (i) => { seen.exit = i; } },
+    });
+    startClaudeRun2.mock.calls[0][0].callbacks.onError(new Error(errMsg));
+    return { seen, spawns: startClaudeRun2.mock.calls.length };
+  }
+
+  const HEALTHY = { type: 'claude-cli', status: 'active' };
+  const RATE_LIMITED = `rate_limit: ${LIMIT_TEXT}`;
+  const EMPTY_OUTPUT = 'claude CLI exited 143 (no result text, subtype=success, is_error=false)';
+
+  it('쿨다운 중인 폴백으로는 넘기지 않고 1차 에러를 그대로 보고한다', () => {
+    const { seen, spawns } = runAndFail(
+      fallbackTo({ ...HEALTHY, status: 'cooldown', cooldownUntil: FUTURE }), RATE_LIMITED
+    );
+    expect(spawns).toBe(1);
+    expect(seen.error.message).toBe(RATE_LIMITED);
+    expect(seen.exit).toEqual({ code: 1 });
+  });
+
+  it('needs-relogin 폴백도 막는다', () => {
+    const { seen, spawns } = runAndFail(
+      fallbackTo({ ...HEALTHY, status: 'needs-relogin' }), RATE_LIMITED
+    );
+    expect(spawns).toBe(1);
+    expect(seen.error.message).toBe(RATE_LIMITED);
+  });
+
+  it('쿨다운이 만료됐으면 폴백은 그대로 동작한다', () => {
+    const { spawns } = runAndFail(
+      fallbackTo({ ...HEALTHY, status: 'cooldown', cooldownUntil: PAST }), RATE_LIMITED
+    );
+    expect(spawns).toBe(2);
+  });
+
+  it('건강한 폴백 + 한도 에러는 기존대로 폴백한다 (회귀 방지)', () => {
+    const { seen, spawns } = runAndFail(fallbackTo(HEALTHY), RATE_LIMITED);
+    expect(spawns).toBe(2);
+    expect(seen.error).toBe(null);
+  });
+
+  it('빈 출력(exit 143)은 건강한 폴백이 있어도 계정을 바꾸지 않는다', () => {
+    const { seen, spawns } = runAndFail(fallbackTo(HEALTHY), EMPTY_OUTPUT);
+    expect(spawns).toBe(1);
+    expect(seen.error.message).toBe(EMPTY_OUTPUT);
+    // 폴백 대신 message-sender 의 cli_exit 경로(같은 백엔드로 1회 재시도)가 받는다.
+    expect(classifyError(seen.error.message).label).toBe('cli_exit');
+  });
+
+  it('빈 출력이어도 onExit 은 러너가 삼키지 않는다 (1차 close 가 그대로 마감)', () => {
+    const { seen } = runAndFail(fallbackTo(HEALTHY), EMPTY_OUTPUT);
+    startClaudeRun2.mock.calls[0][0].callbacks.onExit({ code: 143 });
+    expect(seen.exit).toEqual({ code: 143 });
+  });
+});
+
 /**
  * index.js 는 createAccountScheduler 에 backendsStore 를 넘기지 않는다(계정 래퍼만 넘긴다).
  * 넘기면 계정 선택 결과가 바뀐다 — 그 차이를 고정해 둔다. 주입 여부를 바꾸려는 사람이

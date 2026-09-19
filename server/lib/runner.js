@@ -13,6 +13,14 @@ import { startClaudeRun } from '../runners/claude-cli-runner.js';
 import { runAgent as runOpenAIAgent } from '../runners/openai-runner.js';
 import { logger } from './logger.js';
 import { resolveTierModel, tierModelsCollapsed } from './model-tiers.js';
+import { backendUnhealthyReason } from './backend-health.js';
+
+// 빈 출력으로 죽은 CLI(SIGTERM/SIGKILL + result text 없음). 백엔드 장애가 아니라
+// CLI 가 빈 result 를 뱉고 늘어진 것이라 다른 계정으로 넘길 이유가 없다 — 넘기면
+// 멀쩡한 메인 대신 폴백 계정의 상태(주간 한도 등)가 사용자에게 노출된다.
+// 폴백 대신 그대로 흘려보내면 message-sender 의 cli_exit 경로가 같은 백엔드로 1회만
+// 재시도한다(retryCounters 가 cap → 무한루프 없음).
+const EMPTY_OUTPUT_ERROR_RE = /^claude CLI exited \d+ \(no result text/i;
 
 export function createRunner({ processTracker, accountScheduler } = {}) {
   const active = new Map();
@@ -80,6 +88,14 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
             callbacks.onResult?.(result);
           },
           onError: (err) => {
+            if (fallback && !fallbackStarted && !sawResult && EMPTY_OUTPUT_ERROR_RE.test(err?.message ?? '')) {
+              logger.warn(
+                { sessionId, agent: agent.id, fallbackBackend: fallback.backendId, cause: err.message },
+                'runner: 빈 출력으로 종료 — 백엔드 문제가 아니므로 폴백하지 않고 같은 백엔드 재시도로 넘긴다'
+              );
+              callbacks.onError?.(err);
+              return;
+            }
             if (fallback && !fallbackStarted && !sawResult) {
               fallbackStarted = true;
               api._startFallback({ sessionId, agent, message, claudeSessionId, fallback, callbacks, cause: err });
@@ -108,6 +124,23 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
      * (claude-cli / anthropic-compatible → Claude CLI, openai-compatible → OpenAI SDK).
      */
     _startFallback({ sessionId, agent, message, claudeSessionId, fallback, callbacks, cause }) {
+      // 폴백 대상은 턴 시작 시점(resolveFallbackBackend)에 정해진다. 1차가 실패하기까지
+      // 그 사이에 폴백이 한도에 걸렸을 수 있으므로 실행 직전에 상태를 다시 본다.
+      const fbStore = fallback.envOverrides?._backendsStore ?? null;
+      const unhealthy = fbStore
+        ? backendUnhealthyReason(fbStore.getBackend?.(fallback.backendId) ?? null)
+        : null;
+      if (unhealthy) {
+        logger.warn(
+          { sessionId, agent: agent.id, fallbackBackend: fallback.backendId, reason: unhealthy, cause: cause?.message },
+          'runner: 폴백 대상이 지금 쓸 수 없는 상태 — 폴백하지 않고 1차 에러를 그대로 보고'
+        );
+        cleanup(sessionId);
+        callbacks.onError?.(cause ?? new Error(`fallback backend unavailable (${unhealthy})`));
+        callbacks.onExit?.({ code: 1 });
+        return null;
+      }
+
       logger.warn(
         { sessionId, agent: agent.id, fallbackBackend: fallback.backendId, fallbackType: fallback.backendType, cause: cause?.message },
         'runner: primary backend failed — retrying on fallback backend'

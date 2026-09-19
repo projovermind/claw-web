@@ -138,6 +138,31 @@ describe('resolveFallbackBackend', () => {
     await store.updateBackend('zai', { fallback: 'ghost' });
     expect(resolveFallbackBackend({ id: 'a' }, store, 'zai')).toBe(null);
   });
+
+  // 폴백 대상의 건강 상태 — 쿨다운/재로그인/비활성 백엔드로 넘기면 1차의 진짜 에러
+  // 대신 폴백 계정의 한도 문구가 사용자에게 뜬다.
+  const FUTURE = () => new Date(Date.now() + 3_600_000).toISOString();
+  const PAST = () => new Date(Date.now() - 3_600_000).toISOString();
+
+  it('쿨다운 중인 폴백은 쓰지 않는다', async () => {
+    await store.updateBackend('zai', { fallback: 'omni' });
+    await store.updateBackend('omni', { status: 'cooldown', cooldownUntil: FUTURE() });
+    expect(resolveFallbackBackend({ id: 'a' }, store, 'zai')).toBe(null);
+  });
+
+  it('쿨다운이 이미 만료됐으면 status 가 남아 있어도 쓴다', async () => {
+    await store.updateBackend('zai', { fallback: 'omni' });
+    await store.updateBackend('omni', { status: 'cooldown', cooldownUntil: PAST() });
+    expect(resolveFallbackBackend({ id: 'a' }, store, 'zai').backendId).toBe('omni');
+  });
+
+  it('needs-relogin / disabled 폴백도 쓰지 않는다', async () => {
+    await store.updateBackend('zai', { fallback: 'omni' });
+    await store.updateBackend('omni', { status: 'needs-relogin' });
+    expect(resolveFallbackBackend({ id: 'a' }, store, 'zai')).toBe(null);
+    await store.updateBackend('omni', { status: 'disabled', cooldownUntil: null });
+    expect(resolveFallbackBackend({ id: 'a' }, store, 'zai')).toBe(null);
+  });
 });
 
 describe('POST /apply-to-agents', () => {

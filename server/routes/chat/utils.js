@@ -1,6 +1,7 @@
 import { logger } from '../../lib/logger.js';
 import { resolveConfigDir } from '../../lib/config-dir.js';
 import { resolveTierModel, tierBackendId as tierBackendOf } from '../../lib/model-tiers.js';
+import { backendUnhealthyReason } from '../../lib/backend-health.js';
 
 /**
  * Classify an error message and return retry strategy.
@@ -281,6 +282,15 @@ export function resolveFallbackBackend(agent, backendsStore, primaryBackendId) {
   if (!fallbackObj) {
     logger.warn({ agent: agent?.id, primaryBackendId, fallbackId },
       'resolveFallbackBackend: 폴백 대상 백엔드가 등록돼 있지 않음 — 폴백 없이 진행');
+    return null;
+  }
+
+  // 쿨다운/재로그인 필요/비활성 백엔드로는 폴백하지 않는다. 억지로 넘기면 1차의 진짜
+  // 에러 대신 폴백 계정의 한도 문구가 사용자에게 뜬다 (메인은 멀쩡한데 서브 주간한도).
+  const unhealthy = backendUnhealthyReason(fallbackObj);
+  if (unhealthy) {
+    logger.warn({ agent: agent?.id, primaryBackendId, fallbackId, reason: unhealthy },
+      'resolveFallbackBackend: 폴백 대상이 지금 쓸 수 없는 상태 — 폴백 없이 진행');
     return null;
   }
 
