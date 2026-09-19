@@ -50,10 +50,17 @@ function tokenizeQuotes(s) {
   return { out, restore: (str) => str.replace(/__Q(\d+)__/g, (_, i) => table[Number(i)] ?? '') };
 }
 
-/** `&&`, `||`, `;`, `|`, 줄바꿈으로 명령을 조각낸다 — 조각마다 쓰기 대상을 따로 본다. */
+/**
+ * `&&`, `||`, `;`, `|`, 줄바꿈으로 명령을 조각낸다 — 조각마다 쓰기 대상을 따로 본다.
+ *
+ * 조각마다 `masked`(따옴표 안이 `__Q0__` 자리표라 `>` 가 절대 안 남는 판) 와
+ * `raw`(따옴표를 되돌린 원문) 를 같이 준다. REDIRECT_RE 는 반드시 masked 에만
+ * 돌려야 한다 — raw 에 돌리면 `print(k,'->',x)` 같은 문자열 리터럴 속 `->` 를
+ * 리다이렉션으로, 뒤따르는 따옴표를 파일명으로 오인한다(실측 오탐).
+ */
 function segments(cmd) {
   const { out, restore } = tokenizeQuotes(cmd);
-  return out.split(/&&|\|\||[;|\n]/).map(restore);
+  return out.split(/&&|\|\||[;|\n]/).map((masked) => ({ masked, raw: restore(masked), restore }));
 }
 
 function unquote(tok) {
@@ -82,11 +89,12 @@ export function bashWriteTargets(command) {
   if (!command) return out;
 
   for (const seg of segments(stripHeredocs(command))) {
-    for (const m of seg.matchAll(REDIRECT_RE)) {
-      out.push(m[1] ?? m[2] ?? m[3]);
+    for (const m of seg.masked.matchAll(REDIRECT_RE)) {
+      const target = m[1] ?? m[2] ?? m[3];
+      if (target) out.push(unquote(seg.restore(target)));
     }
 
-    const toks = tokenize(seg);
+    const toks = tokenize(seg.raw);
     const cmdIdx = toks.findIndex((t) => t && !t.includes('='));
     const head = cmdIdx >= 0 ? path.basename(toks[cmdIdx]) : '';
 

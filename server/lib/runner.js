@@ -12,7 +12,7 @@
 import { startClaudeRun } from '../runners/claude-cli-runner.js';
 import { runAgent as runOpenAIAgent } from '../runners/openai-runner.js';
 import { logger } from './logger.js';
-import { resolveTierModel } from './model-tiers.js';
+import { resolveTierModel, tierModelsCollapsed } from './model-tiers.js';
 
 export function createRunner({ processTracker, accountScheduler } = {}) {
   const active = new Map();
@@ -130,9 +130,22 @@ export function createRunner({ processTracker, accountScheduler } = {}) {
         const fbBackend = fbStore?.getBackend?.(fallback.backendId) ?? null;
         // 티어 이름이면 폴백 백엔드의 tierModels 로 먼저 푼다 (없으면 강등 → models.default).
         // 티어가 아니면 null 이 돌아와 기존 models 별칭 경로가 그대로 동작한다.
+        const fbTiers = fbStore?.getRaw?.()?.tiers;
         const fbTier = resolveTierModel({
-          backendObj: fbBackend, tier: agent.modelAlias, tiers: fbStore?.getRaw?.()?.tiers
+          backendObj: fbBackend, tier: agent.modelAlias, tiers: fbTiers
         });
+        // 폴백 백엔드가 모든 티어에 같은 모델을 걸어 두면 급 구분이 통째로 사라진다.
+        // 실패가 아니라 조용히 지나가므로, 위임이 지정한 티어가 왜 아무 차이를
+        // 만들지 못했는지 나중에 로그로 추적할 수 있게 여기서 남긴다.
+        if (fbTier) {
+          const flat = tierModelsCollapsed({ backendObj: fbBackend, tiers: fbTiers });
+          if (flat.collapsed) {
+            logger.warn(
+              { sessionId, backendId: fallback.backendId, tiers: flat.tiers, model: flat.modelId, requestedTier: agent.modelAlias },
+              'runner: 폴백 백엔드의 티어가 모두 같은 모델 — 급 구분 없음(요청 티어가 무의미해짐)'
+            );
+          }
+        }
         fbAgent.model = fbTier?.modelId ?? fbBackend?.models?.[agent.modelAlias] ?? agent.modelAlias;
         if (fbAgent.model !== agent.model) {
           logger.info(

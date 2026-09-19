@@ -7,7 +7,7 @@ import os from 'node:os';
 import { createBackendsStore } from '../server/lib/backends-store.js';
 import { createBackendsRouter } from '../server/routes/backends.js';
 import { resolveAgent } from '../server/routes/chat/utils.js';
-import { resolveTierModel, normalizeTiers, migrateBackendTierModels, tierModelsFromModels } from '../server/lib/model-tiers.js';
+import { resolveTierModel, normalizeTiers, migrateBackendTierModels, tierModelsFromModels, tierModelsCollapsed, nextHigherTier } from '../server/lib/model-tiers.js';
 import { errorHandler } from '../server/middleware/error-handler.js';
 
 function tmpPath(prefix) {
@@ -257,6 +257,7 @@ describe('resolveAgent — modelTier 우선 해석', () => {
 describe('_startFallback — 폴백 백엔드의 tierModels 로 재해석', () => {
   let createRunner;
   let startClaudeRun2;
+  let warnSpy;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -265,11 +266,18 @@ describe('_startFallback — 폴백 백엔드의 tierModels 로 재해석', () =
     }));
     ({ createRunner } = await import('../server/lib/runner.js'));
     ({ startClaudeRun: startClaudeRun2 } = await import('../server/runners/claude-cli-runner.js'));
+    // resetModules 뒤의 러너가 실제로 쓰는 logger 인스턴스를 잡아야 한다.
+    const { logger } = await import('../server/lib/logger.js');
+    warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {
+    warnSpy?.mockRestore();
     vi.doUnmock('../server/runners/claude-cli-runner.js');
   });
+
+  /** 폴백 경로에서 남긴 warn 메시지들. */
+  const warnMessages = () => warnSpy.mock.calls.map((c) => c[1] ?? c[0]);
 
   function runFallback(agent, subBackend, tiers) {
     const fallback = {
@@ -307,6 +315,32 @@ describe('_startFallback — 폴백 백엔드의 tierModels 로 재해석', () =
       { type: 'anthropic-compatible', models: { default: 'glm-5.3' }, tierModels: {} }
     );
     expect(fb.agent.model).toBe('glm-5.3');
+  });
+
+  it('폴백의 티어가 전부 같은 모델이면 경고한다 (급 구분 소실)', () => {
+    runFallback(
+      { id: 'a', workingDir: '/tmp', model: 'claude-opus-5', modelAlias: 'high' },
+      {
+        type: 'anthropic-compatible',
+        models: { default: 'glm-5.3' },
+        tierModels: { high: 'glm-5.3', middle: 'glm-5.3', low: 'glm-5.3' }
+      },
+      { order: ['high', 'middle', 'low'], labels: {} }
+    );
+    expect(warnMessages().some((m) => typeof m === 'string' && m.includes('티어가 모두 같은 모델'))).toBe(true);
+  });
+
+  it('티어별 모델이 다르면 경고하지 않는다', () => {
+    runFallback(
+      { id: 'a', workingDir: '/tmp', model: 'claude-opus-5', modelAlias: 'high' },
+      {
+        type: 'anthropic-compatible',
+        models: { default: 'glm-5.3' },
+        tierModels: { high: 'glm-5.3', middle: 'glm-4.7', low: 'glm-4.5-air' }
+      },
+      { order: ['high', 'middle', 'low'], labels: {} }
+    );
+    expect(warnMessages().some((m) => typeof m === 'string' && m.includes('티어가 모두 같은 모델'))).toBe(false);
   });
 });
 
@@ -417,5 +451,44 @@ describe('backends API — 티어', () => {
   it('backendId 도 modelTier 도 없으면 400', async () => {
     const res = await request(app).post('/api/backends/apply-to-agents').send({ projectId: 'p' });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('tierModelsCollapsed / nextHigherTier', () => {
+  const tiers = { order: ['high', 'middle', 'low'], labels: {} };
+
+  it('모든 티어가 같은 모델이면 collapsed', () => {
+    const hit = tierModelsCollapsed({
+      backendObj: { tierModels: { high: 'glm-5.3', middle: 'glm-5.3', low: 'glm-5.3' } }, tiers
+    });
+    expect(hit.collapsed).toBe(true);
+    expect(hit.modelId).toBe('glm-5.3');
+    expect(hit.tiers).toEqual(['high', 'middle', 'low']);
+  });
+
+  it('하나라도 다르면 collapsed 아님', () => {
+    expect(tierModelsCollapsed({
+      backendObj: { tierModels: { high: 'a', middle: 'b' } }, tiers
+    }).collapsed).toBe(false);
+  });
+
+  it('티어가 하나뿐이거나 비어 있으면 판정하지 않는다', () => {
+    expect(tierModelsCollapsed({ backendObj: { tierModels: { high: 'a' } }, tiers }).collapsed).toBe(false);
+    expect(tierModelsCollapsed({ backendObj: {}, tiers }).collapsed).toBe(false);
+    expect(tierModelsCollapsed({}).collapsed).toBe(false);
+  });
+
+  it('order 에 없는 옛 티어 키는 세지 않는다', () => {
+    // gone 만 값이 달라도 현재 체계의 티어(high/middle)는 여전히 같은 모델이다.
+    expect(tierModelsCollapsed({
+      backendObj: { tierModels: { high: 'a', middle: 'a', gone: 'z' } }, tiers
+    }).collapsed).toBe(true);
+  });
+
+  it('nextHigherTier 는 한 칸 위를, 최상위/미등록이면 null 을 준다', () => {
+    expect(nextHigherTier(['high', 'middle', 'low'], 'low')).toBe('middle');
+    expect(nextHigherTier(['high', 'middle', 'low'], 'high')).toBeNull();
+    expect(nextHigherTier(['high', 'middle', 'low'], 'nope')).toBeNull();
+    expect(nextHigherTier(null, 'low')).toBeNull();
   });
 });

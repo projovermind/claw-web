@@ -20,6 +20,8 @@ import { logger } from './logger.js';
  *     loop: false,
  *     depth: 1,
  *     groupId: "grp_1_..." | null,   // 같은 턴에 함께 발주된 위임 묶음
+ *     tier: "middle" | null,         // 이 위임이 실제로 돌아간 모델 급
+ *     tierOverridden: boolean,       // 위임 JSON 이 티어를 지정했는가(= 기본값이 아님)
  *     status: "running" | "completed" | "failed" | "orphaned",
  *     createdAt: ISO string,
  *     queuedAt: ISO string,          // 발주 접수 시각 (대기열에 들어간 순간)
@@ -182,7 +184,7 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
     /**
      * Register a new delegation. Returns the entry.
      */
-    create({ originSessionId, targetSessionId, targetAgentId, task, loop = false, depth = 1, groupId = null, queuedAt = null }) {
+    create({ originSessionId, targetSessionId, targetAgentId, task, loop = false, depth = 1, groupId = null, queuedAt = null, tier = null, tierOverridden = false }) {
       const id = `del_${++idCounter}_${Date.now().toString(36)}`;
       // 이 시점이 곧 "워커에게 넘어간 순간"이다. queuedAt 이 따로 오면 그 사이가
       // 대기열에서 흘려버린 시간 — 큐 대기와 실행 시간을 갈라 보려면 둘 다 필요하다.
@@ -197,6 +199,10 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
         loop,
         depth,
         groupId,
+        // 이 위임이 실제로 어느 급으로 돌았는지. 리드 회신에 그대로 실려,
+        // "상위 티어로 다시 맡길지" 판단의 기준선이 된다.
+        tier,
+        tierOverridden,
         status: 'running',
         createdAt: startedAt,
         queuedAt: acceptedAt,

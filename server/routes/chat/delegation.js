@@ -1,6 +1,6 @@
 import { logger } from '../../lib/logger.js';
 import { buildRoster, listProjectAgentIds } from '../../lib/agent-roster.js';
-import { normalizeTiers } from '../../lib/model-tiers.js';
+import { normalizeTiers, nextHigherTier } from '../../lib/model-tiers.js';
 import { REUSE_TASK_PREFIX } from './worker-pool.js';
 
 /**
@@ -17,6 +17,45 @@ const MAX_DELEGATION_DEPTH = 3;
  */
 const SWEEP_INTERVAL_MS = 60_000;
 const STALL_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * 워커가 남긴 <escalate>이유</escalate> 를 뽑아낸다.
+ *
+ * 지금까지 이 태그는 Ralph Loop 위임에서만 해석됐다. 일반(단발) 위임에서 워커가
+ * 막혀서 이 태그를 써도 리드에게는 그냥 결과 텍스트로 흘러갔고, 워커가 <report>
+ * 블록까지 출력한 경우엔 요약 추출이 report 만 취하므로 **통째로 사라졌다**.
+ * 그래서 요약이 아니라 항상 응답 원문에서 뽑는다.
+ *
+ * @returns {{ reason: string }|null}
+ */
+export function extractEscalation(text) {
+  const m = /<escalate>([\s\S]*?)<\/escalate>/i.exec(text ?? '');
+  if (!m) return null;
+  return { reason: m[1].trim() || '(이유 없음)' };
+}
+
+/**
+ * 에스컬레이션을 리드가 읽을 지시문으로 바꾼다. 핵심은 "같은 티어로 그대로
+ * 재위임하지 말 것" — 같은 급으로 다시 던지면 같은 벽에 다시 부딪힌다.
+ */
+export function buildEscalationNotice({ reason, tier = null, order = [] }) {
+  const up = tier ? nextHigherTier(order, tier) : null;
+  const ranAt = tier ? `현재 실행 티어는 \`${tier}\` 입니다.` : '';
+  const advice = up
+    ? `같은 작업을 상위 티어로 다시 맡기려면 위임 JSON 에 \`"tier": "${up}"\` 를 넣으세요. 같은 티어(\`${tier}\`)로 그대로 재위임하지 마세요 — 같은 벽에 다시 부딪힙니다.`
+    : `이미 최상위 티어입니다 — 티어를 올려 해결할 수 없습니다. 작업을 더 작게 쪼개 다시 위임하거나, 리드가 직접 처리하거나, 사용자에게 상황을 알리세요.`;
+  return (
+    `🚨 **워커가 에스컬레이션을 요청했습니다 — 이 작업은 끝나지 않았습니다.**\n` +
+    `**막힌 이유**: ${reason}\n` +
+    (ranAt ? `${ranAt} ` : '') + advice
+  );
+}
+
+/** 회신에 실을 "실제로 어느 급으로 돌았는지" 한 줄. 알 수 없으면 빈 문자열. */
+export function formatTierLine(entry) {
+  if (!entry?.tier) return '';
+  return `**실행 티어**: \`${entry.tier}\`${entry.tierOverridden ? ' (위임에서 지정)' : ' (에이전트 기본)'}\n`;
+}
 
 /**
  * Creates delegation-related handlers. All cross-module calls (ctx.dispatch)
@@ -336,7 +375,10 @@ export function createDelegation(ctx) {
         loop: wantsLoop,
         depth,
         groupId,
-        queuedAt: acceptedAt
+        queuedAt: acceptedAt,
+        // 오버라이드가 없으면 에이전트 저장 티어가 실제 실행 급이다.
+        tier: tierOverride ?? configStore.getAgent(targetAgentId)?.modelTier ?? null,
+        tierOverridden: !!tierOverride
       });
       attached = ctx.attachGroupMember?.(groupId, entry) ?? false;
 

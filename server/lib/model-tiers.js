@@ -136,3 +136,34 @@ export function resolveTierModel({ backendObj, tier, tiers } = {}) {
   }
   return null;
 }
+
+/**
+ * 이 백엔드에서 티어 구분이 사실상 사라졌는지 — 등록된 티어 모델이 2개 이상인데
+ * 전부 같은 모델 ID 인 경우.
+ *
+ * 이런 백엔드로 폴백하면 위임이 지정한 급(high/low)이 아무 차이도 만들지 못한다.
+ * 실패가 아니라서 조용히 지나가지만, "상위 티어로 다시 위임" 같은 판단이 통째로
+ * 헛돌기 때문에 호출자가 경고를 남길 수 있게 알려 준다.
+ *
+ * @returns {{ collapsed: boolean, modelId: string|null, tiers: string[] }}
+ */
+export function tierModelsCollapsed({ backendObj, tiers } = {}) {
+  const tierModels = backendObj?.tierModels && typeof backendObj.tierModels === 'object'
+    ? backendObj.tierModels
+    : {};
+  const { order } = normalizeTiers(tiers);
+  // order 에 없는 키까지 세면 남은 옛 티어 때문에 판정이 흔들린다.
+  const present = order.filter((t) => typeof tierModels[t] === 'string' && tierModels[t].trim());
+  if (present.length < 2) return { collapsed: false, modelId: null, tiers: present };
+  const first = tierModels[present[0]].trim();
+  const collapsed = present.every((t) => tierModels[t].trim() === first);
+  return { collapsed, modelId: collapsed ? first : null, tiers: present };
+}
+
+/** order 상 한 칸 위(더 높은 급) 티어. 이미 최상위면 null. */
+export function nextHigherTier(order, tier) {
+  const list = Array.isArray(order) ? order : [];
+  const idx = list.indexOf(tier);
+  if (idx <= 0) return null;
+  return list[idx - 1];
+}

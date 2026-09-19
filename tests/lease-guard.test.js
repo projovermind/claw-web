@@ -51,6 +51,13 @@ describe('lease-guard — Bash 쓰기 대상 추출', () => {
     expect(fromBash('node -e "if (a >= b) {}"')).toEqual([]);
   });
 
+  it('is not fooled by an arrow literal inside a quoted string', () => {
+    // 실측 오탐: python3 -c 안의 print(k,'->',x) 가 '->' 를 리다이렉션으로,
+    // 뒤이은 따옴표 문자열을 파일명으로 오인해 가짜 임대를 만들었다.
+    const cmd = "python3 -c \"for k,v in d.items(): print(k,'->',json.dumps(v.get('x')))\"";
+    expect(fromBash(cmd)).toEqual([]);
+  });
+
   it('ignores writes described inside a heredoc body', () => {
     const cmd = [
       "cat > server/lib/new.js <<'EOF'",

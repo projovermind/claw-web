@@ -13,6 +13,7 @@ import { findClaudeSessionFile } from '../../runners/claude-cli-runner.js';
 import { classifyError, resolveAgent, buildConversationSummary } from './utils.js';
 import { resolveTierModel, normalizeTiers } from '../../lib/model-tiers.js';
 import { buildRoster, listProjectAgentIds } from '../../lib/agent-roster.js';
+import { extractEscalation, buildEscalationNotice, formatTierLine } from './delegation.js';
 import { writeHookSettingsFile, removeHookSettingsFile } from '../../lib/hook-settings.js';
 import { sessionContextUsage } from '../../lib/context-window.js';
 import { compactSession, shouldAutoCompact, settleAutoCompactBaseline } from '../../lib/compact.js';
@@ -24,6 +25,33 @@ const PERMISSION_BRIDGE_PATH = path.resolve(__dirname, '../../mcp/permission-bri
 
 // 캘린더 주입 블록의 토큰 예산. 넘으면 일정 줄부터 잘라낸다.
 const CALENDAR_HINT_MAX = 1200;
+
+/**
+ * 위임 티어 선택 기준을 프롬프트 문단으로 만든다.
+ *
+ * 티어 이름은 사용자가 바꿀 수 있으므로(설정 > 백엔드 > Global) 이름이 아니라
+ * **순서**로 기준을 건다 — order[0] 이 항상 최상위. 기준을 안 주면 리드가 티어
+ * 필드를 아예 안 쓰거나 전부 최상위로 발주해 비용만 올라간다.
+ */
+export function buildTierGuide(order) {
+  if (!order.length) return '';
+  const top = order[0];
+  const bottom = order[order.length - 1];
+  // 3단계 이상이면 가운데가 기본. 2단계뿐이면 아래쪽 — 비싼 쪽을 기본으로 두지 않는다.
+  const mid = order.length >= 3 ? order[Math.floor(order.length / 2)] : bottom;
+  const lines = [`- \`${top}\`: 설계·아키텍처 결정, 원인이 안 잡히는 디버깅, 요구사항이 상충할 때의 판단.`];
+  if (mid !== top) {
+    lines.push(`- \`${mid}\`: 명세가 뚜렷한 구현·수정·테스트 작성. **판단이 안 서면 이것을 쓰세요(기본값).**`);
+  }
+  if (bottom !== mid && bottom !== top) {
+    lines.push(`- \`${bottom}\`: 정해진 절차 실행, 조회·수집·포맷 변환처럼 판단이 거의 없는 작업.`);
+  }
+  return (
+    `\n\n티어 선택 기준 (성능 높은 순):\n${lines.join('\n')}\n` +
+    `애매하면 \`${mid}\` 로 보내세요. 워커가 급이 모자라 막히면 <escalate> 로 알려 오므로, ` +
+    `그때 상위 티어로 다시 위임하면 됩니다 — 처음부터 전부 \`${top}\` 로 보내지 마세요.`
+  );
+}
 
 /**
  * 모든 에이전트에게 팀 캘린더의 다가오는 7일 + API 사용법을 주입한다.
@@ -408,15 +436,16 @@ export function createMessageSender(ctx) {
         // 위임 구조가 사문화된다(실측: 위임 발동률 0). 워커는 회신·보고 중심.
         // 티어 키는 사용자가 바꿀 수 있다(설정 > 백엔드 > Global) — 프롬프트에 하드코딩하면
         // 이름을 바꾼 순간 존재하지 않는 티어를 광고하게 된다.
-        const tierKeys = normalizeTiers(backendsStore?.getRaw?.()?.tiers).order.join('|');
+        const tierOrder = normalizeTiers(backendsStore?.getRaw?.()?.tiers).order;
+        const tierKeys = tierOrder.join('|');
         const delegateIntro = isLead
           ? `당신은 이 프로젝트의 **리드**입니다. 아래 위임 규칙을 반드시 따르세요:\n- 구현·수정·리팩터링·디버깅·조사 등 **도메인이 명확한 실작업은 직접 처리하지 말고 적합한 워커에게 위임**하세요. 한 응답에서 여러 워커에게 동시에 위임할 수 있습니다(위임 JSON 여러 개 출력).\n- 단순 질의응답·상태 조회·짧은 판단·계획 수립은 직접 처리해도 됩니다.\n- 워커 결과가 회신되면 **검토·취합**한 뒤, **커밋·배포는 리드인 당신이 총괄**합니다(워커에게 배포를 맡기지 마세요).\n\n위임하려면 응답에 아래 JSON을 포함하세요 (코드블록 안이어도 됨):`
           : `다른 에이전트에게 작업을 맡기려면 응답에 아래 JSON을 포함하세요 (코드블록 안이어도 됨):`;
-        agent.delegateHint = `\n<delegation>\n${delegateIntro}\n\n\`\`\`json\n{"message": "짧은 안내", "delegate": {"agent": "실제_에이전트_ID", "task": "작업 설명(200자 이내)", "tier": "${tierKeys}", "loop": false}}\n\`\`\`\n\n중요:\n- agent ID는 반드시 실제 등록된 ID(언더스코어 표기). 점(.)/대시(-) 표기는 자동 정규화되지만 혼동 방지를 위해 언더스코어 권장.\n- task 는 한국어 200자 이내 요약. 파일 전체 본문을 붙여넣지 마세요.\n- tier 는 이 작업 한 번에만 적용되는 모델 급(성능 높은 순: ${tierKeys}). 생략하면 대상 에이전트의 기본 티어를 그대로 씁니다.\n- loop:true 면 Ralph Loop 모드 (DONE 출력까지 반복).\n- "새 세션을 열어 붙여넣으세요" 같은 우회 응답 금지 — 직접 이 JSON 을 출력하세요.\n\n같은 프로젝트 내 위임 가능 에이전트:\n${delegateTargets}\n</delegation>`;
+        agent.delegateHint = `\n<delegation>\n${delegateIntro}\n\n\`\`\`json\n{"message": "짧은 안내", "delegate": {"agent": "실제_에이전트_ID", "task": "작업 설명(200자 이내)", "tier": "${tierKeys}", "loop": false}}\n\`\`\`\n\n중요:\n- agent ID는 반드시 실제 등록된 ID(언더스코어 표기). 점(.)/대시(-) 표기는 자동 정규화되지만 혼동 방지를 위해 언더스코어 권장.\n- task 는 한국어 200자 이내 요약. 파일 전체 본문을 붙여넣지 마세요.\n- tier 는 이 작업 한 번에만 적용되는 모델 급(성능 높은 순: ${tierKeys}). 생략하면 대상 에이전트의 기본 티어를 그대로 씁니다.\n- loop:true 면 Ralph Loop 모드 (DONE 출력까지 반복).\n- "새 세션을 열어 붙여넣으세요" 같은 우회 응답 금지 — 직접 이 JSON 을 출력하세요.\n${buildTierGuide(tierOrder)}\n\n같은 프로젝트 내 위임 가능 에이전트:\n${delegateTargets}\n</delegation>`;
       }
 
       if (isWorkerSession) {
-        agent.reportHint = `\n<delegation-report>\n이 세션은 다른 에이전트(리드)가 위임한 작업입니다. 당신의 마지막 응답은 자동으로 리드에게 회신됩니다.\n\n작업을 마쳤으면(또는 막혔으면) 응답 맨 끝에 아래 블록을 반드시 출력하세요. 이 블록이 없으면 리드는 당신 응답의 앞 200자 + 뒤 800자만 잘라낸 요약을 받게 되어 **중간 내용이 통째로 유실**됩니다.\n\n<report>\n{"status":"completed","summary":"무엇을 했고 결과가 무엇인지 — 핵심 근거·수치·파일경로 포함, 1500자 이내","artifacts":["/절대/경로/변경한파일"],"unresolved":["남은 문제나 확인이 필요한 것"],"nextAction":"리드가 다음에 해야 할 일"}\n</report>\n\n규칙:\n- status 는 completed(완료) / blocked(막힘) / needs_input(추가 정보 필요) 중 하나.\n- summary 는 리드가 그것만 읽고 판단할 수 있게 쓰세요. "완료했습니다" 같은 내용 없는 문장 금지.\n- artifacts 는 실제로 만들거나 고친 파일의 절대 경로. 없으면 [].\n- unresolved 가 비어 있지 않으면 리드가 후속 조치를 합니다. 문제를 숨기지 마세요.\n- 판단 근거가 긴 경우 응답 본문에 그대로 쓰세요. 원문 전체는 파일로 보존되고 리드가 필요할 때 읽습니다.\n</delegation-report>`;
+        agent.reportHint = `\n<delegation-report>\n이 세션은 다른 에이전트(리드)가 위임한 작업입니다. 당신의 마지막 응답은 자동으로 리드에게 회신됩니다.\n\n작업을 마쳤으면(또는 막혔으면) 응답 맨 끝에 아래 블록을 반드시 출력하세요. 이 블록이 없으면 리드는 당신 응답의 앞 200자 + 뒤 800자만 잘라낸 요약을 받게 되어 **중간 내용이 통째로 유실**됩니다.\n\n<report>\n{"status":"completed","summary":"무엇을 했고 결과가 무엇인지 — 핵심 근거·수치·파일경로 포함, 1500자 이내","artifacts":["/절대/경로/변경한파일"],"unresolved":["남은 문제나 확인이 필요한 것"],"nextAction":"리드가 다음에 해야 할 일"}\n</report>\n\n규칙:\n- status 는 completed(완료) / blocked(막힘) / needs_input(추가 정보 필요) 중 하나.\n- summary 는 리드가 그것만 읽고 판단할 수 있게 쓰세요. "완료했습니다" 같은 내용 없는 문장 금지.\n- artifacts 는 실제로 만들거나 고친 파일의 절대 경로. 없으면 [].\n- unresolved 가 비어 있지 않으면 리드가 후속 조치를 합니다. 문제를 숨기지 마세요.\n- **막힌 이유가 "이 작업에는 더 높은 성능의 모델이 필요하다" 인 경우에만** <report> 블록과 함께 \`<escalate>무엇이 왜 부족한지</escalate>\` 를 출력하세요. 리드가 상위 티어로 다시 위임합니다. 정보 부족·권한 문제 같은 것은 에스컬레이션이 아니라 status:needs_input / blocked 로 보고하세요.\n- 판단 근거가 긴 경우 응답 본문에 그대로 쓰세요. 원문 전체는 파일로 보존되고 리드가 필요할 때 읽습니다.\n</delegation-report>`;
       }
     } else {
       // 이후 턴: --append-system-prompt 를 완전히 비워 둠.
@@ -699,14 +728,27 @@ export function createMessageSender(ctx) {
                   : `⚠️ 워커가 <report> 블록을 출력하지 않아 아래 요약은 응답의 앞뒤만 잘라낸 것입니다 — 중간 내용이 빠져 있으니 판단 전에 원문을 확인하세요.\n`;
                 const completed = delegationTracker.complete(sessionId, summary, reportPath);
                 if (completed) {
+                  // 워커가 막혀서 <escalate> 를 남겼는가. loop 위임이 아니어도 리드가
+                  // 알아야 한다 — 요약만 보면 "완료" 로 읽혀 다음 단계로 넘어간다.
+                  const escalation = extractEscalation(fullText);
+                  const escalationNotice = escalation
+                    ? buildEscalationNotice({
+                        reason: escalation.reason,
+                        tier: completed.tier ?? null,
+                        order: normalizeTiers(backendsStore?.getRaw?.()?.tiers).order
+                      }) + '\n\n'
+                    : '';
+                  const tierLine = formatTierLine(completed);
                   // 정상 완료 — 재사용 TTL 은 여기서부터 센다(작업에 걸린 시간은 빼고).
                   ctx.releaseWorkerSession?.(sessionId);
                   ctx.dequeueNextAgent(completed.targetAgentId);
 
                   const reportBody =
                     `**작업**: ${completed.task}\n` +
+                    tierLine +
                     sourceNote +
                     truncationWarning +
+                    (escalationNotice ? `\n${escalationNotice}` : '') +
                     `\n**결과**:\n${summary}`;
                   // 같은 턴에 함께 발주된 위임이면 형제들이 끝날 때까지 보고를 모아
                   // 뒀다가 한 턴으로 합쳐 전달한다. 단건이면 false — 기존 경로 그대로.
@@ -717,7 +759,7 @@ export function createMessageSender(ctx) {
 
                   await sessionsStore.appendMessage(completed.originSessionId, {
                     role: 'assistant',
-                    content: `✅ **위임 완료** — ${completed.targetAgentId}\n\n**작업**: ${completed.task}\n${sourceNote}\n**결과**:\n${summary}`
+                    content: `${escalation ? '🚨' : '✅'} **위임 ${escalation ? '에스컬레이션' : '완료'}** — ${completed.targetAgentId}\n\n**작업**: ${completed.task}\n${tierLine}${sourceNote}${escalationNotice ? `\n${escalationNotice}` : ''}\n**결과**:\n${summary}`
                   });
                   eventBus.publish('delegation.completed', {
                     id: completed.id,
@@ -739,11 +781,13 @@ export function createMessageSender(ctx) {
                     try {
                       const reEntryCount = (ctx.reEntryCounters.get(completed.originSessionId) ?? 0) + 1;
                       const trigger =
-                        `[위임 결과 보고]\n\n` +
+                        `[위임 ${escalation ? '에스컬레이션' : '결과 보고'}]\n\n` +
                         `**대상 에이전트**: ${completed.targetAgentId}\n` +
                         `**작업**: ${completed.task}\n` +
+                        tierLine +
                         sourceNote +
                         truncationWarning +
+                        (escalationNotice ? `\n${escalationNotice}` : '') +
                         `\n**결과**:\n${summary}\n\n` +
                         `위 결과를 바탕으로 계획을 계속 진행하세요. ` +
                         `다음 위임할 작업이 있으면 즉시 위임 JSON을 출력하세요. ` +

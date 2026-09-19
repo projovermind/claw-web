@@ -778,12 +778,13 @@ function parseDelegationMessage(content: string): DelegationData | null {
     return { kind: 'fail', targetAgent: failMatch[1] };
   }
   // 에스컬레이션: "🚨 **Loop 에스컬레이션** ({iter}/{max})\n\n**이유**: {reason}\n\n후속 지시..."
-  const escalateMatch = content.match(/^🚨\s*\*\*Loop 에스컬레이션\*\*(?:\s*\(([^)]+)\))?/);
+  // 단발 위임도 워커가 <escalate> 를 남기면 "🚨 **위임 에스컬레이션** — {agent}" 로 온다.
+  const escalateMatch = content.match(/^🚨\s*\*\*(?:Loop|위임) 에스컬레이션\*\*(?:\s*\(([^)]+)\))?(?:\s*—\s*([^\n]+))?/);
   if (escalateMatch) {
-    const reasonMatch = content.match(/\*\*이유\*\*:\s*([\s\S]*?)(?:\n\n|$)/);
+    const reasonMatch = content.match(/\*\*(?:막힌 )?이유\*\*:\s*([\s\S]*?)(?:\n\n|$)/);
     return {
       kind: 'escalate',
-      targetAgent: '',
+      targetAgent: escalateMatch[2]?.trim() ?? '',
       iteration: escalateMatch[1]?.trim(),
       reason: reasonMatch?.[1]?.trim()
     };
