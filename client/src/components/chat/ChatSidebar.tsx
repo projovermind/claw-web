@@ -6,7 +6,7 @@ import { useT } from '../../lib/i18n';
 import { useChatStore } from '../../store/chat-store';
 import { useProgressToastStore } from '../../store/progress-toast-store';
 import type { SessionMeta, Agent, Project, BackendsState } from '../../lib/types';
-import { isSessionRunning, isSessionBusy } from '../../lib/visibility';
+import { isSessionRunning, isSessionBusy, isHiddenDelegation } from '../../lib/visibility';
 import { sortProjectsByActivity } from '../../lib/sortProjectsByActivity';
 import DraggableSession from './DraggableSession';
 
@@ -73,11 +73,6 @@ export function ChatSidebar({
     queryFn: api.allSessions,
     refetchInterval: 3000
   });
-  // 위임 세션 (title 이 '[위임]' 으로 시작) 은 사용자 UI 에서 숨김
-  // — planner 세션 안에 "🔄 위임 시작" 메시지로 이미 표시되며,
-  //   사용자가 running 섹션에서 위임 세션을 클릭하면 대상 에이전트로
-  //   전환되어 기획자에 작업 지시 못 하는 혼동 방지.
-  const isHiddenDelegation = (s: SessionMeta) => s.title?.startsWith('[위임]');
   const runningSessions = useMemo(() => {
     const all = allSessionsData?.sessions ?? [];
     return all.filter((s: SessionMeta) => isSessionBusy(s, runtime) && !isHiddenDelegation(s));

@@ -8,7 +8,7 @@ import {
 import { Plus, Pin, ChevronDown, ListTodo, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { api } from '../lib/api';
 import type { Session, SessionMeta, ChatMessage, Agent, Project } from '../lib/types';
-import { isSessionBusy, isSessionRunning } from '../lib/visibility';
+import { isSessionBusy, isSessionRunning, isHiddenDelegation } from '../lib/visibility';
 import { sortProjectsByActivity } from '../lib/sortProjectsByActivity';
 import { useChatStore, selectActiveWorkspace } from '../store/chat-store';
 import { useProgressToastStore } from '../store/progress-toast-store';
@@ -747,7 +747,6 @@ function MobileHeader({
     return byProject;
   }, [agentStatus, agents]);
   const sessionUnread = (sid: string) => !!unread[sid] && sid !== currentSessionId;
-  const isHiddenDelegation = (s: SessionMeta) => s.title?.startsWith('[위임]');
   const runningSessions = useMemo(() => {
     const all = allSessionsQ.data?.sessions ?? [];
     return all.filter((s: SessionMeta) => isSessionBusy(s, runtimeAll) && !isHiddenDelegation(s));
@@ -761,6 +760,11 @@ function MobileHeader({
   const sortedProjects = useMemo(
     () => sortProjectsByActivity(projects, agents, allSessionsQ.data?.sessions ?? []),
     [projects, agents, allSessionsQ.data]
+  );
+  // 위임 세션은 목록에서 숨기되, 현재 선택된 세션이 위임 세션이면 선택 불가 상태를 막기 위해 남겨둔다.
+  const visibleSessions = useMemo(
+    () => sessions.filter((s) => !isHiddenDelegation(s) || s.id === currentSessionId),
+    [sessions, currentSessionId]
   );
   const StatusDot = ({ unread, running }: { unread: boolean; running: boolean }) => {
     if (!unread && !running) return null;
@@ -885,8 +889,8 @@ function MobileHeader({
           <span className="truncate flex-1">{currentSession?.title ?? t('chat.mobileSessionSelect')}</span>
           <ChevronDown size={12} className="text-zinc-500 shrink-0" />
           <StatusDot
-            unread={sessions.some(s => sessionUnread(s.id))}
-            running={sessions.some(s => isSessionBusy(s, runtimeAll) && s.id !== currentSessionId)}
+            unread={visibleSessions.some(s => sessionUnread(s.id))}
+            running={visibleSessions.some(s => isSessionBusy(s, runtimeAll) && s.id !== currentSessionId)}
           />
         </button>
         {sessOpen && (
@@ -897,7 +901,7 @@ function MobileHeader({
               className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 text-emerald-300 hover:bg-zinc-800/50 disabled:opacity-40 border-b border-zinc-800">
               <Plus size={12} /> {t('chat.mobileNewSession')}
             </button>
-            {sessions.map((s) => (
+            {visibleSessions.map((s) => (
               <button key={s.id}
                 onClick={() => { onSelectSession(s.id); setSessOpen(false); }}
                 className={`w-full text-left px-3 py-2 text-xs flex items-center gap-1.5 ${currentSessionId === s.id ? 'bg-zinc-800' : 'hover:bg-zinc-800/50'}`}>
@@ -906,7 +910,7 @@ function MobileHeader({
                 <StatusDot unread={sessionUnread(s.id)} running={isSessionBusy(s, runtimeAll)} />
               </button>
             ))}
-            {sessions.length === 0 && (
+            {visibleSessions.length === 0 && (
               <div className="px-3 py-4 text-[11px] text-zinc-600 text-center italic">{t('chat.mobileNoSessions')}</div>
             )}
           </div>

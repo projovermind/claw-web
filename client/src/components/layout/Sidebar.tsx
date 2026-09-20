@@ -23,7 +23,7 @@ import { useI18nStore, useT } from '../../lib/i18n';
 import { useQuery } from '@tanstack/react-query';
 import { api, setAuthToken } from '../../lib/api';
 import { useChatStore } from '../../store/chat-store';
-import { isSessionBusy } from '../../lib/visibility';
+import { isSessionBusy, isHiddenDelegation } from '../../lib/visibility';
 import { DEFAULT_APPEARANCE } from '../../hooks/useAppearance';
 import DeviceSwitcher from './DeviceSwitcher';
 import SidebarUsage from './SidebarUsage';
@@ -69,7 +69,6 @@ export default function Sidebar() {
   // 이 필터 없으면 삭제된 세션 / 열고 있는 세션의 유령 unread 로 파란점 상시 점등
   // 위임 세션([위임] 으로 시작) 은 ChatSidebar/ChatPage 에서 숨기므로 여기도 제외해야
   // "읽을게 없는데 채팅 네비에 파란 불" 증상 방지
-  const isHiddenDelegation = (title?: string) => !!title?.startsWith('[위임]');
   const visibleUnread = (() => {
     const sessions = sessionsData?.sessions ?? [];
     if (sessions.length === 0) return [] as string[];
@@ -79,7 +78,7 @@ export default function Sidebar() {
       if (id === currentSessionId) continue;
       const s = bySid.get(id);
       if (!s) continue;
-      if (isHiddenDelegation(s.title)) continue;
+      if (isHiddenDelegation(s)) continue;
       out.push(id);
     }
     return out;
@@ -87,7 +86,7 @@ export default function Sidebar() {
   const hasUnread = visibleUnread.length > 0;
   const hasError = visibleUnread.some((id) => unread[id]?.isError);
   const hasRunning = (sessionsData?.sessions ?? []).some(
-    (s) => isSessionBusy(s, runtime) && !isHiddenDelegation(s.title)
+    (s) => isSessionBusy(s, runtime) && !isHiddenDelegation(s)
   );
   const chatDotColor = hasError ? 'bg-red-400' : hasUnread ? 'bg-sky-400' : hasRunning ? 'bg-amber-400' : null;
 
