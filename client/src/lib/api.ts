@@ -24,7 +24,11 @@ import type {
   CalendarEvent,
   CalendarEventInput,
   Holiday,
-  ScheduledMessage
+  ScheduledMessage,
+  InstancesState,
+  InstancePublic,
+  InstanceCreateInput,
+  InstancePatchInput
 } from './types';
 
 const BASE = '/api';
@@ -139,6 +143,14 @@ export const api = {
   patchDevice: (id: string, data: Partial<Device>) => patch<Device>(`/devices/${id}`, data),
   deleteDevice: (id: string) => del<void>(`/devices/${id}`),
   pingDevice: (id: string) => get<DevicePing>(`/devices/${id}/ping`),
+  instances: () => get<InstancesState>('/instances'),
+  createInstance: (data: InstanceCreateInput) => post<InstancePublic>('/instances', data),
+  patchInstance: (id: string, data: InstancePatchInput) => patch<InstancePublic>(`/instances/${id}`, data),
+  deleteInstance: (id: string) => del<void>(`/instances/${id}`),
+  checkInstanceHealth: (id: string) =>
+    post<{ id: string; health: InstancesState['instances'][number]['health'] }>(`/instances/${id}/health`, {}),
+  setInstancesSelf: (data: { selfId?: string; selfPublicUrl?: string | null }) =>
+    patch<{ selfId: string; selfPublicUrl: string | null }>('/instances/_self', data),
   readProjectMd: (id: string, filename = 'CLAUDE.md') =>
     get<{ filename: string; exists: boolean; size: number; mtimeMs: number; content: string; filePath: string }>(
       filename === 'CLAUDE.md' ? `/projects/${id}/md` : `/projects/${id}/md/${filename}`

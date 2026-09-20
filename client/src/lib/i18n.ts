@@ -118,6 +118,11 @@ const DICT: Record<Lang, Record<string, string>> = {
     'agents.field.backend': 'AI 회사 (Backend)',
     'agents.field.model': '모델',
     'agents.field.modelTier': '모델 티어',
+    'agents.field.host': '실행 인스턴스 (Host)',
+    'agents.help.host':
+      '이 에이전트의 위임을 어느 claw-web 인스턴스로 보낼지. 기본은 이 기계(로컬)에서 실행. 설정 > 인스턴스에서 등록한 원격 claw-web 을 고르면 그쪽으로 위임이 넘어갑니다.',
+    'agents.host.local': '로컬 (이 기계)',
+    'agents.host.badgeTitle': '이 에이전트는 인스턴스 "{host}" 에서 실행됩니다',
     'agents.help.modelTierResolved':
       '이 백엔드에서는 {model} 로 실행됩니다. 티어→모델 매핑은 설정 > 백엔드에서 바꿉니다.',
     'agents.help.modelTierUnmapped':
@@ -421,6 +426,28 @@ const DICT: Record<Lang, Record<string, string>> = {
     'settings.tab.hooks': '훅',
     'settings.tab.mcp': 'MCP 서버',
     'settings.tab.schedules': '스케줄',
+    'settings.tab.instances': '인스턴스',
+
+    // Instances tab (연합)
+    'instancesTab.help':
+      '다른 기계에서 돌고 있는 claw-web 을 등록해 두면, 에이전트 편집에서 host 로 지정해 위임을 그 인스턴스로 보낼 수 있습니다. 여기서 원격 조종하는 게 아니라 위임만 건너갑니다.',
+    'instancesTab.selfTitle': '이 인스턴스 자신',
+    'instancesTab.selfId': 'Self ID',
+    'instancesTab.selfPublicUrl': '콜백 주소 (Self Public URL)',
+    'instancesTab.selfHelp':
+      '다른 인스턴스가 이 인스턴스로 위임을 보낼 때 이 id/URL 로 등록합니다. 콜백 주소가 비어 있으면 원격 위임의 결과를 받을 수 없어 요청 자체가 거부됩니다.',
+    'instancesTab.addTitle': '인스턴스 추가',
+    'instancesTab.idPlaceholder': 'id (예: studio)',
+    'instancesTab.labelPlaceholder': '라벨 (예: 맥스튜디오)',
+    'instancesTab.tokenPlaceholder': '아웃바운드 토큰 (그 인스턴스가 발급한 UI 토큰)',
+    'instancesTab.empty': '등록된 인스턴스가 없습니다.',
+    'instancesTab.disabled': '비활성',
+    'instancesTab.disable': '비활성화',
+    'instancesTab.enable': '활성화',
+    'instancesTab.checking': '확인 중…',
+    'instancesTab.unreachable': '응답 없음',
+    'instancesTab.checkHealth': '헬스체크',
+    'instancesTab.confirmDelete': '{label} 을(를) 목록에서 지울까요?',
 
     // Appearance tab
     'appearance.appNameTitle': '앱 이름',
@@ -1063,6 +1090,11 @@ const DICT: Record<Lang, Record<string, string>> = {
     'agents.field.backend': 'AI Company (Backend)',
     'agents.field.model': 'Model',
     'agents.field.modelTier': 'Model tier',
+    'agents.field.host': 'Host instance',
+    'agents.help.host':
+      "Which claw-web instance runs this agent's delegations. Defaults to this machine (local). Pick a remote instance registered in Settings > Instances to route delegations there.",
+    'agents.host.local': 'Local (this machine)',
+    'agents.host.badgeTitle': 'This agent runs on instance "{host}"',
     'agents.help.modelTierResolved':
       'Runs as {model} on this backend. Change the tier-to-model map in Settings > Backends.',
     'agents.help.modelTierUnmapped':
@@ -1366,6 +1398,28 @@ const DICT: Record<Lang, Record<string, string>> = {
     'settings.tab.hooks': 'Hooks',
     'settings.tab.mcp': 'MCP Servers',
     'settings.tab.schedules': 'Schedules',
+    'settings.tab.instances': 'Instances',
+
+    // Instances tab (federation)
+    'instancesTab.help':
+      'Register other machines running claw-web here. Pick one as an agent\'s host to route its delegations to that instance — this is not remote control, only delegations hop over.',
+    'instancesTab.selfTitle': 'This instance',
+    'instancesTab.selfId': 'Self ID',
+    'instancesTab.selfPublicUrl': 'Callback URL (Self Public URL)',
+    'instancesTab.selfHelp':
+      'Other instances register this id/URL when they delegate to this one. If the callback URL is empty, remote delegations are rejected outright since results have nowhere to return.',
+    'instancesTab.addTitle': 'Add instance',
+    'instancesTab.idPlaceholder': 'id (e.g. studio)',
+    'instancesTab.labelPlaceholder': 'label (e.g. Mac Studio)',
+    'instancesTab.tokenPlaceholder': 'outbound token (UI token issued by that instance)',
+    'instancesTab.empty': 'No instances registered.',
+    'instancesTab.disabled': 'disabled',
+    'instancesTab.disable': 'Disable',
+    'instancesTab.enable': 'Enable',
+    'instancesTab.checking': 'Checking…',
+    'instancesTab.unreachable': 'Unreachable',
+    'instancesTab.checkHealth': 'Health check',
+    'instancesTab.confirmDelete': 'Remove {label} from the list?',
 
     // Appearance tab
     'appearance.appNameTitle': 'App Name',

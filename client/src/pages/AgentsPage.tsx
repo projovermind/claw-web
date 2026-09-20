@@ -38,6 +38,7 @@ export default function AgentsPage() {
       if (form.skillIds.length > 0) patch.skillIds = form.skillIds;
       if (form.backend && form.backend !== 'claude') patch.backendId = form.backend;
       if (form.backendId) patch.backendId = form.backendId;
+      if (form.host) patch.host = form.host;
       if (form.pinnedFiles.length > 0) patch.pinnedFiles = form.pinnedFiles;
       if (form.gitDiffAutoAttach) patch.gitDiffAutoAttach = true;
       if (form.bridgeAutoAttach) patch.bridgeAutoAttach = true;
@@ -72,6 +73,7 @@ export default function AgentsPage() {
           model: form.model,
           modelTier: form.modelTier || null,
           backendId: form.backendId || (form.backend === 'claude' ? null : form.backend),
+          host: form.host || null,
           systemPrompt: form.systemPrompt,
           skillIds: form.skillIds,
           allowedTools: form.allowedTools,

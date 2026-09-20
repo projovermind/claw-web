@@ -75,6 +75,11 @@ export function SortableAddonCard({
           {agent.lightweightMode && (
             <span className="px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300">⚡ LW</span>
           )}
+          {agent.host && (
+            <span className="px-1.5 py-0.5 rounded bg-sky-900/40 text-sky-300" title={t('agents.host.badgeTitle', { host: agent.host })}>
+              🌐 {agent.host}
+            </span>
+          )}
         </div>
 
         {/* Top-right: ⋮ menu */}

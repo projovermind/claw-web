@@ -11,6 +11,9 @@ export interface Agent {
   thinkingEffort?: 'auto' | 'low' | 'medium' | 'high' | 'max';
   backendId?: string | null;
   accountId?: string | null; // deprecated: use backendId
+  /** 이 에이전트를 실행할 인스턴스 id. 비어있거나 selfId 와 같으면 로컬 실행.
+   *  설정 > 인스턴스(연합)에 등록된 원격 claw-web 으로 위임을 라우팅한다. */
+  host?: string | null;
   /** 모델 티어 키 (HIGH/MIDDLE/LOW 또는 커스텀). 백엔드의 tierModels 로 실제 모델이 결정된다.
    *  null/undefined → 티어 미사용, `model` 에 고정된 모델을 그대로 쓴다. */
   modelTier?: string | null;
@@ -171,6 +174,52 @@ export interface DevicePing {
   latencyMs: number;
   error?: string;
   health?: HealthStatus;
+}
+
+/** 크로스호스트 위임의 주소록 항목. 토큰은 절대 그대로 내려오지 않고 tokenSet 으로만 표시된다. */
+export interface InstancePublic {
+  id: string;
+  label: string;
+  baseUrl: string | null;
+  tokenSet: boolean;
+  inboundTokenSet: boolean;
+  enabled: boolean;
+  platform: string | null;
+  lastHealthAt: number | null;
+  health: InstanceHealth | null;
+}
+
+export interface InstanceHealth {
+  ok: boolean;
+  version: string | null;
+  latencyMs: number;
+  federation: boolean;
+  error: string | null;
+}
+
+export interface InstancesState {
+  selfId: string;
+  selfPublicUrl: string | null;
+  instances: InstancePublic[];
+}
+
+export interface InstanceCreateInput {
+  id: string;
+  label?: string;
+  baseUrl: string;
+  token?: string;
+  inboundToken?: string;
+  enabled?: boolean;
+  platform?: string;
+}
+
+export interface InstancePatchInput {
+  label?: string;
+  baseUrl?: string;
+  token?: string | null;
+  inboundToken?: string | null;
+  enabled?: boolean;
+  platform?: string | null;
 }
 
 export interface Skill {

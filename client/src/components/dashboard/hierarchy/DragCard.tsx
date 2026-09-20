@@ -1,6 +1,7 @@
 import { useDraggable } from '@dnd-kit/core';
 import { Pencil, Trash2, Copy, MoreVertical, X, ArrowDown } from 'lucide-react';
 import type { Agent } from '../../../lib/types';
+import { useT } from '../../../lib/i18n';
 
 export function DragCard({
   agent,
@@ -21,6 +22,7 @@ export function DragCard({
   onRemoveFromProject?: (a: Agent) => void;
   onDemoteToAddon?: (a: Agent) => void;
 }) {
+  const t = useT();
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: agent.id });
   const cls =
     accent === 'amber'
@@ -52,6 +54,11 @@ export function DragCard({
           <span className="px-1.5 py-0.5 rounded bg-zinc-800">{agent.model ?? '—'}</span>
           {agent.lightweightMode && (
             <span className="px-1.5 py-0.5 rounded bg-amber-900/40 text-amber-300">⚡ LW</span>
+          )}
+          {agent.host && (
+            <span className="px-1.5 py-0.5 rounded bg-sky-900/40 text-sky-300" title={t('agents.host.badgeTitle', { host: agent.host })}>
+              🌐 {agent.host}
+            </span>
           )}
         </div>
       </div>

@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Server, KeyRound, ToggleRight, Webhook, Plug, Clock, Palette, Bell, ChevronRight, MonitorSmartphone } from 'lucide-react';
+import { Server, KeyRound, ToggleRight, Webhook, Plug, Clock, Palette, Bell, ChevronRight, MonitorSmartphone, Globe2 } from 'lucide-react';
 import { DevicesTab } from '../components/settings/DevicesTab';
+import { InstancesTab } from '../components/settings/InstancesTab';
 import { BackendsTab } from '../components/settings/BackendsTab';
 import { AccessTab } from '../components/settings/AccessTab';
 import { FeaturesTab } from '../components/settings/FeaturesTab';
@@ -12,9 +13,9 @@ import { AppearanceTab } from '../components/settings/AppearanceTab';
 import { NotificationsTab } from '../components/settings/NotificationsTab';
 import { useT } from '../lib/i18n';
 
-type Tab = 'appearance' | 'backends' | 'devices' | 'access' | 'features' | 'hooks' | 'mcp' | 'schedules' | 'notifications';
+type Tab = 'appearance' | 'backends' | 'devices' | 'instances' | 'access' | 'features' | 'hooks' | 'mcp' | 'schedules' | 'notifications';
 
-const TAB_VALUES: Tab[] = ['appearance', 'backends', 'devices', 'access', 'features', 'hooks', 'mcp', 'schedules', 'notifications'];
+const TAB_VALUES: Tab[] = ['appearance', 'backends', 'devices', 'instances', 'access', 'features', 'hooks', 'mcp', 'schedules', 'notifications'];
 
 export default function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -58,6 +59,7 @@ export default function SettingsPage() {
         <TabButton label={t('settings.tab.appearance')} icon={<Palette size={14} />} active={tab === 'appearance'} onClick={() => setTab('appearance')} />
         <TabButton label={t('settings.tab.backends')} icon={<Server size={14} />} active={tab === 'backends'} onClick={() => setTab('backends')} />
         <TabButton label="기기" icon={<MonitorSmartphone size={14} />} active={tab === 'devices'} onClick={() => setTab('devices')} />
+        <TabButton label={t('settings.tab.instances')} icon={<Globe2 size={14} />} active={tab === 'instances'} onClick={() => setTab('instances')} />
         <TabButton label={t('settings.tab.access')} icon={<KeyRound size={14} />} active={tab === 'access'} onClick={() => setTab('access')} />
         <TabButton label={t('settings.tab.features')} icon={<ToggleRight size={14} />} active={tab === 'features'} onClick={() => setTab('features')} />
         <TabButton label={t('settings.tab.hooks')} icon={<Webhook size={14} />} active={tab === 'hooks'} onClick={() => setTab('hooks')} />
@@ -77,6 +79,7 @@ export default function SettingsPage() {
         {tab === 'appearance' && <AppearanceTab />}
         {tab === 'backends' && <BackendsTab />}
         {tab === 'devices' && <DevicesTab />}
+        {tab === 'instances' && <InstancesTab />}
         {tab === 'access' && <AccessTab />}
         {tab === 'features' && <FeaturesTab />}
         {tab === 'hooks' && <HooksTab />}

@@ -17,6 +17,8 @@ export interface AgentFormState {
   modelTier: string;
   backend: string;
   backendId: string;
+  /** 이 에이전트를 실행할 인스턴스 id. '' 면 로컬(selfId). */
+  host: string;
   systemPrompt: string;
   skillIds: string[];
   allowedTools: string[];
@@ -79,6 +81,7 @@ export const emptyAgentForm = (): AgentFormState => ({
   modelTier: '',
   backend: 'claude',
   backendId: '',
+  host: '',
   systemPrompt: '',
   skillIds: [],
   allowedTools: [],
@@ -126,6 +129,11 @@ export function AgentModal({
   const { data: backendsState } = useQuery({ queryKey: ['backends'], queryFn: api.backends });
   const { data: skills } = useQuery({ queryKey: ['skills'], queryFn: api.skills });
   const { data: projects } = useQuery({ queryKey: ['projects'], queryFn: api.projects });
+  const { data: instancesState } = useQuery({ queryKey: ['instances'], queryFn: api.instances });
+  const remoteInstances = useMemo(
+    () => (instancesState?.instances ?? []).filter((i) => i.id !== instancesState?.selfId && i.enabled),
+    [instancesState]
+  );
   const backendList = useMemo(() => Object.values(backendsState?.backends ?? {}), [backendsState]);
   const claudeCliBackends = useMemo(
     () => backendList.filter((b) => b.type === 'claude-cli' && b.status !== 'disabled'),
@@ -155,6 +163,7 @@ export function AgentModal({
           modelTier: agent.modelTier ?? '',
           backend: agent.backendId ?? 'claude',
           backendId: agent.backendId ?? agent.accountId ?? '',
+          host: agent.host ?? '',
           systemPrompt: agent.systemPrompt ?? '',
           skillIds: agent.skillIds ?? [],
           allowedTools: agent.allowedTools ?? [],
@@ -404,6 +413,21 @@ export function AgentModal({
                 <option value="">기본 (스케줄러 자동 배정)</option>
                 {claudeCliBackends.map((b) => (
                   <option key={b.id} value={b.id}>{b.label}</option>
+                ))}
+              </select>
+            </Field>
+          )}
+
+          {remoteInstances.length > 0 && (
+            <Field label={t('agents.field.host')} help={t('agents.help.host')}>
+              <select
+                value={form.host}
+                onChange={(e) => setForm({ ...form, host: e.target.value })}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm"
+              >
+                <option value="">{t('agents.host.local')}</option>
+                {remoteInstances.map((i) => (
+                  <option key={i.id} value={i.id}>{i.label} ({i.id})</option>
                 ))}
               </select>
             </Field>
