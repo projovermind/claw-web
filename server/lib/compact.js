@@ -306,6 +306,58 @@ function seedContent(summary) {
 }
 
 /**
+ * 위임 시작 카드 본문. routes/chat/delegation.js 가 발주 시 남기는 것과 같은
+ * 형식이어야 한다 — 클라이언트(MessageList.parseDelegationMessage)가 이 문자열
+ * 모양으로만 카드를 알아보기 때문이다. 원본 카드를 잃은 세션을 위한 복원용이라
+ * 재사용/티어 같은 부가 표기는 담지 않는다.
+ */
+function renderDelegationStartCard(entry) {
+  return `🔄 **위임 시작** — ${entry.targetAgentId}에게 작업을 전달했습니다.\n\n` +
+    `**작업**: ${entry.task}\n**세션**: ${entry.targetSessionId}` +
+    (entry.loop ? '\n**모드**: Ralph Loop (자동 반복)' : '');
+}
+
+function isStartCardFor(msg, entry) {
+  const c = msg?.content;
+  return typeof c === 'string'
+    && c.startsWith('🔄 **위임 시작**')
+    && c.includes(entry.targetSessionId);
+}
+
+/**
+ * 압축 후에도 살아남아야 하는 '진행 중 위임' 카드들.
+ *
+ * 압축은 메시지 배열을 요약 한 건으로 갈아끼운다. 그때 아직 회신되지 않은 위임의
+ * 시작 카드까지 사라지면 플래너는 자기가 무엇을 맡겨 두고 기다리는지 모르는 채로
+ * 다음 턴을 시작하고, 화면에서도 진행 중 위임이 통째로 증발한다 (실측
+ * sess_XUNZAzFpzECp — 살아 있는 위임 del_1147_mu9z4n56 이 있는데 메시지는 요약 1건뿐).
+ *
+ * 원본 카드 메시지를 **그대로** 옮긴다. 회신이 도착하면 기존 로직이 완료 카드를
+ * 뒤에 덧붙이는 구조라, 내용이나 형식이 달라지면 짝이 어긋난다. 이전 세대 압축에서
+ * 이미 카드를 잃은 세션만 tracker 엔트리로 같은 형식의 카드를 복원한다.
+ *
+ * @param {{id:string, messages?:Array}} session
+ * @param {{getByOrigin?:(id:string)=>Array}|null} delegationTracker
+ * @returns {Array<{role:string, content:string, ts?:string}>}
+ */
+export function activeDelegationCards(session, delegationTracker) {
+  const running = (delegationTracker?.getByOrigin?.(session.id) ?? [])
+    .filter((e) => e?.status === 'running');
+  if (running.length === 0) return [];
+
+  const msgs = session.messages ?? [];
+  return running.map((entry) => {
+    const original = msgs.find((m) => isStartCardFor(m, entry));
+    if (original) return original;
+    return {
+      role: 'assistant',
+      content: renderDelegationStartCard(entry),
+      ts: entry.startedAt ?? entry.createdAt ?? new Date().toISOString()
+    };
+  });
+}
+
+/**
  * Compact a session into its summary.
  *
  * 두 가지 모드가 있고, 결과 세션은 어느 쪽이든 claudeSessionId 를 물려받지
@@ -326,7 +378,7 @@ function seedContent(summary) {
  * @throws {Error} code 'EMPTY_SESSION' when there is nothing to compact.
  * @returns {Promise<{newSessionId, archivedSessionId, inPlace, originalMessages, compactChars, originalChars, savings}>}
  */
-export async function compactSession({ session, sessionsStore, eventBus, inPlace = false }) {
+export async function compactSession({ session, sessionsStore, eventBus, inPlace = false, delegationTracker = null }) {
   const msgs = session.messages ?? [];
   if (msgs.length === 0) {
     const err = new Error('No messages to compact');
@@ -335,6 +387,8 @@ export async function compactSession({ session, sessionsStore, eventBus, inPlace
   }
 
   const summary = buildCompactSummary(session);
+  // 회신을 기다리는 위임은 요약 뒤에 카드 그대로 다시 실어 준다.
+  const pendingCards = activeDelegationCards(session, delegationTracker);
   const originalChars = msgs.reduce((s, m) => s + (m.content ?? '').length, 0);
   const compactChars = summary.length;
   const savings = Math.round((1 - compactChars / Math.max(originalChars, 1)) * 100);
@@ -363,7 +417,8 @@ export async function compactSession({ session, sessionsStore, eventBus, inPlace
     archivedSessionId = archived.id;
 
     await sessionsStore.setMessages(session.id, [
-      { role: 'user', content: seedContent(summary), ts: new Date().toISOString() }
+      { role: 'user', content: seedContent(summary), ts: new Date().toISOString() },
+      ...pendingCards
     ]);
     // claudeSessionId 를 비워야 다음 턴이 fresh start 로 잡혀 persona/skills 가
     // 재주입된다 (message-sender 의 isFirstMsg 판정).
@@ -376,7 +431,12 @@ export async function compactSession({ session, sessionsStore, eventBus, inPlace
     newSessionId = session.id;
   } else {
     const newSession = await sessionsStore.create({ agentId: session.agentId, title, compactRoot, compactGen });
-    await sessionsStore.appendMessage(newSession.id, { role: 'user', content: seedContent(summary) });
+    // setMessages 로 한 번에 심는다 — appendMessage 는 ts 를 지금으로 덮어써서
+    // 보존한 위임 카드의 원래 시각이 사라진다.
+    await sessionsStore.setMessages(newSession.id, [
+      { role: 'user', content: seedContent(summary), ts: new Date().toISOString() },
+      ...pendingCards
+    ]);
     newSessionId = newSession.id;
   }
 

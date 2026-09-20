@@ -277,7 +277,7 @@ export function createSessionsRouter({ sessionsStore, configStore, runner, event
     try {
       const session = sessionsStore.get(req.params.id);
       if (!session) throw new HttpError(404, 'Session not found', 'SESSION_NOT_FOUND');
-      const result = await compactSession({ session, sessionsStore, eventBus });
+      const result = await compactSession({ session, sessionsStore, eventBus, delegationTracker });
       res.json({ ...result, savings: `${result.savings}%` });
     } catch (err) {
       if (err.code === 'EMPTY_SESSION') {

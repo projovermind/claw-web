@@ -238,7 +238,7 @@ export function createMessageSender(ctx) {
 
     // inPlace: 살아 있는 세션을 그대로 줄인다. fork 하면 러너는 계속 원본을 쓰므로
     // 컨텍스트가 줄지 않고 매 턴 재압축된다 (실측 32회/세션).
-    const result = await compactSession({ session, sessionsStore, eventBus, inPlace: true });
+    const result = await compactSession({ session, sessionsStore, eventBus, inPlace: true, delegationTracker });
     // 압축이 사실상 못 줄인 경우 매 턴 재시도하지 않도록 기준점을 남긴다.
     // postCompactTokens 는 지금 알 수 없다(압축된 세션엔 usage 턴이 없다) — 다음 턴에
     // settleAutoCompactBaseline 이 채운다. 여기에 압축 전 값을 넣으면 래칫이 된다.

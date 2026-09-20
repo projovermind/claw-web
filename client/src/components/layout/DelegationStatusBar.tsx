@@ -112,6 +112,16 @@ function useStuckWatcher(delegations: DelegationEntry[]) {
   return stuckIds;
 }
 
+/** 1분 단위로 리렌더를 트리거해 "경과 M분" 표시를 살아있게 유지한다. */
+function useNow(intervalMs = 30_000) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(t);
+  }, [intervalMs]);
+  return now;
+}
+
 function DelegationItem({ entry, isStuck, onOpen }: {
   entry: DelegationEntry;
   isStuck: boolean;
@@ -201,6 +211,32 @@ function DelegationItem({ entry, isStuck, onOpen }: {
 }
 
 /**
+ * 위임 항목 목록 팝오버 본문 — 인디케이터/세션 스트립이 공유한다.
+ */
+function DelegationPopoverList({ delegations, stuckIds, onOpen }: {
+  delegations: DelegationEntry[];
+  stuckIds: Set<string>;
+  onOpen: () => void;
+}) {
+  const activeCount = delegations.filter((d) => !isDoneEntry(d)).length;
+  return (
+    <>
+      <div className="px-3 py-1.5 text-[11px] text-zinc-500 sticky top-0 bg-zinc-900">
+        위임 {delegations.length}건 · 진행 중 {activeCount}건
+      </div>
+      {delegations.map((entry) => (
+        <DelegationItem
+          key={entry.id}
+          entry={entry}
+          isStuck={stuckIds.has(entry.id)}
+          onOpen={onOpen}
+        />
+      ))}
+    </>
+  );
+}
+
+/**
  * 파란 점멸등 + 건수 뱃지. 클릭하면 위임 목록 팝오버가 열린다.
  * 위임이 없으면 아무것도 그리지 않는다.
  */
@@ -261,17 +297,87 @@ export default function DelegationIndicator({ align = 'left' }: { align?: 'left'
             align === 'right' ? 'right-0' : 'left-0'
           }`}
         >
-          <div className="px-3 py-1.5 text-[11px] text-zinc-500 sticky top-0 bg-zinc-900">
-            위임 {delegations.length}건 · 진행 중 {activeCount}건
-          </div>
-          {delegations.map((entry) => (
-            <DelegationItem
-              key={entry.id}
-              entry={entry}
-              isStuck={stuckIds.has(entry.id)}
-              onOpen={() => setOpen(false)}
-            />
-          ))}
+          <DelegationPopoverList
+            delegations={delegations}
+            stuckIds={stuckIds}
+            onOpen={() => setOpen(false)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 입력창 바로 위 상시 상태 스트립 — 현재 세션이 원본인, 완료되지 않은 위임이 있을 때만 표시.
+ * "위임 진행 중 N건 · 대상에이전트명 · 경과 M분" 형태. 클릭하면 DelegationIndicator 와 동일한
+ * 목록 팝오버가 (입력창을 가리지 않도록) 위쪽으로 열린다.
+ */
+export function DelegationSessionStrip({ sessionId }: { sessionId: string | null }) {
+  const allDelegations = useDelegationStore((s) => s.delegations);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const now = useNow();
+
+  const sessionDelegations = useMemo(
+    () => allDelegations.filter((d) => d.originSessionId === sessionId),
+    [allDelegations, sessionId]
+  );
+  const active = useMemo(
+    () => sessionDelegations.filter((d) => !isDoneEntry(d)),
+    [sessionDelegations]
+  );
+  const stuckIds = useStuckWatcher(sessionDelegations);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [open]);
+
+  useEffect(() => {
+    if (active.length === 0) setOpen(false);
+  }, [active.length]);
+
+  if (!sessionId || active.length === 0) return null;
+
+  const hasStuck = active.some((d) => stuckIds.has(d.id));
+  const agentNames = Array.from(new Set(active.map((d) => d.targetAgentId)));
+  const agentLabel = agentNames.length === 1
+    ? agentNames[0]
+    : `${agentNames[0]} 외 ${agentNames.length - 1}`;
+  const oldestStartedAt = Math.min(...active.map((d) => d.startedAt));
+  const elapsedMin = Math.max(0, Math.floor((now - oldestStartedAt) / 60_000));
+
+  return (
+    <div ref={ref} className="relative shrink-0 border-t border-zinc-800">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title={`위임 ${active.length}건 진행 중${hasStuck ? ' — 응답 없는 워커 있음' : ''}`}
+        className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] font-medium transition-colors ${
+          hasStuck
+            ? 'bg-amber-900/30 text-amber-200 hover:bg-amber-900/50'
+            : 'bg-blue-950/30 text-blue-200 hover:bg-blue-950/50'
+        }`}
+      >
+        <span
+          className={`w-2 h-2 rounded-full shrink-0 ${hasStuck ? 'bg-amber-400 animate-pulse' : 'bg-blue-400 animate-pulse'}`}
+        />
+        <span>
+          위임 진행 중 {active.length}건 · <span className="font-semibold">{agentLabel}</span> · 경과 {elapsedMin}분
+        </span>
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 right-0 mb-1 z-50 max-h-80 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 shadow-xl divide-y divide-zinc-800">
+          <DelegationPopoverList
+            delegations={sessionDelegations}
+            stuckIds={stuckIds}
+            onOpen={() => setOpen(false)}
+          />
         </div>
       )}
     </div>

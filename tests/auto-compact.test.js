@@ -4,6 +4,7 @@ import {
   settleAutoCompactBaseline,
   buildCompactSummary,
   compactSession,
+  activeDelegationCards,
   stripCompactSuffix,
   extractFilePaths,
   renderToolCall,
@@ -13,6 +14,17 @@ import {
 import { sessionContextUsage, resolveContextWindow, usedContextTokens } from '../server/lib/context-window.js';
 
 const assistant = (usage, over = {}) => ({ role: 'assistant', content: 'a', usage, ...over });
+
+/** delegationTracker 중 압축이 실제로 쓰는 면(getByOrigin)만 흉내 낸다. */
+const fakeTracker = (entries) => ({
+  getByOrigin: (originSessionId) => entries.filter((e) => e.originSessionId === originSessionId)
+});
+
+const startCard = (entry, ts) => ({
+  role: 'assistant',
+  content: `🔄 **위임 시작** — ${entry.targetAgentId}에게 작업을 전달했습니다.\n\n**작업**: ${entry.task}\n**세션**: ${entry.targetSessionId}`,
+  ts
+});
 
 function fakeStore(session) {
   const created = [];
@@ -269,10 +281,127 @@ describe('compactSession', () => {
     expect(store.get(result.archivedSessionId).claudeSessionId).toBe('cli-abc');
   });
 
+  it('keeps a single seed message when nothing is in flight', async () => {
+    const store = fakeStore(session);
+    await compactSession({ session, sessionsStore: store, inPlace: true, delegationTracker: fakeTracker([]) });
+    expect(store.get('sess-1').messages).toHaveLength(1);
+  });
+
   it('throws EMPTY_SESSION with no messages', async () => {
     await expect(
       compactSession({ session: { id: 'x', title: 't', agentId: 'a', messages: [] }, sessionsStore: fakeStore() })
     ).rejects.toMatchObject({ code: 'EMPTY_SESSION' });
+  });
+});
+
+describe('압축이 진행 중 위임 카드를 보존한다', () => {
+  // 실측 사고: sess_XUNZAzFpzECp 는 회신 안 온 위임이 살아 있는데 압축 뒤 메시지가
+  // 요약 1건뿐이라, 플래너도 화면도 "무엇을 기다리는 중"인지 알 수 없었다.
+  const running = {
+    id: 'del_1147_mu9z4n56',
+    originSessionId: 'sess-1',
+    targetSessionId: 'sess-worker',
+    targetAgentId: 'snm_sales',
+    task: '세일즈 페이지 카피 작성',
+    status: 'running'
+  };
+  const done = {
+    id: 'del_1146_x',
+    originSessionId: 'sess-1',
+    targetSessionId: 'sess-old-worker',
+    targetAgentId: 'cw_server',
+    task: '끝난 일',
+    status: 'completed'
+  };
+
+  const sessionWith = (cards) => ({
+    id: 'sess-1',
+    title: 'T',
+    agentId: 'agent-a',
+    messages: [
+      ...Array.from({ length: 20 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `msg-${i}`, ts: 't' })),
+      ...cards
+    ]
+  });
+
+  it('회신 대기 중인 위임의 시작 카드만 요약 뒤에 그대로 남긴다', async () => {
+    const live = sessionWith([startCard(done, '2026-09-20T01:00:00.000Z'), startCard(running, '2026-09-20T02:00:00.000Z')]);
+    const store = fakeStore(live);
+
+    await compactSession({
+      session: store.get('sess-1'),
+      sessionsStore: store,
+      inPlace: true,
+      delegationTracker: fakeTracker([done, running])
+    });
+
+    const msgs = store.get('sess-1').messages;
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].content).toContain('[이전 세션에서 이어짐]');
+    // 원본 메시지 객체 그대로 — 내용도 ts 도 손대지 않는다.
+    expect(msgs[1]).toEqual(startCard(running, '2026-09-20T02:00:00.000Z'));
+    // 이미 회신된 위임의 카드는 (요약 본문 말고) 다시 붙지 않는다.
+    expect(msgs.slice(1).some((m) => m.content.includes('sess-old-worker'))).toBe(false);
+  });
+
+  it('보존된 카드는 완료 카드와 짝이 맞는 형식을 유지한다', async () => {
+    const store = fakeStore(sessionWith([startCard(running, 't')]));
+    await compactSession({
+      session: store.get('sess-1'),
+      sessionsStore: store,
+      inPlace: true,
+      delegationTracker: fakeTracker([running])
+    });
+
+    // 클라이언트 parseDelegationMessage 가 카드로 인식하는 조건(시작 헤더 + 작업/세션 줄).
+    const card = store.get('sess-1').messages[1];
+    expect(card.role).toBe('assistant');
+    expect(card.content).toMatch(/^🔄\s*\*\*위임 시작\*\*\s*—\s*([^\n]+?)에게/);
+    expect(card.content).toMatch(/\*\*세션\*\*:\s*sess-worker/);
+
+    // 회신 도착 = 기존 경로 그대로 완료 카드를 덧붙인다. 순서가 시작 → 완료로 유지돼야 한다.
+    await store.appendMessage('sess-1', {
+      role: 'assistant',
+      content: `✅ **위임 완료** — ${running.targetAgentId}\n\n**작업**: ${running.task}\n\n**결과**:\n요약`
+    });
+    const msgs = store.get('sess-1').messages;
+    expect(msgs.map((m) => [...m.content][0])).toEqual(['[', '🔄', '✅']);
+  });
+
+  it('이전 세대 압축에서 카드를 이미 잃었으면 tracker 기록으로 복원한다', async () => {
+    const store = fakeStore(sessionWith([])); // 시작 카드가 메시지에 없는 상태
+    await compactSession({
+      session: store.get('sess-1'),
+      sessionsStore: store,
+      inPlace: true,
+      delegationTracker: fakeTracker([{ ...running, loop: true, startedAt: '2026-09-20T02:00:00.000Z' }])
+    });
+
+    const card = store.get('sess-1').messages[1];
+    expect(card.content).toContain('🔄 **위임 시작** — snm_sales에게');
+    expect(card.content).toContain('**세션**: sess-worker');
+    expect(card.content).toContain('Ralph Loop');
+    expect(card.ts).toBe('2026-09-20T02:00:00.000Z');
+  });
+
+  it('fork 압축도 같은 카드를 새 세션에 싣는다', async () => {
+    const store = fakeStore(sessionWith([startCard(running, 't')]));
+    const result = await compactSession({
+      session: store.get('sess-1'),
+      sessionsStore: store,
+      delegationTracker: fakeTracker([running])
+    });
+    const msgs = store.get(result.newSessionId).messages;
+    expect(msgs).toHaveLength(2);
+    expect(msgs[1]).toEqual(startCard(running, 't'));
+  });
+
+  it('tracker 가 없거나 진행 중 위임이 없으면 아무것도 붙이지 않는다', () => {
+    const live = sessionWith([startCard(running, 't')]);
+    expect(activeDelegationCards(live, null)).toEqual([]);
+    expect(activeDelegationCards(live, fakeTracker([done]))).toEqual([]);
+    // 다른 세션이 건 위임은 이 세션 것이 아니다.
+    expect(activeDelegationCards(live, fakeTracker([{ ...running, originSessionId: 'sess-2' }]))).toEqual([]);
   });
 });
 

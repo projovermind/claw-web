@@ -20,7 +20,7 @@ import { resolveContextWindow } from '../lib/context-window';
 import TodoWidget from '../components/chat/TodoWidget';
 import { ChatSidebar } from '../components/chat/ChatSidebar';
 import { FrameworkActions } from '../components/chat/FrameworkActions';
-import DelegationIndicator, { useDelegationLifecycle } from '../components/layout/DelegationStatusBar';
+import DelegationIndicator, { DelegationSessionStrip, useDelegationLifecycle } from '../components/layout/DelegationStatusBar';
 import SplitToolbar from '../components/chat/SplitToolbar';
 import WorkspaceGrid from '../components/chat/WorkspaceGrid';
 import ChatPane from '../components/chat/ChatPane';
@@ -566,6 +566,9 @@ export default function ChatPage() {
               if (currentSessionId) sendMessage.mutate({ sessionId: currentSessionId, message: msg, paths: [] });
             }}
           />
+
+          {/* 위임 진행 중 상시 표시 — 메시지가 0개여도 보여야 하므로 입력창과 함께 항상 렌더 */}
+          <DelegationSessionStrip sessionId={currentSessionId} />
 
           {/* Shared input — targets active pane's session */}
           <ChatInput
