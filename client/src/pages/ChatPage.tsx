@@ -9,6 +9,7 @@ import { Plus, Pin, ChevronDown, ListTodo, PanelRightClose, PanelRightOpen } fro
 import { api } from '../lib/api';
 import type { Session, SessionMeta, ChatMessage, Agent, Project } from '../lib/types';
 import { isSessionBusy, isSessionRunning } from '../lib/visibility';
+import { sortProjectsByActivity } from '../lib/sortProjectsByActivity';
 import { useChatStore, selectActiveWorkspace } from '../store/chat-store';
 import { useProgressToastStore } from '../store/progress-toast-store';
 import { useToastStore } from '../store/toast-store';
@@ -757,6 +758,10 @@ function MobileHeader({
       unread[s.id] && s.id !== currentSessionId && !isHiddenDelegation(s)
     );
   }, [allSessionsQ.data, unread, currentSessionId]);
+  const sortedProjects = useMemo(
+    () => sortProjectsByActivity(projects, agents, allSessionsQ.data?.sessions ?? []),
+    [projects, agents, allSessionsQ.data]
+  );
   const StatusDot = ({ unread, running }: { unread: boolean; running: boolean }) => {
     if (!unread && !running) return null;
     const color = unread ? 'bg-sky-400' : 'bg-amber-400';
@@ -856,7 +861,7 @@ function MobileHeader({
                 <div className="border-t border-zinc-800" />
               </>
             )}
-            {projects.map((p) => {
+            {sortedProjects.map((p) => {
               const pst = projectStatus[p.id] ?? { unread: false, running: false };
               return (
                 <button key={p.id}

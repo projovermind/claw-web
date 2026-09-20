@@ -153,6 +153,8 @@ export interface Project {
   accountId?: string | null; // deprecated: use backendId
   backendId?: string | null;
   dashboard?: ProjectDashboard;
+  /** 서버가 계산해 내려주는 프로젝트 전체 세션 기준 최근 활동 시각 (실시간 세션 스캔의 폴백 기준선). */
+  lastActivityAt?: string | null;
 }
 
 /** 이 claw-web 이 아는 다른 기계. 원격 조종이 아니라 "그 기계의 claw-web 으로 건너가는" 북마크. */

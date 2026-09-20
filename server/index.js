@@ -647,7 +647,7 @@ async function main() {
   app.use('/api/agents', createAgentsRouter({ configStore, metadataStore, projectsStore, skillsStore, sessionsStore, eventBus }));
   app.use(
     '/api/projects',
-    createProjectsRouter({ projectsStore, configStore, metadataStore, eventBus })
+    createProjectsRouter({ projectsStore, configStore, metadataStore, sessionsStore, eventBus })
   );
   // CLAUDE.md / AGENTS.md editor mounted on same prefix
   app.use('/api/projects', createProjectMdRouter({ projectsStore, webConfig, eventBus }));

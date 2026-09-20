@@ -7,6 +7,7 @@ import { useChatStore } from '../../store/chat-store';
 import { useProgressToastStore } from '../../store/progress-toast-store';
 import type { SessionMeta, Agent, Project, BackendsState } from '../../lib/types';
 import { isSessionRunning, isSessionBusy } from '../../lib/visibility';
+import { sortProjectsByActivity } from '../../lib/sortProjectsByActivity';
 import DraggableSession from './DraggableSession';
 
 /** 에이전트 모델 단축명 뱃지 — 모델명만 표시 (백엔드명 제외) */
@@ -162,15 +163,19 @@ export function ChatSidebar({
     ? projects.find((p) => p.id === currentAgent.projectId)
     : null;
 
-  // Group: projects with their leads + global agents
+  // Group: projects with their leads + global agents — 최근 대화순 정렬
+  const sortedProjects = useMemo(
+    () => sortProjectsByActivity(projects, agents, allSessionsData?.sessions ?? []),
+    [projects, agents, allSessionsData]
+  );
   const projectsWithLeads = useMemo(() => {
-    return projects.map((p) => {
+    return sortedProjects.map((p) => {
       const lead = agents.find(
         (a) => a.projectId === p.id && a.tier === 'project'
       );
       return { project: p, lead };
     });
-  }, [projects, agents]);
+  }, [sortedProjects, agents]);
 
   const globalAgents = useMemo(
     () => agents.filter((a) => a.tier === 'main' || (!a.projectId && !a.tier)),

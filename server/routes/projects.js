@@ -45,7 +45,7 @@ export function resolveMemoryFile(dir, name) {
   return full;
 }
 
-export function createProjectsRouter({ projectsStore, configStore, metadataStore, eventBus }) {
+export function createProjectsRouter({ projectsStore, configStore, metadataStore, sessionsStore, eventBus }) {
   const router = Router();
 
   /** @returns {string} memory dir — throws 404 when the project has no working dir. */
@@ -112,8 +112,31 @@ export function createProjectsRouter({ projectsStore, configStore, metadataStore
     } catch (err) { next(err); }
   });
 
+  // 프로젝트별 마지막 활동 시각 = 소속 에이전트(agent.projectId) 세션들 중 max(updatedAt).
+  // sessionsStore.list() 는 메시지 없는 인메모리 인덱스라 전량 순회해도 저렴하다.
+  function lastActivityByProject() {
+    const metaAgents = metadataStore?.getAll()?.agents ?? {};
+    const projectIdByAgent = new Map(
+      Object.entries(metaAgents).map(([id, meta]) => [id, meta?.projectId ?? null])
+    );
+    const result = new Map();
+    for (const session of sessionsStore?.list() ?? []) {
+      const projectId = projectIdByAgent.get(session.agentId);
+      if (!projectId) continue;
+      const prev = result.get(projectId);
+      if (!prev || session.updatedAt > prev) result.set(projectId, session.updatedAt);
+    }
+    return result;
+  }
+
   router.get('/', (req, res) => {
-    res.json({ projects: projectsStore.getAll() });
+    const lastActivity = lastActivityByProject();
+    res.json({
+      projects: projectsStore.getAll().map((p) => ({
+        ...p,
+        lastActivityAt: lastActivity.get(p.id) ?? null,
+      })),
+    });
   });
 
   router.post('/', async (req, res, next) => {
