@@ -55,6 +55,8 @@ const BACKOFF_MAX_MS = 5 * 60_000;
 const STALE_MAX_MS = 12 * 60 * 60_000;
 /** 재시도로 회복될 수 있는 상태. 그 외(expired/no-credentials)는 재시도 주기를 평소대로 둔다. */
 const TRANSIENT_STATUSES = new Set(['error', 'unauthorized']);
+/** JSON 파싱에 실패한 에러 본문을 reason 에 담을 때의 상한. */
+const ERROR_BODY_SNIPPET_MAX = 200;
 const execFileP = promisify(execFile);
 
 /** Claude CLI 가 configDir 에 대해 사용하는 키체인 서비스명. */
@@ -252,6 +254,55 @@ function parseRetryAfter(res, nowMs) {
 }
 
 /**
+ * anthropic-ratelimit-requests-* 헤더를 읽는다. 셋 다 없으면 null.
+ * limit/remaining 은 숫자가 아니면 null, reset 은 RFC3339 문자열을 그대로 둔다.
+ */
+function parseRateLimitHeaders(res) {
+  const get = (name) => res.headers?.get?.(name) ?? null;
+  const limitRaw = get('anthropic-ratelimit-requests-limit');
+  const remainingRaw = get('anthropic-ratelimit-requests-remaining');
+  const reset = get('anthropic-ratelimit-requests-reset');
+  if (limitRaw == null && remainingRaw == null && reset == null) return null;
+  const toNum = (v) => {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  return { limit: toNum(limitRaw), remaining: toNum(remainingRaw), reset };
+}
+
+/**
+ * 에러 응답 본문을 읽는다. res.text 가 없거나(테스트 목 등) 읽기 자체가 실패하면
+ * null — 호출부는 그 경우 본문 없이 진단한다. accessToken 은 응답 본문에 없다.
+ */
+async function readErrorBody(res) {
+  if (typeof res?.text !== 'function') return null;
+  try {
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 에러 본문에서 사람이 읽을 reason 을 만든다. JSON 이면 error.type /
+ * error.details.error_code(429 rate limit 에서 흔함) 를 뽑고, 파싱 실패면
+ * 원문 앞 ERROR_BODY_SNIPPET_MAX 자만 남긴다(상한 엄수).
+ */
+function buildErrorReason(status, bodyText) {
+  if (!bodyText) return `HTTP ${status}`;
+  try {
+    const parsed = JSON.parse(bodyText);
+    const type = parsed?.error?.type;
+    const code = parsed?.error?.details?.error_code;
+    const detail = [type, code].filter(Boolean).join(': ');
+    return detail ? `HTTP ${status} (${detail})` : `HTTP ${status}`;
+  } catch {
+    return `HTTP ${status}: ${bodyText.slice(0, ERROR_BODY_SNIPPET_MAX)}`;
+  }
+}
+
+/**
  * 하나의 백엔드에 대한 사용량 조회 (캐시 없음).
  * @returns {Promise<object>} 정규화된 결과. 실패해도 throw 하지 않는다.
  */
@@ -390,6 +441,8 @@ export async function fetchBackendUsage(id, backend, {
   }
   if (!res.ok) {
     const retryAfterMs = parseRetryAfter(res, now());
+    const rateLimit = parseRateLimitHeaders(res);
+    const bodyText = await readErrorBody(res);
     return {
       ...meta,
       status: 'error',
@@ -397,7 +450,8 @@ export async function fetchBackendUsage(id, backend, {
       tokenSource,
       httpStatus: res.status,
       ...(retryAfterMs != null ? { retryAfterMs } : {}),
-      reason: `HTTP ${res.status}`
+      ...(rateLimit ? { rateLimit } : {}),
+      reason: buildErrorReason(res.status, bodyText)
     };
   }
 

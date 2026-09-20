@@ -233,6 +233,78 @@ describe('fetchBackendUsage', () => {
     expect(r.status).toBe('error');
     expect(r.reason).toContain('ECONNREFUSED');
   });
+
+  it('429 본문이 JSON 이면 error.type/error.details.error_code 를 reason 에 담는다', async () => {
+    const configDir = mk(liveCreds);
+    const body = JSON.stringify({
+      error: { type: 'rate_limit_error', details: { error_code: 'usage_limit_exceeded' } }
+    });
+    const fetchImpl = vi.fn(async () => ({
+      ok: false, status: 429, headers: new Headers(), text: async () => body
+    }));
+    const r = await fetchBackendUsage('acc', { type: 'claude-cli', configDir }, { fetchImpl });
+    expect(r.status).toBe('error');
+    expect(r.httpStatus).toBe(429);
+    expect(r.reason).toContain('rate_limit_error');
+    expect(r.reason).toContain('usage_limit_exceeded');
+  });
+
+  it('429 본문이 JSON 이 아니면 앞 200자만 reason 에 담는다', async () => {
+    const configDir = mk(liveCreds);
+    const body = 'x'.repeat(500);
+    const fetchImpl = vi.fn(async () => ({
+      ok: false, status: 429, headers: new Headers(), text: async () => body
+    }));
+    const r = await fetchBackendUsage('acc', { type: 'claude-cli', configDir }, { fetchImpl });
+    expect(r.reason.length).toBeLessThanOrEqual(`HTTP 429: ${'x'.repeat(200)}`.length);
+    expect(r.reason).toContain('x'.repeat(200));
+    expect(r.reason).not.toContain('x'.repeat(201));
+  });
+
+  it('본문을 읽을 수 없어도(구버전 목 등) 기존처럼 HTTP {status} 로 내려간다', async () => {
+    const configDir = mk(liveCreds);
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 500 }));
+    const r = await fetchBackendUsage('acc', { type: 'claude-cli', configDir }, { fetchImpl });
+    expect(r.reason).toBe('HTTP 500');
+    expect(r.rateLimit).toBeUndefined();
+  });
+
+  it('anthropic-ratelimit-requests-* 헤더를 rateLimit 객체로 담는다', async () => {
+    const configDir = mk(liveCreds);
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      headers: new Headers({
+        'anthropic-ratelimit-requests-limit': '50',
+        'anthropic-ratelimit-requests-remaining': '0',
+        'anthropic-ratelimit-requests-reset': '2026-09-21T12:00:00Z'
+      }),
+      text: async () => ''
+    }));
+    const r = await fetchBackendUsage('acc', { type: 'claude-cli', configDir }, { fetchImpl });
+    expect(r.rateLimit).toEqual({ limit: 50, remaining: 0, reset: '2026-09-21T12:00:00Z' });
+  });
+
+  it('rateLimit 헤더가 하나도 없으면 rateLimit 을 담지 않는다', async () => {
+    const configDir = mk(liveCreds);
+    const fetchImpl = vi.fn(async () => ({
+      ok: false, status: 500, headers: new Headers(), text: async () => ''
+    }));
+    const r = await fetchBackendUsage('acc', { type: 'claude-cli', configDir }, { fetchImpl });
+    expect(r.rateLimit).toBeUndefined();
+  });
+
+  it('accessToken 은 429 에러 결과에도 노출되지 않는다', async () => {
+    const configDir = mk(liveCreds);
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      headers: new Headers({ 'anthropic-ratelimit-requests-remaining': '0' }),
+      text: async () => JSON.stringify({ error: { type: 'rate_limit_error' } })
+    }));
+    const r = await fetchBackendUsage('acc', { type: 'claude-cli', configDir }, { fetchImpl });
+    expect(JSON.stringify(r)).not.toContain('SECRET');
+  });
 });
 
 describe('createBackendUsageReader 캐시', () => {
