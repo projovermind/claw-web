@@ -10,6 +10,8 @@ import { createWorktreePool } from './worktree-pool.js';
 import { createWakeup } from './wakeup.js';
 import { createMessageSender } from './message-sender.js';
 import { createDispatcher } from './dispatch.js';
+import { createRemoteReport } from './remote-report.js';
+import { createFederationInbound } from './federation-inbound.js';
 
 const sendSchema = z.object({
   sessionId: z.string().min(1),
@@ -29,6 +31,7 @@ export function createChatRouter({
   runner,
   eventBus,
   delegationTracker,
+  instancesStore,
   pushStore,
   webConfig,
   getBridgeContext,
@@ -65,6 +68,7 @@ export function createChatRouter({
     runner,
     eventBus,
     delegationTracker,
+    instancesStore,
     pushStore,
     webConfig,
     getBridgeContext,
@@ -116,6 +120,15 @@ export function createChatRouter({
   // (It reads ctx.startRunner lazily, so the cycle sender ↔ dispatcher is fine.)
   const dispatcher = createDispatcher(ctx);
   Object.assign(ctx, dispatcher);
+
+  // 연합(크로스호스트 위임). 레지스트리가 없으면 배선하지 않는다 — 이 기능이
+  // 꺼진 설치에서 기존 동작이 1비트도 달라지지 않아야 한다.
+  if (instancesStore) {
+    // origin 측 회신 경로 (원격 워커 완료 → 리드에게 보고 턴)
+    Object.assign(ctx, createRemoteReport(ctx));
+    // remote 측 접수 경로 (남의 위임을 받아 여기서 워커를 띄움)
+    Object.assign(ctx, createFederationInbound(ctx));
+  }
 
   /**
    * 지난 실행에서 사라진 위임을 원 세션에 되돌려준다. 이 보고가 없으면 플래너는
@@ -357,6 +370,10 @@ export function createChatRouter({
     clearAllWakeups: ctx.clearAllWakeups,
     clearAllDispatch: ctx.clearAllDispatch,
     abortDispatch: ctx.abortDispatch,
-    abandonDelegation: ctx.abandonDelegation
+    abandonDelegation: ctx.abandonDelegation,
+    // 연합 라우터는 인증 미들웨어보다 앞에 마운트되느라 이 라우터보다 먼저
+    // 만들어진다. 홀더에 꽂아 요청 시점에 해소한다.
+    acceptRemoteDelegation: ctx.acceptRemoteDelegation ?? null,
+    deliverRemoteResult: ctx.deliverRemoteResult ?? null
   };
 }

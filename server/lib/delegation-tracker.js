@@ -24,6 +24,9 @@ import { logger } from './logger.js';
  *     tierOverridden: boolean,       // 위임 JSON 이 티어를 지정했는가(= 기본값이 아님) — 상위 티어를
  *                                    // "요청"했다는 뜻일 뿐, 실제로 막혀서 escalate 했는지와는 다른 축
  *     escalated: boolean,            // 워커가 <escalate> 를 남기고 완료됐는가 (complete() 가 기록)
+ *     kind: "local" | "remote",      // remote = 다른 인스턴스가 실행 중 (targetSessionId 는 합성 키)
+ *     remoteInstance: string | null, // remote 일 때 실행 중인 인스턴스 id
+ *     remoteSessionId: string | null,// 그 인스턴스에서의 실제 세션 id (링크용)
  *     status: "running" | "completed" | "failed" | "orphaned",
  *     createdAt: ISO string,
  *     queuedAt: ISO string,          // 발주 접수 시각 (대기열에 들어간 순간)
@@ -45,7 +48,11 @@ const MAX_CHAIN_WALK = 12;
 export function createDelegationTracker({ filePath = null, reportsDir = null } = {}) {
   const active = new Map();        // targetSessionId → entry
   const byOrigin = new Map();      // originSessionId → [entry, ...]
-  const activeByAgent = new Map(); // agentId → count of active delegations
+  const activeByAgent = new Map(); // agentId → 이 기계에서 돌고 있는 워커 수
+  // agentId → 다른 인스턴스에 내보낸(kind:'remote') 위임 수. 로컬 워커 슬롯을
+  // 차지하지 않으므로 따로 센다 — 원격 위임 때문에 같은 이름의 로컬 에이전트가
+  // busy 로 잡히면, 루프백은 물론 실제 2기계 구성에서도 슬롯이 이중으로 깎인다.
+  const remoteByAgent = new Map();
   const finished = new Map();      // targetSessionId → entry (completed/failed/orphaned)
   const history = [];              // finished entries, oldest first, capped
 
@@ -90,11 +97,17 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
     }
   }
 
-  function releaseAgent(agentId) {
-    const prev = activeByAgent.get(agentId) ?? 1;
+  function agentCounter(entry) {
+    return entry?.kind === 'remote' ? remoteByAgent : activeByAgent;
+  }
+
+  function releaseAgent(entry) {
+    const map = agentCounter(entry);
+    const agentId = entry.targetAgentId;
+    const prev = map.get(agentId) ?? 1;
     const next = Math.max(0, prev - 1);
-    if (next === 0) activeByAgent.delete(agentId);
-    else activeByAgent.set(agentId, next);
+    if (next === 0) map.delete(agentId);
+    else map.set(agentId, next);
   }
 
   /**
@@ -186,7 +199,7 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
     /**
      * Register a new delegation. Returns the entry.
      */
-    create({ originSessionId, targetSessionId, targetAgentId, task, loop = false, depth = 1, groupId = null, queuedAt = null, tier = null, tierOverridden = false }) {
+    create({ originSessionId, targetSessionId, targetAgentId, task, loop = false, depth = 1, groupId = null, queuedAt = null, tier = null, tierOverridden = false, kind = 'local', remoteInstance = null, remoteSessionId = null }) {
       const id = `del_${++idCounter}_${Date.now().toString(36)}`;
       // 이 시점이 곧 "워커에게 넘어간 순간"이다. queuedAt 이 따로 오면 그 사이가
       // 대기열에서 흘려버린 시간 — 큐 대기와 실행 시간을 갈라 보려면 둘 다 필요하다.
@@ -205,6 +218,11 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
         // "상위 티어로 다시 맡길지" 판단의 기준선이 된다.
         tier,
         tierOverridden,
+        // 'local' — 여기서 워커를 띄웠다. 'remote' — 다른 인스턴스가 실행 중이고
+        // targetSessionId 는 콜백을 맞추기 위한 합성 키다(로컬 세션이 아니다).
+        kind,
+        remoteInstance,
+        remoteSessionId,
         escalated: false,
         status: 'running',
         createdAt: startedAt,
@@ -218,7 +236,8 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
       };
       active.set(targetSessionId, entry);
       indexByOrigin(entry);
-      activeByAgent.set(targetAgentId, (activeByAgent.get(targetAgentId) ?? 0) + 1);
+      const counter = agentCounter(entry);
+      counter.set(targetAgentId, (counter.get(targetAgentId) ?? 0) + 1);
       schedulePersist();
       logger.info({ id, originSessionId, targetSessionId, targetAgentId, depth }, 'delegation: created');
       return entry;
@@ -265,7 +284,7 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
       entry.escalated = !!escalated;
       active.delete(targetSessionId);
       retire(entry);
-      releaseAgent(entry.targetAgentId);
+      releaseAgent(entry);
       schedulePersist();
       logger.info(
         { id: entry.id, targetAgentId: entry.targetAgentId, queueMs: entry.queueMs, durationMs: entry.durationMs },
@@ -286,7 +305,7 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
       entry.result = `Error: ${error}`;
       active.delete(targetSessionId);
       retire(entry);
-      releaseAgent(entry.targetAgentId);
+      releaseAgent(entry);
       schedulePersist();
       logger.warn({ id: entry.id, error, queueMs: entry.queueMs, durationMs: entry.durationMs }, 'delegation: failed');
       return entry;
@@ -314,12 +333,13 @@ export function createDelegationTracker({ filePath = null, reportsDir = null } =
      * Returns true if the given agentId has at least one active delegation running.
      */
     isAgentBusy(agentId) {
-      return (activeByAgent.get(agentId) ?? 0) > 0;
+      return ((activeByAgent.get(agentId) ?? 0) + (remoteByAgent.get(agentId) ?? 0)) > 0;
     },
 
     /**
      * How many delegations are running for this agent right now. Callers compare
      * it against the agent's maxConcurrent to decide between dispatch and queue.
+     * 로컬 워커만 센다 — 원격에 내보낸 위임은 그쪽 인스턴스가 자기 한도로 막는다.
      */
     activeCountForAgent(agentId) {
       return activeByAgent.get(agentId) ?? 0;

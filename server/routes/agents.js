@@ -13,6 +13,7 @@ const createSchema = z.object({
   model: z.string().max(64).optional(),
   modelTier: z.string().max(32).optional(),
   workingDir: z.string().max(500).optional(),
+  host: z.string().max(64).optional(),
   allowedTools: z.array(z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
   maxConcurrent: z.number().int().min(1).max(10).optional()

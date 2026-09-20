@@ -1,6 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { logger } from '../../lib/logger.js';
 import { buildRoster, listProjectAgentIds } from '../../lib/agent-roster.js';
 import { normalizeTiers, nextHigherTier } from '../../lib/model-tiers.js';
+import { buildHostGuide } from '../../lib/host-guide.js';
+import { checkInstanceHealth, postDelegate, supportsFederation } from '../../lib/federation-client.js';
 import { REUSE_TASK_PREFIX } from './worker-pool.js';
 
 /**
@@ -17,6 +20,18 @@ const MAX_DELEGATION_DEPTH = 3;
  */
 const SWEEP_INTERVAL_MS = 60_000;
 const STALL_TIMEOUT_MS = 10 * 60_000;
+/**
+ * 원격 위임은 네트워크 왕복과 상대 인스턴스의 대기열까지 포함하므로 로컬보다
+ * 훨씬 늦게 회신될 수 있다. 로컬과 같은 10분으로 자르면 멀쩡히 돌고 있는
+ * 원격 워커를 중단 처리해 버린다.
+ */
+const REMOTE_STALL_TIMEOUT_MS = 45 * 60_000;
+
+/**
+ * 헬스 정보를 이 시간보다 오래 방치했으면 위임 직전에 다시 찍는다. 죽은 원격에
+ * 발주해 놓고 pending 으로 남기는 것이 이 기능의 최악 실패 모드다.
+ */
+const HEALTH_STALE_MS = 60_000;
 
 /**
  * 워커가 남긴 <escalate>이유</escalate> 를 뽑아낸다.
@@ -268,6 +283,221 @@ export function createDelegation(ctx) {
     return match;
   }
 
+  /**
+   * 이 에이전트를 어느 기계에서 돌릴 것인가.
+   *
+   * `host` 가 없거나 이 인스턴스의 selfId 와 같으면 기존 로컬 경로 그대로다 —
+   * 레지스트리가 아예 없는 설치에서도 동작이 100% 변하지 않아야 한다. 모르는
+   * 값이면 조용히 로컬로 떨어뜨리지 않고 실패로 돌려준다(엉뚱한 기계에서 도는
+   * 것보다 리드가 사유를 아는 편이 낫다).
+   *
+   * @returns {{ remote: false } | { remote: true, instanceId, instance } | { error: string, host: string }}
+   */
+  function resolveHost(targetAgentId) {
+    const host = configStore.getAgent(targetAgentId)?.host ?? null;
+    const instancesStore = ctx.instancesStore;
+    if (!host || typeof host !== 'string' || !host.trim()) return { remote: false };
+    const wanted = host.trim();
+    if (!instancesStore) return { error: 'federation_unconfigured', host: wanted };
+    if (wanted === instancesStore.getSelfId()) return { remote: false };
+    const instance = instancesStore.getInstance(wanted);
+    if (!instance) return { error: 'unknown_host', host: wanted };
+    return { remote: true, instanceId: wanted, instance };
+  }
+
+  /**
+   * 원격에 발주해도 되는 상태인지 확인한다. 헬스가 낡았으면 지금 찍는다 —
+   * 죽은 인스턴스에 보내 놓고 콜백을 기다리는 것이 가장 나쁜 실패 모드다.
+   */
+  async function gateRemoteInstance(instanceId, instance) {
+    if (instance.enabled === false) return { ok: false, reason: 'disabled', detail: '인스턴스가 비활성화돼 있습니다.' };
+    if (!instance.baseUrl) return { ok: false, reason: 'no_base_url', detail: 'baseUrl 이 등록돼 있지 않습니다.' };
+    if (!instance.token) return { ok: false, reason: 'no_token', detail: '연합 토큰이 등록돼 있지 않습니다.' };
+    if (!ctx.instancesStore.getSelfPublicUrl()) {
+      return { ok: false, reason: 'no_self_public_url', detail: 'selfPublicUrl 이 비어 있어 콜백을 받을 주소가 없습니다.' };
+    }
+
+    let health = instance.health ?? null;
+    const age = Date.now() - (instance.lastHealthAt ?? 0);
+    if (!health || age > HEALTH_STALE_MS) {
+      health = await checkInstanceHealth(instance.baseUrl);
+      await ctx.instancesStore.recordHealth(instanceId, health).catch(() => {});
+    }
+    if (!health.ok) {
+      return { ok: false, reason: 'unreachable', detail: `원격이 응답하지 않습니다 (${health.error ?? 'unknown'}).` };
+    }
+    if (!supportsFederation(health)) {
+      return {
+        ok: false,
+        reason: 'federation_unsupported',
+        detail: `원격 버전 ${health.version ?? '(알 수 없음)'} 은 연합 엔드포인트가 없습니다 — 업그레이드가 필요합니다.`
+      };
+    }
+    return { ok: true, health };
+  }
+
+  /**
+   * 원격 위임이 전달되지 못했다. 리드에게 사유를 즉시 되돌려 준다 —
+   * 로컬로 몰래 폴백하지 않는다. 되먹임이 없으면 리드는 오지 않을 회신을
+   * 기다리다 턴을 끝내고 작업이 통째로 사라진다.
+   */
+  async function reportRemoteFailure({ originSessionId, targetAgentId, instanceId, task, reason, detail, groupId }) {
+    ctx.dropGroupSlot?.(groupId, `remote-${reason}`);
+    const body =
+      `**대상**: \`${targetAgentId}\` @ \`${instanceId}\`\n` +
+      `**작업**: ${task}\n` +
+      `**사유**: ${detail} (\`${reason}\`)`;
+    await sessionsStore.appendMessage(originSessionId, {
+      role: 'assistant',
+      content: `❌ **원격 위임 실패** — 작업이 전달되지 않았습니다.\n\n${body}`
+    });
+
+    const count = (failureReEntryCounters.get(originSessionId) ?? 0) + 1;
+    if (count > MAX_FAILURE_REENTRY) {
+      logger.warn({ originSessionId, count, instanceId }, 'federation: 실패 회신 한도 초과 — 재진입하지 않음');
+      return;
+    }
+    failureReEntryCounters.set(originSessionId, count);
+    const trigger =
+      `[원격 위임 실패 — 이 작업은 아무에게도 전달되지 않았습니다]\n\n${body}\n\n` +
+      `로컬 에이전트로 대체할지, 원격 인스턴스 상태를 확인할지, 사용자에게 알릴지 판단해 계속 진행하세요. ` +
+      `같은 대상에 그대로 재위임하지 마세요 — 같은 이유로 다시 실패합니다.`;
+    await sessionsStore.appendMessage(originSessionId, { role: 'user', content: trigger });
+    ctx.dispatch(originSessionId, { kind: 'report', content: trigger });
+  }
+
+  /**
+   * 원격 인스턴스에 위임을 발주한다. 워커 스폰은 상대가 하고, 결과는
+   * `/api/federation/result` 콜백으로 돌아와 `deliverRemoteResult` 가 받는다.
+   */
+  async function executeRemoteDelegation({
+    originSessionId, targetAgentId, instanceId, instance, task, groupId, acceptedAt, depth, tier
+  }) {
+    const gate = await gateRemoteInstance(instanceId, instance);
+    if (!gate.ok) {
+      await reportRemoteFailure({
+        originSessionId, targetAgentId, instanceId, task,
+        reason: gate.reason, detail: gate.detail, groupId
+      });
+      return;
+    }
+
+    const instancesStore = ctx.instancesStore;
+    const selfId = instancesStore.getSelfId();
+    const callbackUrl = instancesStore.getSelfPublicUrl().replace(/\/+$/, '') + '/api/federation/result';
+    // 트래커 키이자 연합 delegationId. 로컬 세션이 아니라는 것이 접두사로 드러나야
+    // 하고, 콜백이 같은 값으로 돌아와야 회신을 맞출 수 있다.
+    const delegationId = `rdel_${randomUUID().slice(0, 18)}`;
+
+    const tierOverride = resolveOverrideTier(tier, targetAgentId);
+    const effectiveTier = tierOverride ?? configStore.getAgent(targetAgentId)?.modelTier ?? null;
+    const originAgentId = sessionsStore.get(originSessionId)?.agentId ?? 'unknown';
+    // 머신이 다르면 파일이 공유되지 않는다 — 그 제약을 task 에 박아 보낸다.
+    const guidedTask =
+      `${task}\n\n${buildHostGuide({ selfId, remoteId: instanceId, remoteLabel: instance.label ?? null })}`;
+
+    // 발주보다 트래커 등록이 **먼저**다. 빠른 원격은 POST 응답이 돌아오기 전에
+    // 콜백을 쏠 수 있는데, 그때 레코드가 없으면 회신이 unknown_delegation 으로
+    // 튕기고 원격이 5초/30초/120초를 헛되이 재시도한다.
+    const entry = delegationTracker.create({
+      originSessionId,
+      targetSessionId: delegationId,
+      targetAgentId,
+      task,
+      loop: false,
+      depth,
+      groupId,
+      queuedAt: acceptedAt,
+      tier: effectiveTier,
+      tierOverridden: !!tierOverride,
+      kind: 'remote',
+      remoteInstance: instanceId,
+      remoteSessionId: null
+    });
+    const attached = ctx.attachGroupMember?.(groupId, entry) ?? false;
+
+    const sent = await postDelegate(instance, selfId, {
+      delegationId,
+      agent: targetAgentId,
+      task: guidedTask,
+      tier: effectiveTier,
+      originLabel: `${originAgentId} @ ${selfId}`,
+      callbackUrl
+    });
+    if (!sent.accepted) {
+      // 접수되지 않았으니 running 으로 남겨선 안 된다 — 안 그러면 대상
+      // 에이전트가 계속 busy 로 잡히고 스윕이 45분 뒤에야 풀어 준다.
+      const failed = delegationTracker.fail(delegationId, `원격 접수 실패: ${sent.error}`);
+      ctx.dequeueNextAgent(targetAgentId);
+      const detail = `원격이 위임을 접수하지 않았습니다 (${sent.error}).`;
+      if (attached && failed) {
+        // 그룹 배리어에 이미 붙었다면 슬롯을 버리는 게 아니라 결과를 넣어야
+        // 형제들의 보고가 함께 닫힌다.
+        ctx.collectGroupReport?.(failed, {
+          status: 'failed',
+          body: `**작업**: ${task}\n**대상**: \`${targetAgentId}\` @ \`${instanceId}\`\n**오류**: ${detail}`
+        });
+      }
+      await reportRemoteFailure({
+        originSessionId, targetAgentId, instanceId, task,
+        reason: sent.error ?? 'rejected',
+        detail,
+        groupId: attached ? null : groupId
+      });
+      return;
+    }
+    entry.remoteSessionId = sent.remoteSessionId ?? null;
+
+    await sessionsStore.appendMessage(originSessionId, {
+      role: 'assistant',
+      content:
+        `🌐 **원격 위임 시작** — \`${instance.label ?? instanceId}\` 의 ${targetAgentId}에게 작업을 전달했습니다.\n\n` +
+        `**작업**: ${task}\n**원격 세션**: ${sent.remoteSessionId ?? '(미확인)'}\n` +
+        `⚠️ 파일은 공유되지 않습니다 — 결과는 커밋·푸시로만 돌아옵니다.`
+    });
+    eventBus.publish('delegation.started', {
+      id: entry.id,
+      originSessionId,
+      targetSessionId: delegationId,
+      targetAgentId,
+      task,
+      groupId,
+      queuedAt: entry.queuedAt,
+      startedAt: entry.startedAt,
+      queueMs: entry.queueMs,
+      reusedSession: false,
+      remoteInstance: instanceId
+    });
+    logger.info(
+      { id: entry.id, delegationId, instanceId, targetAgentId, remoteSessionId: sent.remoteSessionId, depth },
+      'federation: 원격 위임 발주 완료 — 콜백 대기'
+    );
+  }
+
+  /**
+   * 원격 워커의 결과 콜백을 로컬 위임과 **같은 회신 경로**에 태운다.
+   * 리드 입장에서 로컬 워커와 구분되지 않아야 한다(뱃지 표기만 다름).
+   */
+  async function deliverRemoteResult({ delegationId, status, result, remoteSessionId, escalate }) {
+    const entry = delegationTracker.getByTarget(delegationId);
+    if (!entry) return { ok: false, error: 'unknown_delegation' };
+    if (entry.kind !== 'remote') return { ok: false, error: 'not_remote' };
+
+    if (remoteSessionId && entry.remoteSessionId !== remoteSessionId) {
+      entry.remoteSessionId = remoteSessionId;
+    }
+    if (status !== 'completed') {
+      const reason = status === 'failed'
+        ? `원격 워커 실패: ${String(result ?? '').slice(0, 300)}`
+        : '원격 워커가 결과 없이 중단됨';
+      await abandonDelegation(delegationId, reason);
+      return { ok: true, status };
+    }
+    // 완료 회신의 본문 처리(요약 추출 · 원문 저장 · 그룹 배리어 · 재진입)는
+    // 로컬과 같은 함수를 탄다. ctx 에 꽂히는 것은 chat/remote-report.js.
+    return ctx.reportRemoteCompletion({ entry, result, escalate });
+  }
+
   async function executeDelegation(originSessionId, targetAgentIdRaw, task, rawText, groupId = null, queuedAt = null, tier = null) {
     // 그룹 슬롯은 정확히 한 번만 소비돼야 한다 — 등록(attach) 뒤에 예외가 나면
     // 취소(drop)까지 겹쳐 배리어가 형제들을 기다리지 않고 먼저 닫힌다.
@@ -311,6 +541,39 @@ export function createDelegation(ctx) {
         await sessionsStore.appendMessage(originSessionId, {
           role: 'assistant',
           content: `⏳ **위임 대기** — \`${targetAgentId}\`가 동시 처리 한도(${max})에 도달했습니다. 대기열 ${pos}번째에 추가됐습니다.\n\n**작업**: ${task}`
+        });
+        return;
+      }
+
+      // ── 크로스호스트 분기 ──
+      // 여기 한 군데서만 갈린다. host 가 없으면 아래 로컬 경로가 그대로 이어진다.
+      const hostRoute = resolveHost(targetAgentId);
+      if (hostRoute.error) {
+        logger.warn({ targetAgentId, host: hostRoute.host, reason: hostRoute.error }, 'federation: host 해석 실패 — 로컬 폴백하지 않음');
+        await reportRemoteFailure({
+          originSessionId,
+          targetAgentId,
+          instanceId: hostRoute.host,
+          task,
+          reason: hostRoute.error,
+          detail: hostRoute.error === 'unknown_host'
+            ? `에이전트의 host \`${hostRoute.host}\` 가 인스턴스 레지스트리에 없습니다.`
+            : '이 서버에 인스턴스 레지스트리가 없습니다.',
+          groupId
+        });
+        return;
+      }
+      if (hostRoute.remote) {
+        await executeRemoteDelegation({
+          originSessionId,
+          targetAgentId,
+          instanceId: hostRoute.instanceId,
+          instance: hostRoute.instance,
+          task,
+          groupId,
+          acceptedAt,
+          depth,
+          tier
         });
         return;
       }
@@ -518,7 +781,8 @@ export function createDelegation(ctx) {
       // 러너가 살아 있거나 디스패치 큐에서 차례를 기다리는 중이면 정상 작동이다.
       if (ctx.isSessionBusy?.(entry.targetSessionId)) continue;
       const idleMs = now - lastActivityMs(entry);
-      if (idleMs < STALL_TIMEOUT_MS) continue;
+      // 원격은 네트워크 왕복 + 상대 대기열까지 포함하므로 더 길게 기다린다.
+      if (idleMs < (entry.kind === 'remote' ? REMOTE_STALL_TIMEOUT_MS : STALL_TIMEOUT_MS)) continue;
       const idleMinutes = Math.floor(idleMs / 60_000);
       logger.warn(
         { id: entry.id, targetSessionId: entry.targetSessionId, targetAgentId: entry.targetAgentId, idleMinutes },
@@ -669,9 +933,12 @@ export function createDelegation(ctx) {
     extractDelegateJson,
     handleDelegation,
     resolveAgentId,
+    resolveOverrideTier,
+    resolveHost,
     getMaxConcurrent,
     hasAgentCapacity,
     executeDelegation,
+    deliverRemoteResult,
     abandonDelegation,
     sweepStalledDelegations,
     handleLoopContinuation

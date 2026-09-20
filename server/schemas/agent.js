@@ -24,6 +24,9 @@ export const agentPatchSchema = z.object({
   // 백엔드마다 tierModels 로 실제 모델 ID 가 풀린다. null = 지정 해제.
   modelTier: z.string().max(32).nullable().optional(),
   workingDir: z.string().max(500).optional(),
+  // 이 에이전트를 실행할 인스턴스 id (instances.json). 없거나 selfId 면 로컬 실행.
+  // workingDir 와 같은 "기계별 값" 이라 sync-agents.mjs 가 덮어쓰지 않는다.
+  host: z.string().max(64).nullable().optional(),
   projectId: z.string().max(64).nullable().optional(),
   tier: z.enum(['main', 'project', 'addon']).nullable().optional(),
   parentId: z.string().max(64).nullable().optional(),
@@ -51,7 +54,7 @@ export const agentPatchSchema = z.object({
 
 // Which fields live in config.json (bot territory) vs web-metadata.json
 export const CONFIG_FIELDS = new Set([
-  'name', 'avatar', 'systemPrompt', 'model', 'modelTier', 'workingDir',
+  'name', 'avatar', 'systemPrompt', 'model', 'modelTier', 'workingDir', 'host',
   'allowedTools', 'disallowedTools', 'planMode', 'permissionMode', 'env', 'backendId', 'thinkingEffort',
   'maxConcurrent',
   'pinnedFiles', 'gitDiffAutoAttach', 'bridgeAutoAttach'

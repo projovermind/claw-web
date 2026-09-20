@@ -65,6 +65,9 @@ import { createExportImportRouter } from './routes/export-import.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createWorkspaceLayoutRouter } from './routes/workspace-layout.js';
 import { createDelegationsRouter } from './routes/delegations.js';
+import { createInstancesRouter } from './routes/instances.js';
+import { createFederationRouter } from './routes/federation.js';
+import { createInstancesStore } from './lib/instances-store.js';
 import { createHooksStore } from './lib/hooks-store.js';
 import { createCalendarStore } from './lib/calendar-store.js';
 import { createHolidaysKr } from './lib/holidays-kr.js';
@@ -570,6 +573,7 @@ async function main() {
   // leaked tokens from prior runs become worthless.
   const approvalBroker = createApprovalBroker();
   const bridgeToken = nanoid(32);
+  const instancesStore = await createInstancesStore(path.join(USER_DIR, 'instances.json'));
   const delegationTracker = createDelegationTracker({
     filePath: path.join(USER_DIR, 'delegations.json'),
     reportsDir: path.join(USER_DIR, 'delegation-reports')
@@ -638,6 +642,12 @@ async function main() {
     app.use(cors({ origin: ['http://localhost:5273', 'http://127.0.0.1:5273'] }));
   }
 
+  // 연합 엔드포인트는 UI 인증 **앞에** 마운트된다. 자체 토큰(instances.json 의
+  // inboundTokens)으로만 검증하므로 UI 토큰으로는 들어올 수 없고, 반대로 연합
+  // 토큰으로 일반 API 를 호출할 수도 없다. 순서가 바뀌면 이 분리가 깨진다.
+  const federationHooks = { acceptRemoteDelegation: null, deliverRemoteResult: null };
+  app.use('/api/federation', createFederationRouter({ instancesStore, hooks: federationHooks }));
+
   // Auth guard on all /api/* (reads live from webConfig, so toggles take effect
   // immediately). Exempts GET /api/health and GET /api/settings so clients can
   // probe whether auth is required.
@@ -654,7 +664,7 @@ async function main() {
   app.use('/api/devices', createDevicesRouter({ devicesStore, eventBus }));
   // Phase 5: bridge router is created up-front so chat can inject IDE context
   const bridgeRouter = createBridgeRouter({ webConfig });
-  const { router: chatRouter, deliver: deliverChatMessage, resumeInterruptedSession, clearAllWakeups, clearAllDispatch, abortDispatch, abandonDelegation } = createChatRouter({
+  const { router: chatRouter, deliver: deliverChatMessage, resumeInterruptedSession, clearAllWakeups, clearAllDispatch, abortDispatch, abandonDelegation, acceptRemoteDelegation, deliverRemoteResult } = createChatRouter({
     sessionsStore,
     configStore,
     metadataStore,
@@ -666,6 +676,7 @@ async function main() {
     runner,
     eventBus,
     delegationTracker,
+    instancesStore,
     pushStore,
     webConfig,
     approvalBroker,
@@ -675,6 +686,9 @@ async function main() {
     getBridgeContext: (workspace) => bridgeRouter.getContextForWorkspace?.(workspace) ?? null
   });
   app.use('/api/chat', chatRouter);
+  // 연합 라우터가 요청 시점에 읽는 홀더를 지금 채운다.
+  federationHooks.acceptRemoteDelegation = acceptRemoteDelegation;
+  federationHooks.deliverRemoteResult = deliverRemoteResult;
 
   // 예약 발송과 크론 예약은 같은 배달 경로를 쓴다 — chat 라우터가 생긴 지금 묶는다.
   scheduledMessagesStore.setDeliver(deliverChatMessage);
@@ -750,6 +764,7 @@ async function main() {
   app.use('/api/terraform', createTerraformRouter({ projectsStore, configStore, metadataStore, eventBus }));
   app.use('/api/undo', createUndoRouter({ configStore, metadataStore, sessionsStore, eventBus }));
   app.use('/api/delegations', createDelegationsRouter({ delegationTracker, sessionsStore }));
+  app.use('/api/instances', createInstancesRouter({ instancesStore, eventBus }));
   app.use('/api/export-import', createExportImportRouter({ skillsStore, configStore }));
   app.use('/api/bridge', bridgeRouter);
   app.use('/api/workspace-layout', createWorkspaceLayoutRouter({ workspaceLayoutStore, eventBus }));

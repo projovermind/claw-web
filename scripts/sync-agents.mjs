@@ -109,6 +109,11 @@ for (const agent of remote) {
     rest.workingDir = value;
   }
 
+  // host 는 workingDir 와 같은 기계별 값이다 — 원본을 따라가면 모든 기계가
+  // 같은 인스턴스를 가리켜 위임이 한쪽으로 쏠린다. 로컬 값을 그대로 보존한다.
+  if (localAgents[id] && 'host' in localAgents[id]) rest.host = localAgents[id].host;
+  else delete rest.host;
+
   merged[id] = rest;
   synced++;
 }
