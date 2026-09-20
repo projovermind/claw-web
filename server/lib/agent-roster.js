@@ -5,13 +5,15 @@
 
 const ROLE_LINE = /^>\s*\*\*역할\*\*\s*:\s*(.+)$/m;
 
-/** '- id — 역할' 한 줄. 역할이 없으면 name, 그것도 없으면 ID 만. */
+/** '- id — 역할' 한 줄. 역할이 없으면 name, 그것도 없으면 ID 만. host 가 있으면 끝에 '[원격: <host>]'. */
 export function describeAgent(id, agentConfig) {
   const role = ROLE_LINE.exec(agentConfig?.systemPrompt || '')?.[1]?.trim();
-  if (role) return `- ${id} — ${role}`;
+  const host = agentConfig?.host;
+  const suffix = host ? ` [원격: ${host}]` : '';
+  if (role) return `- ${id} — ${role}${suffix}`;
   const name = agentConfig?.name;
-  if (name && name !== id) return `- ${id} — ${name}`;
-  return `- ${id}`;
+  if (name && name !== id) return `- ${id} — ${name}${suffix}`;
+  return `- ${id}${suffix}`;
 }
 
 /** 같은 프로젝트에 속한 위임 가능 에이전트 ID 목록. */
@@ -24,5 +26,10 @@ export function listProjectAgentIds({ agents, metadataStore, projectId, excludeA
 
 export function buildRoster(ids, agents, emptyText = '') {
   if (!ids?.length) return emptyText;
-  return ids.map((id) => describeAgent(id, agents?.[id])).join('\n');
+  const lines = ids.map((id) => describeAgent(id, agents?.[id]));
+  const hasRemote = ids.some((id) => agents?.[id]?.host);
+  if (hasRemote) {
+    lines.push('원격 에이전트와는 파일이 공유되지 않습니다 — 결과는 커밋·푸시로 받습니다.');
+  }
+  return lines.join('\n');
 }
