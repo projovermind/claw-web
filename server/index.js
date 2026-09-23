@@ -29,6 +29,8 @@ import { createSettingsRouter } from './routes/settings.js';
 import { createProjectsRouter } from './routes/projects.js';
 import { createProjectMdRouter } from './routes/project-md.js';
 import { createDevicesRouter } from './routes/devices.js';
+import { createProvisionRouter } from './routes/provision.js';
+import { createProvisioner } from './lib/device-provision.js';
 import { createSessionsRouter } from './routes/sessions.js';
 import { createChatRouter } from './routes/chat.js';
 import { createBackendsRouter } from './routes/backends.js';
@@ -648,6 +650,15 @@ async function main() {
   const federationHooks = { acceptRemoteDelegation: null, deliverRemoteResult: null };
   app.use('/api/federation', createFederationRouter({ instancesStore, hooks: federationHooks }));
 
+  // 「새 기계에 설치」 스크립트 — 새 기계는 아직 토큰이 없으므로 UI 인증 앞에 둔다(일회용 키로만 열림).
+  const provisioner = createProvisioner({
+    instancesStore,
+    devicesStore,
+    webConfig,
+    provisionDir: path.join(PRIVATE_DIR, 'provision')
+  });
+  app.use('/api/provision', createProvisionRouter({ provisioner }));
+
   // Auth guard on all /api/* (reads live from webConfig, so toggles take effect
   // immediately). Exempts GET /api/health and GET /api/settings so clients can
   // probe whether auth is required.
@@ -661,7 +672,7 @@ async function main() {
   );
   // CLAUDE.md / AGENTS.md editor mounted on same prefix
   app.use('/api/projects', createProjectMdRouter({ projectsStore, webConfig, eventBus }));
-  app.use('/api/devices', createDevicesRouter({ devicesStore, eventBus }));
+  app.use('/api/devices', createDevicesRouter({ devicesStore, eventBus, provisioner }));
   // Phase 5: bridge router is created up-front so chat can inject IDE context
   const bridgeRouter = createBridgeRouter({ webConfig });
   const { router: chatRouter, deliver: deliverChatMessage, resumeInterruptedSession, clearAllWakeups, clearAllDispatch, abortDispatch, abandonDelegation, acceptRemoteDelegation, deliverRemoteResult } = createChatRouter({

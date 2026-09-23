@@ -169,6 +169,31 @@ export interface Device {
   order?: number;
 }
 
+/** 설정 → 기기 → 새 기계에 설치. 서버가 터널·DNS·연합 토큰·기기 등록까지 끝내고 원라이너를 준다. */
+export interface DeviceProvisionInput {
+  name: string;
+  hostname: string;
+  id?: string;
+  note?: string;
+  serverMode?: boolean;
+  /** 이 기계의 공개 주소가 아직 등록 안 돼 있을 때만 쓰인다 */
+  originUrl?: string;
+  /** 이미 연합이 걸린 기기를 다시 만든다 — 토큰이 바뀌어 기존 연결이 끊긴다 */
+  reinstall?: boolean;
+}
+
+export interface DeviceProvisionResult {
+  deviceId: string;
+  hostname: string;
+  tunnelId: string;
+  tunnelCreated: boolean;
+  originId: string;
+  /** 이 기계가 인증을 꺼 둬서 새 기계용 토큰을 새로 만든 경우에만 온다 */
+  newUiToken: string | null;
+  expiresAt: number;
+  command: string;
+}
+
 export interface DevicePing {
   online: boolean;
   latencyMs: number;

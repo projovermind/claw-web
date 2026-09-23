@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { HttpError } from '../middleware/error-handler.js';
 import { deviceCreateSchema, deviceUpdateSchema } from '../schemas/device.js';
+import { ProvisionError } from '../lib/device-provision.js';
 
 const PING_TIMEOUT_MS = 4000;
 
@@ -9,11 +10,27 @@ function zodError(err, fallback) {
   return first ? `${first.path.join('.') || 'field'}: ${first.message}` : fallback;
 }
 
-export function createDevicesRouter({ devicesStore, eventBus }) {
+export function createDevicesRouter({ devicesStore, eventBus, provisioner = null }) {
   const router = Router();
 
   router.get('/', (req, res) => {
     res.json({ devices: devicesStore.getAll() });
+  });
+
+  // 새 기계에 설치 — 터널·DNS·연합 토큰·기기 등록까지 끝내고 원라이너를 돌려준다.
+  // `/:id` 라우트보다 먼저 둬야 한다(POST 만 겹치지만 순서로 의도를 드러낸다).
+  router.post('/provision', async (req, res, next) => {
+    try {
+      if (!provisioner) throw new HttpError(503, '이 설치본은 새 기계 설치를 지원하지 않습니다.', 'PROVISION_UNAVAILABLE');
+      const out = await provisioner.provision(req.body ?? {});
+      if (eventBus) eventBus.publish('device.created', { device: devicesStore.getById(out.deviceId) });
+      res.status(201).json(out);
+    } catch (err) {
+      if (err instanceof ProvisionError) {
+        return next(new HttpError(err.status ?? 400, err.message, err.code));
+      }
+      next(err);
+    }
   });
 
   router.post('/', async (req, res, next) => {

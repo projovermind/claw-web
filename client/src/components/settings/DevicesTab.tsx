@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, ExternalLink, MonitorSmartphone } from 'lucide-react';
+import { Plus, Trash2, ExternalLink, MonitorSmartphone, Copy, Check, Terminal } from 'lucide-react';
 import { api } from '../../lib/api';
-import type { Device } from '../../lib/types';
+import type { Device, DeviceProvisionResult } from '../../lib/types';
 
 const slugify = (s: string) =>
   s.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
@@ -16,6 +16,7 @@ export function DevicesTab() {
   const [url, setUrl] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<'register' | 'install'>('register');
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['devices'] });
 
@@ -76,9 +77,23 @@ export function DevicesTab() {
       </div>
 
       <div className="border-t border-zinc-800 pt-4 space-y-2">
-        <div className="text-xs text-zinc-400 flex items-center gap-1.5">
-          <Plus size={13} /> 기기 추가
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-zinc-400 flex items-center gap-1.5">
+            <Plus size={13} /> 기기 추가
+          </div>
+          <div className="flex text-[11px] bg-zinc-900 border border-zinc-800 rounded overflow-hidden">
+            {([['register', '이미 설치된 기기'], ['install', '새 기계에 설치']] as const).map(([m, label]) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`px-2.5 py-1 ${mode === m ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
+        {mode === 'install' ? <ProvisionForm onDone={invalidate} /> : (<>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <input
             value={name}
@@ -111,6 +126,149 @@ export function DevicesTab() {
             {createMut.isPending ? '추가 중…' : '추가'}
           </button>
         </div>
+        </>)}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 새 기계에 설치 — 서버가 터널·DNS·연합 토큰·기기 등록을 끝내고 원라이너를 돌려준다.
+ * 새 기계에서 할 일은 그 한 줄 + Claude 로그인뿐이다.
+ */
+function ProvisionForm({ onDone }: { onDone: () => void }) {
+  // 도메인 기준은 서버에 등록된 공개 주소가 우선이다 — 로컬(127.0.0.1)로 열었을 때 창 주소를 쓰면 엉뚱해진다.
+  const { data: inst } = useQuery({ queryKey: ['instances'], queryFn: api.instances, staleTime: 60_000 });
+  const base = (() => {
+    let host = window.location.hostname;
+    try { if (inst?.selfPublicUrl) host = new URL(inst.selfPublicUrl).hostname; } catch { /* 창 주소로 */ }
+    if (host === 'localhost' || /^[\d.]+$/.test(host) || host.includes(':')) return '';
+    const parts = host.split('.');
+    return parts.length >= 2 ? parts.slice(-2).join('.') : '';
+  })();
+  const [name, setName] = useState('');
+  const [host, setHost] = useState('');
+  const [idDraft, setIdDraft] = useState('');
+  const [note, setNote] = useState('');
+  const [serverMode, setServerMode] = useState(true);
+  const [result, setResult] = useState<DeviceProvisionResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const cleanHost = host.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  // 한글 이름이면 id 를 못 만든다 — 그때는 주소 첫 마디를 쓴다(studio.example.com → studio)
+  const id = slugify(idDraft) || slugify(name) || slugify(cleanHost.split('.')[0] ?? '');
+  const canSubmit = !!name.trim() && !!id && /\.[a-z]{2,}$/.test(cleanHost);
+
+  const already = !!inst?.instances?.some((i) => i.id === id);
+
+  const mut = useMutation({
+    mutationFn: (reinstall: boolean) => api.provisionDevice({
+      reinstall,
+      name: name.trim(),
+      hostname: cleanHost,
+      id,
+      serverMode,
+      originUrl: window.location.origin,
+      ...(note.trim() ? { note: note.trim() } : {})
+    }),
+    onSuccess: (r) => { setResult(r); setError(null); setCopied(false); onDone(); },
+    onError: (e: Error) => setError(e.message)
+  });
+
+  const copy = async () => {
+    if (!result) return;
+    try { await navigator.clipboard.writeText(result.command); setCopied(true); } catch { /* 선택해서 복사하면 된다 */ }
+  };
+
+  const input = 'bg-zinc-900 border border-zinc-800 rounded px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-zinc-600';
+
+  if (result) {
+    const until = new Date(result.expiresAt).toLocaleString();
+    return (
+      <div className="space-y-3 border border-emerald-900/60 bg-emerald-950/20 rounded p-3">
+        <div className="text-xs text-emerald-300">
+          준비됐습니다 — <span className="font-mono">{result.hostname}</span>
+          {result.tunnelCreated ? ' (새 터널)' : ' (기존 터널 재사용)'}
+        </div>
+        <div className="text-[11px] text-zinc-400">새 기계의 터미널에 이 한 줄을 붙여 넣으세요.</div>
+        <div className="flex items-start gap-2">
+          <code className="flex-1 min-w-0 break-all select-all bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-[11px] font-mono text-zinc-200">
+            {result.command}
+          </code>
+          <button onClick={copy} className="shrink-0 p-2 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700" title="복사">
+            {copied ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+          </button>
+        </div>
+        {result.newUiToken && (
+          <div className="text-[11px] text-amber-300">
+            이 기계가 인증을 꺼 둬서 새 기계용 접속 토큰을 새로 만들었습니다: <span className="font-mono">{result.newUiToken}</span>
+          </div>
+        )}
+        <ol className="text-[11px] text-zinc-500 list-decimal pl-4 space-y-0.5">
+          <li>설치가 끝나면 같은 창에 <code className="text-zinc-300">claude</code> 를 입력해 로그인합니다(브라우저 승인이라 이것만 수동).</li>
+          <li>이 명령은 <span className="text-zinc-300">{until}</span> 까지만 유효합니다. 터널 비밀값이 들어 있으니 공유하지 마세요.</li>
+          <li>같은 기기를 다시 만들면 연합 토큰이 새로 발급됩니다 — 이미 설치한 기계라면 새 명령을 그 기계에서 다시 돌려야 위임이 이어집니다.</li>
+        </ol>
+        <div className="flex justify-end">
+          <button onClick={() => { setResult(null); setName(''); setHost(''); setIdDraft(''); setNote(''); }} className="text-[11px] text-zinc-500 hover:text-zinc-300">
+            다른 기계 추가
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-zinc-500">
+        아직 claw-web 이 없는 맥·리눅스(WSL 포함)에 설치합니다. 이 기계가 터널·DNS·연합 등록을 먼저 끝내고
+        새 기계에서 칠 <Terminal size={11} className="inline -mt-0.5" /> 한 줄을 만들어 줍니다.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="이름 (예: 맥스튜디오)" className={input} />
+        <input
+          value={host}
+          onChange={(e) => setHost(e.target.value)}
+          placeholder={base ? `주소 (예: studio.${base})` : '주소 (예: studio.example.com)'}
+          spellCheck={false}
+          className={`${input} font-mono`}
+        />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <input
+          value={idDraft}
+          onChange={(e) => setIdDraft(e.target.value)}
+          placeholder={`id (비우면 ${id || '자동'})`}
+          spellCheck={false}
+          className={`${input} font-mono`}
+        />
+        <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="메모 (선택)" className={input} />
+      </div>
+      <label className="flex items-center gap-2 text-[11px] text-zinc-400 select-none">
+        <input type="checkbox" checked={serverMode} onChange={(e) => setServerMode(e.target.checked)} />
+        상시 가동 서버로 쓴다 — 잠자기 끄기·정전 후 자동 켜짐(맥), 로그아웃해도 유지(리눅스)
+      </label>
+      {base && cleanHost && !cleanHost.endsWith(`.${base}`) && (
+        <div className="text-[11px] text-amber-400">주소는 이 기계와 같은 도메인(*.{base}) 아래여야 터널 DNS 를 만들 수 있습니다.</div>
+      )}
+      {already && (
+        <div className="text-[11px] text-amber-400">
+          id <span className="font-mono">{id}</span> 는 이미 연결된 기기입니다 — 다시 만들면 지금 연결이 끊깁니다(재설치할 때만).
+        </div>
+      )}
+      {error && <div className="text-[11px] text-red-400">{error}</div>}
+      <div className="flex justify-end">
+        <button
+          onClick={() => {
+            if (already && !confirm(`${id} 은(는) 이미 연결된 기기입니다.\n\n다시 만들면 연합 토큰이 바뀌어 지금 연결이 끊기고, 그 기계에서 새 명령을 다시 돌려야 합니다. 계속할까요?`)) return;
+            mut.mutate(already);
+          }}
+          disabled={!canSubmit || mut.isPending}
+          className="text-xs bg-emerald-900/50 text-emerald-200 px-4 py-2 rounded disabled:opacity-40 hover:bg-emerald-900/70"
+        >
+          {mut.isPending ? '터널·DNS 준비 중…' : '설치 명령 만들기'}
+        </button>
       </div>
     </div>
   );
