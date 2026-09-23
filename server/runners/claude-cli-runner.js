@@ -96,7 +96,7 @@ const MODEL_ID_MAP = {
   fable: 'claude-fable-5-1',
   opus: 'claude-opus-5',
   sonnet: 'claude-sonnet-5',
-  haiku: 'claude-haiku-4-6',
+  haiku: 'claude-haiku-4-5',
   // GLM 계열 — 그대로 통과
   'glm-5.1': 'glm-5.1',
   'glm-4-5': 'glm-4-5',
