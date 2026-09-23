@@ -9,10 +9,16 @@
       "label": "Claude (CLI)",
       "envKey": "ANTHROPIC_API_KEY",
       "models": {
-        "opus": "claude-opus-4-7",
-        "sonnet": "claude-sonnet-4-6",
-        "haiku": "claude-haiku-4-6",
-        "default": "claude-opus-4-6"
+        "opus": "claude-opus-5-5",
+        "sonnet": "claude-sonnet-5",
+        "haiku": "claude-haiku-4-5",
+        "default": "claude-opus-5-5",
+        "fable": "claude-fable-5-1"
+      },
+      "tierModels": {
+        "high": "claude-opus-5-5",
+        "middle": "claude-sonnet-5",
+        "low": "claude-haiku-4-5"
       },
       "status": "active",
       "priority": 100
